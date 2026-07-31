@@ -1,0 +1,35 @@
+[project]
+name = "dicomxphits"
+version = "1.0.0"
+description = "Education and research DICOM 3D-CRT to PHITS workflow using an approved public rectangular beam model."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy",
+  "pydicom"
+]
+license = { text = "MIT" }
+authors = [
+  { name = "Hiroki Inata" }
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest"
+]
+
+[project.scripts]
+dicomxphits-prepare-3dcrt-workspace = "dicomxphits.prepare_3dcrt_workspace:main"
+dicomxphits-prepare-ct-calibration = "dicomxphits.prepare_ct_calibration:main"
+dicomxphits-run-segments = "dicomxphits.run_segments:main"
+dicomxphits-generate-sumtally = "dicomxphits.prepare_sumtally:generate_main"
+dicomxphits-run-sumtally = "dicomxphits.prepare_sumtally:run_main"
+dicomxphits-prepare-rtdose = "dicomxphits.prepare_rtdose:prepare_main"
+dicomxphits-run-rtdose = "dicomxphits.prepare_rtdose:run_main"
+dicomxphits-fix-rtdose-coordinates = "dicomxphits.fix_coordinates:main"
+dicomxphits-run-gpr-compare = "dicomxphits.run_gpr_compare:main"
+dicomxphits-gui = "dicomxphits.gui:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/inata169/dicomxphits/schemas/dicomxphits.paths.schema.json",
+  "title": "dicomxphits external tool path settings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "phits_root_folder",
+    "phits_executable_path",
+    "phits2dicom_executable_path"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema reference for editors and validators."
+    },
+    "phits_root_folder": {
+      "type": "string",
+      "description": "PHITS install root folder used for libpath.inp file(1)."
+    },
+    "phits_executable_path": {
+      "type": "string",
+      "description": "PHITS executable used for PHITS and Sumtally execution."
+    },
+    "phits2dicom_executable_path": {
+      "type": "string",
+      "description": "phits2dicom executable used for RTDOSE conversion."
+    },
+    "ct_reference_dicom_path": {
+      "type": "string",
+      "default": "",
+      "description": "Optional user-specified CT reference DICOM for RTDOSE conversion."
+    },
+    "workspace_root": {
+      "type": "string",
+      "default": "",
+      "description": "Optional workspace root for generated public-preparation artifacts."
+    }
+  }
+}

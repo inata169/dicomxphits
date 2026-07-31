@@ -1,0 +1,47 @@
+{
+  "$schema": "dicomxphits.machine.schema.json",
+  "schema_version": "dicomxphits_public_machine_config_v1",
+  "units": {
+    "geometry": "mm",
+    "density": "g/cm3"
+  },
+  "coordinate_system": {
+    "origin": "isocenter",
+    "z_axis": "beam",
+    "z_positive": "downstream"
+  },
+  "sad_mm": 1000.0,
+  "source": {
+    "model": "point",
+    "position_mm": [
+      0.0,
+      0.0,
+      -1000.0
+    ]
+  },
+  "materials": {
+    "water_equivalent_public_placeholder": {
+      "density_g_cm3": 1.0,
+      "description": "Public non-clinical PHITS smoke material. Replace with a validated user machine material for real use.",
+      "material_block": "1H 2\n16O 1"
+    }
+  },
+  "y_diaphragm": {
+    "upstream_z_mm": -461.0,
+    "downstream_z_mm": -380.0,
+    "material": "water_equivalent_public_placeholder"
+  },
+  "mlc": {
+    "leaf_pair_count": 4,
+    "leaf_widths_mm": [
+      5.0,
+      5.0,
+      5.0,
+      5.0
+    ],
+    "leaf_depth_mm": 60.0,
+    "upstream_z_mm": -350.0,
+    "downstream_z_mm": -300.0,
+    "material": "water_equivalent_public_placeholder"
+  }
+}

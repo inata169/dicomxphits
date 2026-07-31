@@ -1,0 +1,69 @@
+{
+  "schema_version": "dicomxphits_v1_release_acceptance_evidence_v1",
+  "scope": "fixed_field_3dcrt_education_and_research_only",
+  "physical_rerun_performed": false,
+  "prior_physical_evidence": {
+    "status": "approved_knowledge_based_reuse",
+    "approved_physical_evidence_manifest_sha256": "7f020ab5e0fd719b9fef7cab906d88c40b0a947f0fa5a06c865ece6e6a85a1a0",
+    "physical_evidence_provenance_sha256": "fea4be3f20909f259484d0e2b40aa9d81c6dcfe225b483e4883a8995ee53b225",
+    "input_file_count": 154,
+    "physical_artifact_count": 21,
+    "content_mismatch_count": 0
+  },
+  "water_regression": {
+    "status": "knowledge_based_skip",
+    "reason": "Approved private Water inputs and external PHITS assets are not distributed in the public candidate.",
+    "approved_report_sha256": "816393587d251390a4549b4c8d6d74a8ae88c41ae02c231f11079fdeceb0c521",
+    "report_available_in_public_candidate": false,
+    "new_result_claimed": false
+  },
+  "voxel_regression": {
+    "status": "approved_knowledge_based_reuse",
+    "approved_report_sha256": "b32ea503656c3e889615b9d0198d18b3e93ca9551c5e17ba36310a4da741018f",
+    "current_public_runtime_evidence": [
+      "tests/test_prepare_ct_calibration.py",
+      "tests/test_rectangular_phits_renderer.py"
+    ]
+  },
+  "multi_beam_regression": {
+    "status": "approved_knowledge_based_reuse",
+    "current_public_runtime_evidence": [
+      "tests/test_prepare_3dcrt_workspace.py",
+      "tests/test_prepare_sumtally.py"
+    ]
+  },
+  "gpr_regression": {
+    "status": "reusable_without_rerun",
+    "approved_pass_rate_percent": 98.079471112706,
+    "criterion": "global 3 percent / 3 mm",
+    "dose_threshold_percent": 10,
+    "evaluation_scale_factor_allowed": false,
+    "coordinate_corrected_rtdose_sha256": "aa5c80e9b61917bb9afa899004e0c4d56790db61dbde1b738adfbf748de5b129",
+    "current_public_runtime_evidence": [
+      "tests/test_fix_coordinates.py",
+      "tests/test_run_gpr_compare.py"
+    ]
+  },
+  "beam6_classification": {
+    "classification_basis": "RT Plan delivery structure, not BeamNumber",
+    "golden8_control": {
+      "beam_number": 6,
+      "beam_type": "STATIC",
+      "beam_meterset_mu": 100.0,
+      "control_point_count": 2,
+      "expected_public_classification": "3dcrt",
+      "historical_classification": "3dcrt_static",
+      "expected_gate": "pass"
+    },
+    "segment_based_imrt_control": {
+      "beam_number": 6,
+      "beam_type": "DYNAMIC",
+      "beam_meterset_mu": 200.0,
+      "control_point_count": 41,
+      "positive_cmw_interval_count": 40,
+      "expected_public_classification": "dynamic_imrt",
+      "expected_gate": "reject"
+    }
+  },
+  "claim_boundary": "No clinical validity, vendor approval, or universal machine dose-accuracy claim."
+}

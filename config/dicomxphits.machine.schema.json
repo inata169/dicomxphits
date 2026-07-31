@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/inata169/dicomxphits/schemas/dicomxphits.machine.schema.json",
+  "title": "dicomxphits public machine configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "units",
+    "coordinate_system",
+    "sad_mm",
+    "source",
+    "materials",
+    "y_diaphragm",
+    "mlc"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema reference for editors and validators."
+    },
+    "schema_version": {
+      "const": "dicomxphits_public_machine_config_v1"
+    },
+    "units": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "geometry",
+        "density"
+      ],
+      "properties": {
+        "geometry": {
+          "const": "mm"
+        },
+        "density": {
+          "const": "g/cm3"
+        }
+      }
+    },
+    "coordinate_system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin",
+        "z_axis",
+        "z_positive"
+      ],
+      "properties": {
+        "origin": {
+          "const": "isocenter"
+        },
+        "z_axis": {
+          "const": "beam"
+        },
+        "z_positive": {
+          "const": "downstream"
+        }
+      }
+    },
+    "sad_mm": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model",
+            "position_mm"
+          ],
+          "properties": {
+            "model": {
+              "const": "point"
+            },
+            "position_mm": {
+              "$ref": "#/$defs/vector3_mm"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model",
+            "plane_z_mm",
+            "fwhm_x_mm",
+            "fwhm_y_mm"
+          ],
+          "properties": {
+            "model": {
+              "const": "rectangular_fwhm"
+            },
+            "plane_z_mm": {
+              "type": "number"
+            },
+            "fwhm_x_mm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "fwhm_y_mm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model",
+            "plane_z_mm",
+            "width_x_mm",
+            "width_y_mm"
+          ],
+          "properties": {
+            "model": {
+              "const": "uniform_rectangular"
+            },
+            "plane_z_mm": {
+              "type": "number"
+            },
+            "width_x_mm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "width_y_mm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "materials": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "density_g_cm3",
+          "material_block"
+        ],
+        "properties": {
+          "density_g_cm3": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "description": {
+            "type": "string"
+          },
+          "material_block": {
+            "type": "string",
+            "description": "Optional explicit PHITS material block supplied by the user."
+          }
+        }
+      }
+    },
+    "y_diaphragm": {
+      "$ref": "#/$defs/shielding_component"
+    },
+    "mlc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "leaf_pair_count",
+        "leaf_widths_mm",
+        "leaf_depth_mm",
+        "upstream_z_mm",
+        "downstream_z_mm",
+        "material"
+      ],
+      "properties": {
+        "leaf_pair_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "leaf_widths_mm": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "leaf_depth_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "upstream_z_mm": {
+          "type": "number"
+        },
+        "downstream_z_mm": {
+          "type": "number"
+        },
+        "material": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projection_scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "photon_cutoff_mev",
+        "electron_cutoff_mev",
+        "positron_cutoff_mev"
+      ],
+      "properties": {
+        "photon_cutoff_mev": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "electron_cutoff_mev": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "positron_cutoff_mev": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "vector3_mm": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "shielding_component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "upstream_z_mm",
+        "downstream_z_mm",
+        "material"
+      ],
+      "properties": {
+        "upstream_z_mm": {
+          "type": "number"
+        },
+        "downstream_z_mm": {
+          "type": "number"
+        },
+        "material": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projection_scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    }
+  }
+}

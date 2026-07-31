@@ -1,0 +1,8 @@
+{
+  "$schema": "dicomxphits.paths.schema.json",
+  "phits_root_folder": "",
+  "phits_executable_path": "",
+  "phits2dicom_executable_path": "",
+  "ct_reference_dicom_path": "",
+  "workspace_root": ""
+}

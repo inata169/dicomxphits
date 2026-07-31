@@ -1,0 +1,141 @@
+﻿# Workflow Stages
+
+The v1.0.0 workflow is staged. A later stage must not run
+until the previous stage gate has passed.
+
+## Stages
+
+1. Prepare a strict 3D-CRT segment manifest and PHITS input workspace.
+2. Run PHITS explicitly.
+3. Generate and run Sumtally explicitly.
+4. Convert the Sumtally output to RTDOSE and correct its patient coordinates.
+5. Execute the external GPR comparison or record an explicit knowledge-based
+   skip.
+6. Review summaries and logs.
+
+## Gate Rules
+
+- All non-skipped segments must be strict 3D-CRT.
+- At least one non-skipped segment must be present before downstream stages can
+  run.
+- Beam MU must be present, positive, and finite.
+- PHITS root folder, PHITS executable path, and phits2dicom executable path are
+  separate settings.
+- Workspace preparation requires the raw `DATfiles` emitted by `ct2phits.exe`
+  for a confirmed non-patient phantom and one CT DICOM slice from that same
+  series. Pass them with `--ct-datfiles-root`, `--ct-reference-dicom`, and
+  `--confirm-non-patient-phantom`.
+- Workspace preparation validates CT/RTPLAN Frame of Reference, supported axial
+  HFS orientation, CT origin, and a shared referenced-beam isocenter before it
+  writes the workspace.
+- The CT reference priority for RTDOSE conversion is:
+  1. user-specified CT reference DICOM
+  2. generated CT with synchronized reference identity
+  3. synthetic smoke-test-only dummy CT
+
+The synthetic dummy CT option is not the default for clinical-like workflow
+review.
+
+## Prepare Workspace Adapter
+
+`dicomxphits-prepare-3dcrt-workspace` validates the RT Plan and generates the
+strict segment manifest and PHITS workspace using package-owned runtime code.
+
+This adapter writes:
+
+- `segments/segment_manifest.json`
+- `libpath.inp`
+- `analysis/phits_generation_summary.json`
+- `analysis/public_preparation_workspace_summary.json`
+
+It does not execute PHITS. GUI controls keep PHITS, Sumtally, and
+RTDOSE conversion as separate gated stages.
+
+## PHITS Segment Execution
+
+`dicomxphits-run-segments` executes the active segment inputs from the strict
+manifest and writes `analysis/segment_execution_summary.json`. Every active
+segment must produce its manifest `expected_output_path` before Sumtally. It
+uses PHITS's `file = ...` launcher input contract and runs from the workspace
+root so the generated include files resolve.
+
+## Sumtally Adapter
+
+The Sumtally stage is split into `dicomxphits-generate-sumtally` and
+`dicomxphits-run-sumtally`.
+
+The primary Sumtally job covers all active strict 3D-CRT segments and records
+this fixed contract:
+
+- `sumtally_scope = all_active_segments`
+- `sumtally_mode = totalfield`
+- `weight_field = segment_mu`
+- `sumtally_normalization = all_segments_totalfield_segment_mu`
+- `rt_dose_conversion_hint.is_beam_mu_output = false`
+
+This output must not be treated as a per-beam `beamMU` RTDOSE input by later
+stages.
+
+## RTDOSE Adapter
+
+The RTDOSE stage is split into `dicomxphits-prepare-rtdose` and
+`dicomxphits-run-rtdose`.
+
+It consumes the preceding all-active-segments totalfield Sumtally output and
+records the conversion contract:
+
+- `input_dose_state = sumtally_mu_weighted`
+- `sumtally_normalization = all_segments_totalfield_segment_mu`
+- `is_beam_mu_output = false`
+- `input_dose_unit = gy_per_mu`
+- `output_dicom_dose_unit = GY`
+- `factor = 1.0`
+- `totfact_per_MU = 8.7608E+11 source/MU` is already applied in PHITS
+- `normalization_rule = approved_public_model_totfact_per_mu_applied_in_phits`
+
+The adapter requires a user-specified template DICOM and a CT reference selected
+by the public workflow priority. User-provided DICOM files are copied into the
+workspace before use; source files are not modified in place.
+
+The template DICOM must be a phits2dicom-compatible RTDOSE base template with
+the overwrite tags required by phits2dicom already present. The public tree
+includes `templates/phits2dicom_rtdose_template.dcm`, a sanitized zero-dose
+RTDOSE template for this purpose. Prepare fails before execution when required
+tags are missing. Public workflows must not fall back to
+repository-local PHITS or RTphits sample files.
+
+After successful conversion, the generated DICOM is explicitly labeled
+`DoseUnits = GY`; the sidecar summary records the same semantics and the
+approved factor identity. The result is absolute dose only for the defined
+public education and research model. It is not evidence of clinical
+commissioning, universal machine `Gy/MU` accuracy, vendor approval, or
+agreement with a physical Elekta unit.
+
+The conversion stage then creates a separate `.fixed.dcm` file. It transposes
+the supported PHITS2DICOM voxel layout from `[frames, rows, columns]` to
+`[rows, frames, columns]`, updates `PixelSpacing`,
+`GridFrameOffsetVector`, and `ImagePositionPatient`, and preserves the physical
+volume center and dose values. Ambiguous frame offsets or unsupported
+orientation fail before a corrected output is accepted.
+
+## GPR-comparing Boundary
+
+`dicomxphits-run-gpr-compare` keeps GPR-comparing external. With no configured
+tool root it writes a reasoned skip record. With a configured tool it can
+prepare or explicitly execute `python -m rtgamma.main`. Execution requires
+matching `FrameOfReferenceUID` values, `GY` dose units, a zero process return
+code, and a fresh `run3d.json`. The resulting pass rate is research evidence,
+not clinical certification. The accepted historical evidence uses global
+`3% / 3 mm` with a `10%` cutoff. Because the CLI defaults are `3% / 2 mm` with
+a `10%` cutoff, reproduction of the accepted criterion must pass
+`--dd 3 --dta 3 --cutoff 10` explicitly.
+
+## Manual Smoke Workflow
+
+The smoke workflow is documented in `manual_smoke_workflow.md`. Automated
+coverage uses synthetic-only mocked external tools and writes generated DICOM,
+fake PHITS outputs, fake RTDOSE files, logs, and summaries only under pytest
+temporary directories.
+
+Real PHITS and phits2dicom smoke execution is optional local validation only,
+not a CI requirement. Real DICOM files must not be placed in this repository.

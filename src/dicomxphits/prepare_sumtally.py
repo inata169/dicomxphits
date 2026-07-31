@@ -1,0 +1,560 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from dicomxphits.prepare_3dcrt_workspace import (
+    ExternalToolPaths,
+    active_segments,
+    finite_positive,
+    load_paths_config,
+    merged_tool_paths,
+    validate_public_strict_3dcrt_gate,
+    write_json,
+)
+from dicomxphits.sumtally_inputs import (
+    TARGET_TALLY_PATTERNS,
+    build_sumtally,
+    generate_sum_inp,
+    write_libpath_file,
+    write_text,
+)
+
+
+DEFAULT_SUMTALLY_OUTPUT_NAME = "deposit-target-3D_sum_all_active_segments_totalfield.out"
+SUMTALLY_SCOPE = "all_active_segments"
+SUMTALLY_MODE = "totalfield"
+WEIGHT_FIELD = "segment_mu"
+SUMTALLY_NORMALIZATION = "all_segments_totalfield_segment_mu"
+RT_DOSE_CONVERSION_HINT = {
+    "input_dose_state": "sumtally_mu_weighted",
+    "sumtally_normalization": SUMTALLY_NORMALIZATION,
+    "is_beam_mu_output": False,
+}
+
+
+@dataclass(frozen=True)
+class BaseInputSelection:
+    path: Path
+    rule: str
+    segment_id: str | None = None
+    segment_index: Any = None
+
+
+def require_generation_paths(paths: ExternalToolPaths) -> None:
+    if not paths.phits_root_folder:
+        raise ValueError("Missing required external tool path setting: phits_root_folder")
+
+
+def require_execution_paths(paths: ExternalToolPaths) -> None:
+    if not paths.phits_executable_path:
+        raise ValueError("Missing required external tool path setting: phits_executable_path")
+
+
+def load_json_object(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"JSON root must be an object: {path}")
+    return data
+
+
+def resolve_workspace_path(workspace_root: Path, value: str | Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return workspace_root / path
+
+
+def normalize_path(path: str | Path) -> str:
+    return str(path).replace("\\", "/")
+
+
+def path_relative_to_sumtally_cwd(path: Path, *, workspace_root: Path, sumtally_dir: Path) -> tuple[str | None, str, str]:
+    resolved = path.resolve()
+    workspace_resolved = workspace_root.resolve()
+    sumtally_resolved = sumtally_dir.resolve()
+    try:
+        resolved.relative_to(workspace_resolved)
+        cwd_relative = Path(os.path.relpath(resolved, sumtally_resolved)).as_posix()
+        return cwd_relative, cwd_relative, "sumtally_cwd_relative"
+    except ValueError:
+        absolute = resolved.as_posix()
+        return None, absolute, "absolute_fallback_workspace_external"
+
+
+def localize_sumtally_segment_paths(
+    content: str,
+    helper_summary: dict[str, Any],
+    *,
+    workspace_root: Path,
+    sumtally_dir: Path,
+) -> tuple[str, list[tuple[str, float]], str, list[dict[str, Any]]]:
+    updated = content
+    out_files: list[tuple[str, float]] = []
+    path_records: list[dict[str, Any]] = []
+    bases: set[str] = set()
+    for row in helper_summary.get("segments", []):
+        if not isinstance(row, dict):
+            continue
+        resolved_output_path = Path(str(row["resolved_output_path"]))
+        cwd_relative, written, basis = path_relative_to_sumtally_cwd(
+            resolved_output_path,
+            workspace_root=workspace_root,
+            sumtally_dir=sumtally_dir,
+        )
+        bases.add(basis)
+        original = normalize_path(row["resolved_output_path"])
+        if original != written:
+            updated = updated.replace(original, written, 1)
+        row["sumtally_cwd_relative_output_path"] = cwd_relative
+        row["sumtally_written_output_path"] = written
+        row["sumtally_path_basis"] = basis
+        out_files.append((written, row["weight"]))
+        path_records.append(
+            {
+                "beam_number": row.get("beam_number"),
+                "segment_index": row.get("segment_index"),
+                "expected_output_path": row.get("expected_output_path"),
+                "resolved_output_path": str(resolved_output_path.resolve()),
+                "sumtally_cwd_relative_output_path": cwd_relative,
+                "sumtally_written_output_path": written,
+                "sumtally_path_basis": basis,
+                "weight": row.get("weight"),
+            }
+        )
+    summary_basis = "sumtally_cwd_relative" if bases == {"sumtally_cwd_relative"} else "mixed_cwd_relative_absolute_fallback"
+    return updated, out_files, summary_basis, path_records
+
+
+def load_manifest(workspace_root: Path) -> tuple[dict[str, Any], Path]:
+    manifest_path = workspace_root / "segments" / "segment_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"segment manifest not found: {manifest_path}")
+    return load_json_object(manifest_path), manifest_path
+
+
+def workspace_summary_path(workspace_root: Path) -> Path:
+    return workspace_root / "analysis" / "public_preparation_workspace_summary.json"
+
+
+def phits_generation_summary_path(workspace_root: Path) -> Path:
+    return workspace_root / "analysis" / "phits_generation_summary.json"
+
+
+def metadata_candidate_values(workspace_root: Path) -> list[str]:
+    values: list[str] = []
+    for path in (workspace_summary_path(workspace_root), phits_generation_summary_path(workspace_root)):
+        if not path.is_file():
+            continue
+        data = load_json_object(path)
+        for key in ("sumtally_base_input", "sumtally_base_input_path", "primary_phits_input"):
+            value = data.get(key)
+            if isinstance(value, str) and value:
+                values.append(value)
+        phits_generation = data.get("phits_generation")
+        if isinstance(phits_generation, dict):
+            for key in ("sumtally_base_input", "sumtally_base_input_path", "primary_phits_input"):
+                value = phits_generation.get(key)
+                if isinstance(value, str) and value:
+                    values.append(value)
+            generated = phits_generation.get("generated_phits_inputs")
+            if isinstance(generated, list):
+                values.extend(str(item) for item in generated if item)
+        generated = data.get("generated_phits_inputs")
+        if isinstance(generated, list):
+            values.extend(str(item) for item in generated if item)
+    return values
+
+
+def select_sumtally_base_input(
+    *,
+    workspace_root: Path,
+    manifest: dict[str, Any],
+    explicit_base_input: Path | None = None,
+) -> BaseInputSelection:
+    if explicit_base_input is not None:
+        return BaseInputSelection(
+            path=resolve_workspace_path(workspace_root, explicit_base_input),
+            rule="explicit_base_input",
+        )
+
+    for value in metadata_candidate_values(workspace_root):
+        candidate = resolve_workspace_path(workspace_root, value)
+        if candidate.is_file():
+            return BaseInputSelection(path=candidate, rule="workspace_metadata")
+
+    active = active_segments(manifest)
+    if not active:
+        raise ValueError("No active segment is available for Sumtally base input selection")
+    segment = active[0]
+    phits_input_path = str(segment.get("phits_input_path") or "")
+    if not phits_input_path:
+        raise ValueError("First active segment is missing phits_input_path")
+    return BaseInputSelection(
+        path=resolve_workspace_path(workspace_root, phits_input_path),
+        rule="first_active_segment_phits_input",
+        segment_id=str(segment.get("segment_id")) if segment.get("segment_id") is not None else None,
+        segment_index=segment.get("segment_index"),
+    )
+
+
+def validate_manifest_for_sumtally(manifest: dict[str, Any]) -> dict[str, Any]:
+    gate = validate_public_strict_3dcrt_gate(manifest)
+    for segment in active_segments(manifest):
+        expected_output_path = str(segment.get("expected_output_path") or "")
+        phits_input_path = str(segment.get("phits_input_path") or "")
+        label = str(segment.get("segment_id") or f"segment {segment.get('segment_index')}")
+        if not expected_output_path:
+            raise ValueError(f"{label}: expected_output_path is required for Sumtally generation")
+        if not phits_input_path:
+            raise ValueError(f"{label}: phits_input_path is required for Sumtally generation")
+        if not finite_positive(segment.get(WEIGHT_FIELD)):
+            raise ValueError(f"{label}: {WEIGHT_FIELD} must be present, positive, and finite")
+    return gate
+
+
+def derive_tally_patterns_from_manifest(manifest: dict[str, Any], default_patterns: list[str]) -> list[str]:
+    patterns: list[str] = []
+    for segment in active_segments(manifest):
+        expected_output_path = str(segment.get("expected_output_path") or "")
+        if not expected_output_path:
+            continue
+        normalized = expected_output_path.replace("\\", "/")
+        name = Path(normalized).name
+        for value in (f"file = {normalized}", f"file = {name}"):
+            if value and value not in patterns:
+                patterns.append(value)
+    for value in default_patterns:
+        if value and value not in patterns:
+            patterns.append(value)
+    if not patterns:
+        raise ValueError("No target tally patterns could be derived from the segment manifest")
+    return patterns
+
+
+def write_failure_summary(
+    *,
+    path: Path,
+    stage: str,
+    workspace_root: Path,
+    reason: str,
+    command_argv: list[str] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "schema_version": "dicomxphits_public_sumtally_stage_v1",
+        "stage": stage,
+        "stage_status": "gate_failed",
+        "workspace_root": str(workspace_root),
+        "failure_reason": reason,
+        "command": {"argv": command_argv or sys.argv},
+        "returncode": None,
+        "phits_execution_started": False,
+    }
+    if extra:
+        summary.update(extra)
+    write_json(path, summary)
+    return summary
+
+
+def generate_sumtally(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    output_name: str = DEFAULT_SUMTALLY_OUTPUT_NAME,
+    base_input: Path | None = None,
+    command_argv: list[str] | None = None,
+) -> dict[str, Any]:
+    generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
+    try:
+        require_generation_paths(paths)
+
+        manifest, manifest_path = load_manifest(workspace_root)
+        strict_gate = validate_manifest_for_sumtally(manifest)
+        tally_patterns = derive_tally_patterns_from_manifest(manifest, list(TARGET_TALLY_PATTERNS))
+        selection = select_sumtally_base_input(
+            workspace_root=workspace_root,
+            manifest=manifest,
+            explicit_base_input=base_input,
+        )
+        if not selection.path.is_file():
+            raise FileNotFoundError(f"Sumtally base PHITS input not found: {selection.path}")
+
+        content, helper_summary = build_sumtally(
+            manifest,
+            case_root=workspace_root,
+            output_name=output_name,
+            weight_field=WEIGHT_FIELD,
+            mode=SUMTALLY_MODE,
+        )
+
+        sumtally_dir = workspace_root / "sumtally"
+        sumtally_path = sumtally_dir / "sumtally.inp"
+        sum_input_path = sumtally_dir / f"{selection.path.stem}_sum.inp"
+        libpath_path = sumtally_dir / "libpath.inp"
+        sumtally_dir.mkdir(parents=True, exist_ok=True)
+        content, out_files, path_basis, segment_path_records = localize_sumtally_segment_paths(
+            content,
+            helper_summary,
+            workspace_root=workspace_root,
+            sumtally_dir=sumtally_dir,
+        )
+        write_text(sumtally_path, content)
+        write_libpath_file(libpath_path, paths.phits_root_folder)
+        generate_sum_inp(
+            selection.path,
+            out_files,
+            output_name,
+            float(helper_summary["sumfactor"]),
+            SUMTALLY_MODE,
+            tally_patterns,
+            sum_input_path,
+            sumtally_filename=sumtally_path.name,
+        )
+
+        summary = {
+            "schema_version": "dicomxphits_public_sumtally_generation_v1",
+            "stage": "generate_sumtally",
+            "stage_status": "success",
+            "workspace_root": str(workspace_root),
+            "command": {"argv": command_argv or sys.argv},
+            "returncode": 0,
+            "phits_execution_started": False,
+            "sumtally_scope": SUMTALLY_SCOPE,
+            "sumtally_mode": SUMTALLY_MODE,
+            "weight_field": WEIGHT_FIELD,
+            "sumtally_normalization": SUMTALLY_NORMALIZATION,
+            "rt_dose_conversion_hint": dict(RT_DOSE_CONVERSION_HINT),
+            "strict_gate": strict_gate,
+            "manifest_path": str(manifest_path),
+            "path_config": {
+                "phits_root_folder": paths.phits_root_folder,
+                "phits_executable_path": paths.phits_executable_path,
+                "phits2dicom_executable_path": paths.phits2dicom_executable_path,
+            },
+            "sumtally_base_input": str(selection.path),
+            "sumtally_base_input_selection_rule": selection.rule,
+            "sumtally_base_input_segment_id": selection.segment_id,
+            "sumtally_base_input_segment_index": selection.segment_index,
+            "sumtally_input_path_basis": path_basis,
+            "sumtally_segment_paths": segment_path_records,
+            "tally_patterns": tally_patterns,
+            "outputs": {
+                "sumtally_input": str(sumtally_path),
+                "sum_input": str(sum_input_path),
+                "libpath": str(libpath_path),
+                "sumtally_output": str(sumtally_dir / output_name),
+                "generation_summary": str(generation_summary_path),
+            },
+            "sumtally_helper_summary": helper_summary,
+        }
+        write_json(generation_summary_path, summary)
+        return summary
+    except Exception as exc:
+        write_failure_summary(
+            path=generation_summary_path,
+            stage="generate_sumtally",
+            workspace_root=workspace_root,
+            reason=str(exc),
+            command_argv=command_argv,
+            extra={
+                "sumtally_scope": SUMTALLY_SCOPE,
+                "sumtally_mode": SUMTALLY_MODE,
+                "weight_field": WEIGHT_FIELD,
+                "sumtally_normalization": SUMTALLY_NORMALIZATION,
+                "rt_dose_conversion_hint": dict(RT_DOSE_CONVERSION_HINT),
+            },
+        )
+        raise
+
+
+def expected_segment_outputs(workspace_root: Path, manifest: dict[str, Any]) -> list[Path]:
+    return [
+        resolve_workspace_path(workspace_root, str(segment.get("expected_output_path") or ""))
+        for segment in active_segments(manifest)
+    ]
+
+
+def validate_segment_outputs_exist(workspace_root: Path, manifest: dict[str, Any]) -> None:
+    missing = [path for path in expected_segment_outputs(workspace_root, manifest) if not path.is_file()]
+    if missing:
+        joined = ", ".join(str(path) for path in missing)
+        raise FileNotFoundError(f"Expected segment PHITS output file(s) not found: {joined}")
+
+
+def run_phits_sumtally(
+    *,
+    phits_executable_path: str,
+    sum_input: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    runner=subprocess.run,
+) -> subprocess.CompletedProcess[str]:
+    with sum_input.open("r", encoding="utf-8", errors="replace") as stdin:
+        result = runner(
+            [phits_executable_path],
+            stdin=stdin,
+            cwd=sum_input.parent,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout_path.write_text(result.stdout or "", encoding="utf-8")
+    stderr_path.write_text(result.stderr or "", encoding="utf-8")
+    return result
+
+
+def run_sumtally(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    sum_input: Path | None = None,
+    command_argv: list[str] | None = None,
+    runner=subprocess.run,
+) -> dict[str, Any]:
+    execution_summary_path = workspace_root / "analysis" / "sumtally_execution_summary.json"
+    phits_started = False
+    try:
+        require_execution_paths(paths)
+        manifest, _ = load_manifest(workspace_root)
+        validate_manifest_for_sumtally(manifest)
+        validate_segment_outputs_exist(workspace_root, manifest)
+
+        generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
+        generation_summary = load_json_object(generation_summary_path)
+        selected_sum_input = (
+            resolve_workspace_path(workspace_root, sum_input)
+            if sum_input is not None
+            else Path(str(generation_summary["outputs"]["sum_input"]))
+        )
+        if not selected_sum_input.is_file():
+            raise FileNotFoundError(f"Sumtally wrapper input not found: {selected_sum_input}")
+        expected_output = Path(str(generation_summary["outputs"]["sumtally_output"]))
+        stdout_path = workspace_root / "sumtally" / "sumtally_stdout.txt"
+        stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
+
+        phits_started = True
+        result = run_phits_sumtally(
+            phits_executable_path=paths.phits_executable_path,
+            sum_input=selected_sum_input,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            runner=runner,
+        )
+        output_exists = expected_output.is_file()
+        output_size = expected_output.stat().st_size if output_exists else None
+        summary = {
+            "schema_version": "dicomxphits_public_sumtally_execution_v1",
+            "stage": "run_sumtally",
+            "stage_status": "success" if result.returncode == 0 and output_exists else "failed",
+            "workspace_root": str(workspace_root),
+            "command": {
+                "argv": command_argv or sys.argv,
+                "phits_command": [paths.phits_executable_path],
+                "stdin": str(selected_sum_input),
+                "cwd": str(selected_sum_input.parent),
+                "shell": False,
+            },
+            "returncode": result.returncode,
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "phits_execution_started": phits_started,
+            "expected_sumtally_output": str(expected_output),
+            "expected_sumtally_output_exists": output_exists,
+            "expected_sumtally_output_size": output_size,
+            "sumtally_scope": generation_summary.get("sumtally_scope"),
+            "sumtally_mode": generation_summary.get("sumtally_mode"),
+            "weight_field": generation_summary.get("weight_field"),
+            "sumtally_normalization": generation_summary.get("sumtally_normalization"),
+            "rt_dose_conversion_hint": generation_summary.get("rt_dose_conversion_hint"),
+        }
+        write_json(execution_summary_path, summary)
+        return summary
+    except Exception as exc:
+        write_failure_summary(
+            path=execution_summary_path,
+            stage="run_sumtally",
+            workspace_root=workspace_root,
+            reason=str(exc),
+            command_argv=command_argv,
+            extra={"phits_execution_started": phits_started},
+        )
+        raise
+
+
+def paths_from_args(args: argparse.Namespace) -> ExternalToolPaths:
+    paths_config = load_paths_config(Path(args.paths_json)) if args.paths_json else None
+    return merged_tool_paths(
+        paths_config=paths_config,
+        phits_root_folder=args.phits_root_folder,
+        phits_executable_path=args.phits_executable_path,
+        phits2dicom_executable_path=args.phits2dicom_executable_path,
+    )
+
+
+def build_generate_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Generate public dicomxphits all-segments Sumtally inputs.")
+    parser.add_argument("--workspace-root", required=True)
+    parser.add_argument("--paths-json", default=None)
+    parser.add_argument("--phits-root-folder", default=None)
+    parser.add_argument("--phits-executable-path", default=None)
+    parser.add_argument("--phits2dicom-executable-path", default=None)
+    parser.add_argument("--output-name", default=DEFAULT_SUMTALLY_OUTPUT_NAME)
+    parser.add_argument("--base-input", default=None)
+    return parser
+
+
+def build_run_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run public dicomxphits Sumtally with PHITS.")
+    parser.add_argument("--workspace-root", required=True)
+    parser.add_argument("--paths-json", default=None)
+    parser.add_argument("--phits-root-folder", default=None)
+    parser.add_argument("--phits-executable-path", default=None)
+    parser.add_argument("--phits2dicom-executable-path", default=None)
+    parser.add_argument("--sum-input", default=None)
+    return parser
+
+
+def generate_main(argv: list[str] | None = None) -> int:
+    args = build_generate_parser().parse_args(argv)
+    try:
+        summary = generate_sumtally(
+            workspace_root=Path(args.workspace_root),
+            paths=paths_from_args(args),
+            output_name=args.output_name,
+            base_input=Path(args.base_input) if args.base_input else None,
+            command_argv=sys.argv if argv is None else ["dicomxphits-generate-sumtally", *argv],
+        )
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    print(summary["outputs"]["generation_summary"])
+    return 0
+
+
+def run_main(argv: list[str] | None = None) -> int:
+    args = build_run_parser().parse_args(argv)
+    try:
+        summary = run_sumtally(
+            workspace_root=Path(args.workspace_root),
+            paths=paths_from_args(args),
+            sum_input=Path(args.sum_input) if args.sum_input else None,
+            command_argv=sys.argv if argv is None else ["dicomxphits-run-sumtally", *argv],
+        )
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    print(workspace_summary_path(Path(args.workspace_root)).parent / "sumtally_execution_summary.json")
+    return 0 if summary.get("stage_status") == "success" else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(generate_main())
