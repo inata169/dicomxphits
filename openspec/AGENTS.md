@@ -33,9 +33,33 @@ to this repository's primary user must be phrased for a `yes/no` answer.
 After implementation, update every completed task accurately and run strict
 OpenSpec validation when the CLI is available. If it is unavailable, perform a
 manual structural review and report that CLI validation was not run. Keep the
-change active while its implementation is unmerged. Archive it and promote its
-deltas into `openspec/specs/` only after human authorization following merge or
-acceptance.
+change active while implementation, required validation, or a required human
+decision remains.
+
+## Completion and Archive
+
+OpenSpec cleanup is part of the current task. Before reporting completion of an
+approved change:
+
+1. Confirm that the human-approved acceptance criteria and required checks have
+   passed.
+2. Update `tasks.md` accurately. Record explicitly deferred non-blocking checks
+   without representing them as completed.
+3. Promote each accepted delta into the corresponding current specification at
+   `openspec/specs/<capability>/spec.md`.
+4. Move the complete change directory to
+   `openspec/changes/archive/YYYY-MM-DD-<change-id>/`.
+5. Run strict OpenSpec validation on the resulting specification tree and
+   archive when the CLI is available. Otherwise perform and report a manual
+   structural review.
+6. Inspect the final diff and repository status before the completion report.
+
+Use the OpenSpec archive command when it is available and compatible with the
+repository. A manual in-repository move is acceptable when the CLI is absent,
+provided delta promotion and structural validation are performed explicitly.
+Do not archive incomplete or blocked work merely to make the active changes
+directory empty. Report the remaining active change and its smallest unresolved
+condition instead.
 
 ## Conventions
 

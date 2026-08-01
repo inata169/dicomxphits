@@ -46,8 +46,13 @@ certification software.
 - New capabilities and behavioral or public-contract changes require a proposal,
   task checklist, requirement deltas, validation, and human approval before
   implementation unless the human explicitly waives or defers that sequence.
-- Completed changes remain active until merge or acceptance, then are archived
-  only with human authorization.
+- Active changes remain under `openspec/changes/` only while implementation,
+  required validation, or a required human decision remains.
+- Task completion includes promoting accepted deltas into `openspec/specs/` and
+  moving the change to
+  `openspec/changes/archive/YYYY-MM-DD-<change-id>/` before handoff.
+- Incomplete or blocked changes remain active with their unresolved condition
+  reported; they are not archived merely for directory cleanup.
 - OpenSpec documents are written in English and contain no machine-specific
   absolute paths or protected evidence.
 

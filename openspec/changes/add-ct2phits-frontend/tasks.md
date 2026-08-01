@@ -40,5 +40,5 @@
 - [ ] 4.2 Repeat pytest, compileall, and the public-tree audit in the workplace
   Dev Container.
 - [ ] 4.3 Open a Draft PR when GitHub tooling or connectivity is available.
-- [ ] 4.4 After merge and human authorization, promote the delta specification
-  and archive this change.
+- [ ] 4.4 At task completion, promote the accepted delta specification and move
+  this change to `openspec/changes/archive/YYYY-MM-DD-add-ct2phits-frontend/`.

@@ -74,8 +74,27 @@ architecture change, or scope expansion:
   runtime code;
 - include a proposal, task checklist, and requirement deltas with scenarios;
 - obtain human approval of the proposal before implementation; and
-- keep the change active until the implementation is merged or otherwise
-  accepted, then archive it only with human authorization.
+- keep the change active while implementation or required validation remains.
+
+Archiving is a required part of completing an approved OpenSpec-managed task.
+Once its human-approved acceptance criteria and required checks pass, the agent
+must, on the same branch and before the completion report:
+
+- update the task checklist accurately and record any explicitly deferred,
+  non-blocking verification;
+- promote the accepted deltas into the current specifications under
+  `openspec/specs/`;
+- move the change to
+  `openspec/changes/archive/YYYY-MM-DD-<change-id>/`; and
+- validate the resulting current specifications and archived change, using
+  strict OpenSpec CLI validation when available or a reported manual structural
+  review otherwise.
+
+This routine archive cleanup is authorized by the approved task and does not
+require a separate follow-up request. It does not authorize marking incomplete
+or blocked work complete. A change with unmet acceptance criteria, failed
+required validation, or an outstanding required human decision must remain
+active and be reported as such.
 
 A human may explicitly waive or defer this workflow. Fixes that restore an
 existing documented contract, and documentation-only corrections that do not

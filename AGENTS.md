@@ -22,6 +22,14 @@ explicitly waive or defer the proposal, as happened for work approved before
 OpenSpec was added to this repository. A bug fix that only restores already
 documented behavior does not require a new change proposal.
 
+OpenSpec cleanup is part of task completion, not a later follow-up. When the
+human-approved acceptance criteria and required checks for an active change are
+complete, promote its accepted deltas into `openspec/specs/`, move the change to
+`openspec/changes/archive/YYYY-MM-DD-<change-id>/`, and validate the resulting
+specification tree before the completion report. Do not archive a change that
+is incomplete, blocked, or awaiting a required human decision; report why it
+remains active instead.
+
 Use the inner loop only for safe failures caused by the current diff: change,
 run focused validation, inspect the result and diff, and apply a bounded fix as
 defined in `AI_AGENT_RULES.md`. Use the outer loop for specification, physics,
@@ -34,6 +42,8 @@ current diff may justify one final minimal correction round in the same pull
 request. Treat robustness ideas, refactors, optional coverage, and future work
 as non-blocking; do not create a follow-up branch, pull request, Issue, OpenSpec
 change, automation, or other work item unless a human explicitly requests it.
+The required OpenSpec promotion and archive cleanup above belongs to the
+current task and is not a follow-up work item.
 
 Run the applicable focused checks, then the full public checks:
 
