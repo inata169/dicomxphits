@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import pydicom
+from pydicom.misc import is_dicom
 
 from dicomxphits.ct2phits_datfiles import (
     RAW_CT2PHITS_NAMES,
@@ -114,6 +115,12 @@ def _read_ct_header(path: Path) -> Any | None:
         return None
 
 
+def _is_dicom_or_ct_candidate(path: Path) -> bool:
+    name = path.name.upper()
+    ct_named = name == "CT" or name.startswith(("CT.", "CT_", "CT-"))
+    return path.suffix.lower() == ".dcm" or ct_named or is_dicom(str(path))
+
+
 def select_ct_series(
     ct_dicom_root: Path,
     *,
@@ -134,7 +141,13 @@ def select_ct_series(
                 f"CT DICOM input files must not be symbolic links: {path.name}"
             )
         dataset = _read_ct_header(path)
-        if dataset is None or str(getattr(dataset, "Modality", "") or "") != "CT":
+        if dataset is None:
+            if _is_dicom_or_ct_candidate(path):
+                raise Ct2PhitsFrontendError(
+                    f"unreadable CT DICOM candidate: {path.name}"
+                )
+            continue
+        if str(getattr(dataset, "Modality", "") or "") != "CT":
             continue
         uid = str(getattr(dataset, "SeriesInstanceUID", "") or "")
         if not uid:
@@ -526,7 +539,14 @@ def run_ct2phits_frontend(
             confirmed_non_patient_phantom=True,
         )
         raw_hashes = dict(raw.sha256)
-        if raw_hashes != dict(prepared.raw_sha256):
+        post_prepare_raw = validate_raw_ct2phits_datfiles(
+            datfiles_root,
+            confirmed_non_patient_phantom=True,
+        )
+        if (
+            raw_hashes != dict(prepared.raw_sha256)
+            or raw_hashes != dict(post_prepare_raw.sha256)
+        ):
             raise Ct2PhitsFrontendError(
                 "raw CT2PHITS DATfiles changed during downstream handoff"
             )

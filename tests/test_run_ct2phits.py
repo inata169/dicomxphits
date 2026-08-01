@@ -15,6 +15,7 @@ PUBLIC_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
+import dicomxphits.run_ct2phits as run_ct2phits_module
 from dicomxphits.run_ct2phits import (
     CT2PHITS_GENERATED_NAMES,
     Ct2PhitsFrontendError,
@@ -411,3 +412,78 @@ def test_multiple_ct_series_require_explicit_selection(tmp_path: Path) -> None:
     selected = select_ct_series(root, series_instance_uid=second_uid)
     assert selected.series_instance_uid == second_uid
     assert len(selected.files) == 2
+
+
+def test_unreadable_ct_dicom_candidate_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+    )
+    (root / "CT.corrupt.dcm").write_bytes(b"not a readable DICOM file")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="unreadable CT DICOM candidate"):
+        select_ct_series(root)
+
+
+def test_unrelated_non_dicom_file_is_ignored(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    series_uid = _uid()
+    _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=series_uid,
+    )
+    (root / "notes.txt").write_text("not DICOM\n", encoding="utf-8")
+
+    selected = select_ct_series(root)
+
+    assert selected.series_instance_uid == series_uid
+    assert len(selected.files) == 2
+
+
+def test_raw_datfile_change_during_handoff_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    original_prepare = run_ct2phits_module.prepare_ct2phits_assets
+
+    def mutating_prepare(**kwargs):
+        prepared = original_prepare(**kwargs)
+        raw_root = Path(kwargs["raw_datfiles_root"])
+        (raw_root / "CTsurf.dat").write_text(
+            "$ synthetic changed during handoff\n",
+            encoding="utf-8",
+        )
+        return prepared
+
+    monkeypatch.setattr(
+        run_ct2phits_module,
+        "prepare_ct2phits_assets",
+        mutating_prepare,
+    )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="raw CT2PHITS DATfiles changed during downstream handoff",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            timeout_seconds=12.0,
+            runner=_success_runner(case["workspace"]),
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert "changed during downstream handoff" in summary["failure_reason"]
