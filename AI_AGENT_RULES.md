@@ -63,6 +63,26 @@ test bypass or weaker validation would be needed, the specification/test/
 fixture/reference may be wrong, or an out-of-scope change would be required.
 Record each observed failure and result; do not hide or delete evidence.
 
+## OpenSpec change management
+
+Use `openspec/` to manage planned repository capabilities and behavioral
+contracts. For a human-requested new capability, public-contract change,
+architecture change, or scope expansion:
+
+- inspect `openspec/project.md`, current specifications, and active changes;
+- create a unique verb-led change under `openspec/changes/` before changing
+  runtime code;
+- include a proposal, task checklist, and requirement deltas with scenarios;
+- obtain human approval of the proposal before implementation; and
+- keep the change active until the implementation is merged or otherwise
+  accepted, then archive it only with human authorization.
+
+A human may explicitly waive or defer this workflow. Fixes that restore an
+existing documented contract, and documentation-only corrections that do not
+change behavior, do not require a proposal. OpenSpec never overrides the
+protected-material, external-execution, public-scope, physics, or human-decision
+boundaries in this file.
+
 ## Pull request stopping rule
 
 Completion is defined by the human-approved task and acceptance criteria, not

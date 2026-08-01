@@ -14,6 +14,14 @@ remote, and tags. Read the files relevant to the task and make the smallest
 in-scope change. Do not alter runtime behavior, public physics, DICOM meaning,
 or protected data unless a human explicitly approves that separate work.
 
+Use the OpenSpec workflow in `openspec/AGENTS.md` for a new capability,
+behavioral or public-contract change, architecture change, or other planned
+scope expansion. Create the change proposal and delta specifications before
+implementation, validate them, and obtain human approval. A human may
+explicitly waive or defer the proposal, as happened for work approved before
+OpenSpec was added to this repository. A bug fix that only restores already
+documented behavior does not require a new change proposal.
+
 Use the inner loop only for safe failures caused by the current diff: change,
 run focused validation, inspect the result and diff, and apply a bounded fix as
 defined in `AI_AGENT_RULES.md`. Use the outer loop for specification, physics,
