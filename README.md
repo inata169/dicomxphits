@@ -164,7 +164,7 @@ dicomxphits-run-ct2phits `
 If the input directory contains multiple CT series, also pass
 `--ct-series-instance-uid <uid>`. The stage refuses non-Windows execution,
 missing batch/table prerequisites, an existing workspace, failed or timed-out
-execution, and missing, empty, or stale outputs. It writes
+execution, and pre-existing, missing, or empty outputs. It writes
 `ct2phits_workspace_manifest.json`, `ct2phits_execution_summary.json`, captured
 logs, the complete nine-file `DATfiles` inventory, and
 `prepared_ct_assets/`. The summary records the eight-file raw handoff validated

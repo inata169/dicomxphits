@@ -122,7 +122,7 @@ def _write_generated_datfiles(
     *,
     missing: str | None = None,
     empty: str | None = None,
-    stale: bool = False,
+    old_mtime: bool = False,
 ) -> None:
     root.mkdir(exist_ok=True)
     for name in CT2PHITS_GENERATED_NAMES:
@@ -143,7 +143,7 @@ def _write_generated_datfiles(
             )
         path = root / name
         path.write_text("" if name == empty else content, encoding="utf-8")
-        if stale:
+        if old_mtime:
             old_ns = time.time_ns() - 10_000_000_000
             os.utime(path, ns=(old_ns, old_ns))
 
@@ -227,6 +227,7 @@ def test_windows_frontend_generates_input_inventory_summary_and_handoff(
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["status"] == "completed"
     assert summary["returncode"] == 0
+    assert summary["pre_run_outputs_absent"] is True
     assert len(summary["generated_inventory"]) == 9
     assert len(summary["raw_datfiles_sha256"]) == 8
     assert len(summary["prepared_assets_sha256"]) == 6
@@ -466,7 +467,6 @@ def test_default_runner_decodes_process_output_with_replacement(
     [
         ("missing", "generated files are missing"),
         ("empty", "generated files are empty"),
-        ("stale", "generated files are stale"),
     ],
 )
 def test_invalid_generated_output_is_rejected_and_recorded(
@@ -481,7 +481,6 @@ def test_invalid_generated_output_is_rejected_and_recorded(
             case["workspace"] / "DATfiles",
             missing="CTtrans.dat" if mode == "missing" else None,
             empty="CTvoxel.dat" if mode == "empty" else None,
-            stale=mode == "stale",
         )
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -503,6 +502,41 @@ def test_invalid_generated_output_is_rejected_and_recorded(
     )
     assert summary["status"] == "failed"
     assert expected in summary["failure_reason"]
+
+
+def test_generated_outputs_with_coarse_old_mtime_are_accepted(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(
+            case["workspace"] / "DATfiles",
+            old_mtime=True,
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"],
+        rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"],
+        workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True,
+        runner=runner,
+        platform_system="Windows",
+    )
+
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["status"] == "completed"
+    assert summary["pre_run_outputs_absent"] is True
+    assert len(summary["generated_inventory"]) == 9
+
+
+def test_preexisting_generated_output_is_rejected(tmp_path: Path) -> None:
+    datfiles_root = tmp_path / "DATfiles"
+    datfiles_root.mkdir()
+    (datfiles_root / "CTtrans.dat").write_text("old\n", encoding="utf-8")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="absent before execution"):
+        run_ct2phits_module._require_generated_outputs_absent(datfiles_root)
 
 
 def test_existing_workspace_is_never_overwritten(tmp_path: Path) -> None:
@@ -1019,9 +1053,9 @@ def test_raw_change_after_initial_inventory_is_rejected(
     original_inventory = run_ct2phits_module._generated_inventory
     inventory_calls = 0
 
-    def mutating_inventory(datfiles_root: Path, *, started_ns: int):
+    def mutating_inventory(datfiles_root: Path):
         nonlocal inventory_calls
-        result = original_inventory(datfiles_root, started_ns=started_ns)
+        result = original_inventory(datfiles_root)
         inventory_calls += 1
         if inventory_calls == 1:
             (datfiles_root / "CTsurf.dat").write_text(

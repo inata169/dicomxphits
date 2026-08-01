@@ -126,20 +126,22 @@ for undecodable byte sequences.
 The frontend SHALL require the nine CT2PHITS-generated files
 `CTusrparam.dat`, `CTcell.dat`, `CTmaterial.dat`, `CTuniverse.dat`,
 `CTsurf.dat`, `CTmatnamecolor.dat`, `CTvoxel.dat`, `phantominfo.dat`, and
-`CTtrans.dat`. Every required file MUST be a fresh, non-empty regular file for
-the current execution, and the inventory SHALL record its size, modification
-time, and SHA-256 digest.
+`CTtrans.dat`. Every required file MUST be absent immediately before execution
+and MUST be a non-empty regular file afterward. The inventory SHALL record each
+file's size, modification time, and SHA-256 digest without relying on filesystem
+timestamp precision to establish freshness. The execution summary SHALL record
+whether the pre-run absence check passed.
 
 #### Scenario: Complete fresh output
 
-- **WHEN** all nine required files were produced after the current execution
-  started and are non-empty regular files
+- **WHEN** all nine required files were absent immediately before execution and
+  are non-empty regular files afterward
 - **THEN** the frontend records all nine files in the generated inventory
 
-#### Scenario: Missing, empty, symbolic, or stale output
+#### Scenario: Pre-existing, missing, empty, or symbolic output
 
-- **WHEN** any required generated file is missing, empty, a symbolic link, or
-  older than the current execution
+- **WHEN** any required generated file exists before execution or is missing,
+  empty, or a symbolic link afterward
 - **THEN** the frontend marks the stage failed and does not accept the handoff
 
 ### Requirement: Existing DATfiles and Coordinate Handoff

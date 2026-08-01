@@ -46,8 +46,8 @@ supplied RT-PHITS root, writes an OpenSpec-compatible `ct2phits.inp`, and calls
 the supplied `RTphits_win.bat`. It does not discover an RT-PHITS installation
 or invoke `ct2phits_win.exe` directly.
 
-The stage inventories all nine generated files, rejects missing, empty, stale,
-or pre-existing output, records SHA-256 digests and process logs, and hands the
+The stage inventories all nine generated files, rejects pre-existing, missing,
+or empty output, records SHA-256 digests and process logs, and hands the
 eight downstream raw files plus the copied CT reference to the existing CT
 asset preparation functions. `CTtrans.dat` remains part of the nine-file
 generation inventory; downstream geometry uses the validated `CTtrans.inp`

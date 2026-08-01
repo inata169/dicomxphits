@@ -521,15 +521,23 @@ def _output_text(value: str | bytes | None) -> str:
     return value
 
 
-def _generated_inventory(
-    datfiles_root: Path,
-    *,
-    started_ns: int,
-) -> dict[str, dict[str, Any]]:
+def _require_generated_outputs_absent(datfiles_root: Path) -> None:
+    preexisting = [
+        name
+        for name in CT2PHITS_GENERATED_NAMES
+        if (datfiles_root / name).exists() or (datfiles_root / name).is_symlink()
+    ]
+    if preexisting:
+        raise Ct2PhitsFrontendError(
+            "CT2PHITS generated files must be absent before execution: "
+            + ", ".join(preexisting)
+        )
+
+
+def _generated_inventory(datfiles_root: Path) -> dict[str, dict[str, Any]]:
     inventory: dict[str, dict[str, Any]] = {}
     missing: list[str] = []
     empty: list[str] = []
-    stale: list[str] = []
     for name in CT2PHITS_GENERATED_NAMES:
         path = datfiles_root / name
         if not path.is_file():
@@ -543,8 +551,6 @@ def _generated_inventory(
         if stat.st_size <= 0:
             empty.append(name)
             continue
-        if stat.st_mtime_ns < started_ns:
-            stale.append(name)
         inventory[name] = {
             "path": f"DATfiles/{name}",
             "size_bytes": stat.st_size,
@@ -558,11 +564,6 @@ def _generated_inventory(
     if empty:
         raise Ct2PhitsFrontendError(
             "required CT2PHITS generated files are empty: " + ", ".join(empty)
-        )
-    if stale:
-        raise Ct2PhitsFrontendError(
-            "CT2PHITS generated files are stale for the current run: "
-            + ", ".join(stale)
         )
     return inventory
 
@@ -754,7 +755,10 @@ def run_ct2phits_frontend(
     inventory: dict[str, dict[str, Any]] = {}
     raw_hashes: dict[str, str] | None = None
     prepared_hashes: dict[str, str] | None = None
+    pre_run_outputs_absent = False
     try:
+        _require_generated_outputs_absent(datfiles_root)
+        pre_run_outputs_absent = True
         completed = runner(command, root, timeout_seconds)
         returncode = completed.returncode
         stdout = _output_text(completed.stdout)
@@ -763,7 +767,7 @@ def run_ct2phits_frontend(
             raise Ct2PhitsFrontendError(
                 f"RTphits_win.bat returned non-zero exit code {returncode}"
             )
-        inventory = _generated_inventory(datfiles_root, started_ns=started_ns)
+        inventory = _generated_inventory(datfiles_root)
         raw = validate_raw_ct2phits_datfiles(
             datfiles_root,
             confirmed_non_patient_phantom=True,
@@ -787,10 +791,7 @@ def run_ct2phits_frontend(
             raise Ct2PhitsFrontendError(
                 "raw CT2PHITS DATfiles changed during downstream handoff"
             )
-        post_handoff_inventory = _generated_inventory(
-            datfiles_root,
-            started_ns=started_ns,
-        )
+        post_handoff_inventory = _generated_inventory(datfiles_root)
         if inventory != post_handoff_inventory:
             raise Ct2PhitsFrontendError(
                 "CT2PHITS generated files changed during downstream handoff"
@@ -835,6 +836,7 @@ def run_ct2phits_frontend(
         "duration_seconds": (finished_ns - started_ns) / 1_000_000_000,
         "timed_out": timed_out,
         "process_tree_termination_error": process_tree_termination_error,
+        "pre_run_outputs_absent": pre_run_outputs_absent,
         "returncode": returncode,
         "stdout_path": "logs/ct2phits.stdout.log",
         "stderr_path": "logs/ct2phits.stderr.log",
