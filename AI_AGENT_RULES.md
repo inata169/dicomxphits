@@ -37,6 +37,29 @@ sanitized template `templates/phits2dicom_rtdose_template.dcm`. Never open it as
 part of a repository-boundary audit. Do not add a blanket `*.dcm` ignore rule:
 a new tracked DICOM requires explicit human review and an allowlist change.
 
+## Human question format
+
+Every question directed to this repository's primary user must be answerable
+with `yes` or `no`. State the evidence or context first, make one concrete
+proposal, and end the question in the form `...でよいですか？ yes/no` when
+communicating in Japanese.
+
+- Do not combine independent choices, permissions, paths, or external actions
+  into one yes/no question.
+- When multiple options exist, recommend one concrete option and ask about it
+  first. If the answer is `no`, do not infer approval for another option; offer
+  the next concrete option separately.
+- When a free-form value is needed, propose a safe value derived from available
+  evidence and ask whether it is acceptable. The user may include a preferred
+  replacement together with `no`.
+- A `yes` authorizes only the action and scope stated in that question. Silence,
+  ambiguity, and `no` are not consent.
+- Do not weaken a safety stop or disguise an unresolved specification, physics,
+  clinical, or scope decision merely to force it into a binary format. Report
+  the blocker declaratively, then ask about one safe next step.
+
+Status reports and completion reports do not need to end with a question.
+
 ## External execution
 
 Run PHITS, Sumtally, ct2phits, phits2dicom, GPR, long Monte Carlo calculations,

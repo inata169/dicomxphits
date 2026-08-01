@@ -28,7 +28,9 @@ requirement uses SHALL or MUST and has at least one scenario headed exactly
 `#### Scenario:`.
 
 Ask a human to approve the proposal before runtime implementation. Questions
-to this repository's primary user must be phrased for a `yes/no` answer.
+to this repository's primary user must follow the binary question and
+single-proposal rules in the repository-level `AGENTS.md` and
+`AI_AGENT_RULES.md`.
 
 After implementation, update every completed task accurately and run strict
 OpenSpec validation when the CLI is available. If it is unavailable, perform a
