@@ -90,6 +90,12 @@ requirement.
 ## Migration Plan
 
 The feature is additive. Existing callers may continue supplying already
-validated DATfiles. After merge and human acceptance, promote the delta
+validated DATfiles. At approved task completion, promote the accepted delta
 requirements into `openspec/specs/ct2phits-frontend/spec.md` and archive this
-change.
+change on the same branch before handoff.
+
+## Completion State
+
+The accepted requirements were promoted and this change was archived with
+human authorization on 2026-08-01. Workplace Dev Container cross-validation
+and Draft PR creation remain explicitly deferred, non-blocking handoff items.

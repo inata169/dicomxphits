@@ -41,8 +41,8 @@ a new tracked DICOM requires explicit human review and an allowlist change.
 
 Every question directed to this repository's primary user must be answerable
 with `yes` or `no`. State the evidence or context first, make one concrete
-proposal, and end the question in the form `...でよいですか？ yes/no` when
-communicating in Japanese.
+proposal, and end a Japanese question with the equivalent of
+`Is <proposal> acceptable? yes/no`.
 
 - Do not combine independent choices, permissions, paths, or external actions
   into one yes/no question.

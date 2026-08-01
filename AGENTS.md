@@ -16,11 +16,12 @@ or protected data unless a human explicitly approves that separate work.
 
 Every direct question to this repository's primary user must present one
 concrete proposal that can be answered with `yes` or `no`, and should end in
-the form `...でよいですか？ yes/no`. Do not bundle independent decisions or
-permissions into one question. When a decision is not naturally binary, first
-state the relevant evidence, propose the safest concrete option, and ask for a
-yes/no decision; if rejected, offer the next concrete option separately. A
-`no` rejects only the stated proposal and never authorizes an alternative.
+Japanese with the equivalent of `Is <proposal> acceptable? yes/no`. Do not
+bundle independent decisions or permissions into one question. When a decision
+is not naturally binary, first state the relevant evidence, propose the safest
+concrete option, and ask for a yes/no decision; if rejected, offer the next
+concrete option separately. A `no` rejects only the stated proposal and never
+authorizes an alternative.
 
 Use the OpenSpec workflow in `openspec/AGENTS.md` for a new capability,
 behavioral or public-contract change, architecture change, or other planned

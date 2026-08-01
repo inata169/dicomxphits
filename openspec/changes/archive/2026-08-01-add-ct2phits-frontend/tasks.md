@@ -38,7 +38,9 @@
 - [x] 4.1 Run the optional real RT-PHITS smoke test only after explicit human
   authorization with a designated non-patient phantom outside the repository.
 - [ ] 4.2 Repeat pytest, compileall, and the public-tree audit in the workplace
-  Dev Container.
+  Dev Container. Deferred as a non-blocking workplace cross-check; Linux
+  validation is not claimed.
 - [ ] 4.3 Open a Draft PR when GitHub tooling or connectivity is available.
-- [ ] 4.4 At task completion, promote the accepted delta specification and move
+  Deferred as a non-blocking handoff item; no Draft PR is claimed.
+- [x] 4.4 At task completion, promote the accepted delta specification and move
   this change to `openspec/changes/archive/YYYY-MM-DD-add-ct2phits-frontend/`.
