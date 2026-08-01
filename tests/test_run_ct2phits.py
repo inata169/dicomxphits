@@ -1,0 +1,413 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pydicom
+import pytest
+from pydicom.dataset import Dataset, FileDataset
+
+PUBLIC_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(PUBLIC_SRC) not in sys.path:
+    sys.path.insert(0, str(PUBLIC_SRC))
+
+from dicomxphits.run_ct2phits import (
+    CT2PHITS_GENERATED_NAMES,
+    Ct2PhitsFrontendError,
+    run_ct2phits_frontend,
+    select_ct_series,
+)
+
+
+def _uid() -> str:
+    return pydicom.uid.generate_uid(prefix=None)
+
+
+def _dataset(path: Path, *, modality: str, sop_class_uid: str) -> FileDataset:
+    file_meta = Dataset()
+    file_meta.MediaStorageSOPClassUID = sop_class_uid
+    file_meta.MediaStorageSOPInstanceUID = _uid()
+    file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+    dataset = FileDataset(
+        str(path),
+        {},
+        file_meta=file_meta,
+        preamble=b"\0" * 128,
+    )
+    dataset.SOPClassUID = sop_class_uid
+    dataset.SOPInstanceUID = file_meta.MediaStorageSOPInstanceUID
+    dataset.Modality = modality
+    return dataset
+
+
+def _write_ct_series(
+    root: Path,
+    *,
+    frame_uid: str,
+    series_uid: str,
+    rows: int = 64,
+    columns: int = 96,
+    name_prefix: str = "CT",
+) -> tuple[Path, ...]:
+    root.mkdir(exist_ok=True)
+    paths: list[Path] = []
+    for index, z_mm in enumerate((-100.0, -50.0), start=1):
+        path = root / f"{name_prefix}.{index}.dcm"
+        dataset = _dataset(
+            path,
+            modality="CT",
+            sop_class_uid=pydicom.uid.CTImageStorage,
+        )
+        dataset.FrameOfReferenceUID = frame_uid
+        dataset.SeriesInstanceUID = series_uid
+        dataset.StudyInstanceUID = _uid()
+        dataset.PatientPosition = "HFS"
+        dataset.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
+        dataset.ImagePositionPatient = [-120.0, -80.0, z_mm]
+        dataset.Rows = rows
+        dataset.Columns = columns
+        dataset.save_as(str(path))
+        paths.append(path)
+    return tuple(paths)
+
+
+def _write_rtplan(path: Path, *, frame_uid: str) -> Path:
+    dataset = _dataset(
+        path,
+        modality="RTPLAN",
+        sop_class_uid=pydicom.uid.RTPlanStorage,
+    )
+    referenced_frame = Dataset()
+    referenced_frame.FrameOfReferenceUID = frame_uid
+    dataset.ReferencedFrameOfReferenceSequence = [referenced_frame]
+    beam = Dataset()
+    beam.BeamNumber = 1
+    control_point = Dataset()
+    control_point.ControlPointIndex = 0
+    control_point.IsocenterPosition = [10.0, 20.0, 30.0]
+    beam.ControlPointSequence = [control_point]
+    dataset.BeamSequence = [beam]
+    referenced_beam = Dataset()
+    referenced_beam.ReferencedBeamNumber = 1
+    fraction_group = Dataset()
+    fraction_group.ReferencedBeamSequence = [referenced_beam]
+    dataset.FractionGroupSequence = [fraction_group]
+    dataset.save_as(str(path))
+    return path
+
+
+def _fake_rtphits_root(root: Path) -> Path:
+    (root / "data").mkdir(parents=True)
+    (root / "RTphits_win.bat").write_text(
+        "synthetic fake runner marker\n",
+        encoding="utf-8",
+    )
+    (root / "data" / "HumanVoxelTable.data").write_text(
+        "synthetic fake table marker\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def _write_generated_datfiles(
+    root: Path,
+    *,
+    missing: str | None = None,
+    empty: str | None = None,
+    stale: bool = False,
+) -> None:
+    root.mkdir(exist_ok=True)
+    for name in CT2PHITS_GENERATED_NAMES:
+        if name == missing:
+            continue
+        content = f"$ synthetic {name}\n"
+        if name == "CTusrparam.dat":
+            content = (
+                "set: c81[12]\n"
+                "set: c82[8]\n"
+                "set: c83[1]\n"
+                "set: c84[0.8]\n"
+                "set: c85[0.8]\n"
+                "set: c86[1.0]\n"
+                "set: c91[-12.0]\n"
+                "set: c92[-8.0]\n"
+                "set: c93[-10.0]\n"
+            )
+        path = root / name
+        path.write_text("" if name == empty else content, encoding="utf-8")
+        if stale:
+            old_ns = time.time_ns() - 10_000_000_000
+            os.utime(path, ns=(old_ns, old_ns))
+
+
+def _case(tmp_path: Path) -> dict[str, Path]:
+    frame_uid = _uid()
+    ct_root = tmp_path / "source_ct"
+    _write_ct_series(
+        ct_root,
+        frame_uid=frame_uid,
+        series_uid=_uid(),
+    )
+    return {
+        "ct_root": ct_root,
+        "rtplan": _write_rtplan(tmp_path / "RTPLAN.dcm", frame_uid=frame_uid),
+        "rtphits": _fake_rtphits_root(tmp_path / "licensed_rtphits"),
+        "workspace": tmp_path / "licensed_rtphits" / "work" / "case",
+    }
+
+
+def _success_runner(workspace: Path):
+    def runner(command, cwd, timeout_seconds):
+        assert Path(cwd).name == "licensed_rtphits"
+        assert timeout_seconds == 12.0
+        assert Path(command[4]).name == "RTphits_win.bat"
+        assert Path(command[5]).name == "ct2phits.inp"
+        _write_generated_datfiles(workspace / "DATfiles")
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+
+    return runner
+
+
+def test_windows_frontend_generates_input_inventory_summary_and_handoff(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"],
+        rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"],
+        workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True,
+        timeout_seconds=12.0,
+        runner=_success_runner(case["workspace"]),
+        platform_system="Windows",
+    )
+
+    input_bytes = (case["workspace"] / "ct2phits.inp").read_bytes()
+    assert b"\r" not in input_bytes
+    assert input_bytes.decode("utf-8") == (
+        "CT2PHITS input\n"
+        '"data/HumanVoxelTable.data"\n'
+        '"work/case/CT/"\n'
+        '"work/case/DATfiles/"\n'
+        "1 2\n"
+        "1 96 1 64\n"
+        "8 8 2\n"
+        "1\n"
+    )
+    assert len(tuple((case["workspace"] / "CT").iterdir())) == 2
+    assert result.ct_reference_dicom.name == "CT000001.dcm"
+    assert (result.prepared_assets_root / "CTtrans.inp").is_file()
+    assert not (result.prepared_assets_root / "CTtrans.dat").exists()
+    transform = (result.prepared_assets_root / "CTtrans.inp").read_text(
+        encoding="utf-8"
+    )
+    assert "-1.00000   0.00000   0.00000" in transform
+    assert "0.00000   1.00000   0.00000" in transform
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "completed"
+    assert manifest["ct_series"]["rows"] == 64
+    assert manifest["ct_series"]["columns"] == 96
+    assert len(manifest["generated_output_contract"]) == 9
+    assert len(manifest["downstream_raw_datfiles_contract"]) == 8
+    assert manifest["cttrans_contract"]["downstream_role"].startswith(
+        "inventory_only"
+    )
+
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["status"] == "completed"
+    assert summary["returncode"] == 0
+    assert len(summary["generated_inventory"]) == 9
+    assert len(summary["raw_datfiles_sha256"]) == 8
+    assert len(summary["prepared_assets_sha256"]) == 6
+    assert summary["workspace_preparation_handoff"]["validated_with"] == [
+        "validate_raw_ct2phits_datfiles",
+        "prepare_ct2phits_assets",
+    ]
+    assert (case["workspace"] / "logs" / "ct2phits.stdout.log").read_text(
+        encoding="utf-8"
+    ) == "synthetic stdout\n"
+
+
+def test_non_windows_execution_is_rejected_before_workspace_creation(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+
+    with pytest.raises(Ct2PhitsFrontendError, match="Windows only"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            platform_system="Linux",
+        )
+
+    assert not case["workspace"].exists()
+
+
+def test_missing_batch_is_rejected_before_workspace_creation(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    (case["rtphits"] / "RTphits_win.bat").unlink()
+
+    with pytest.raises(Ct2PhitsFrontendError, match="batch file is missing"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            platform_system="Windows",
+        )
+
+    assert not case["workspace"].exists()
+
+
+def test_nonzero_return_code_is_recorded(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        return subprocess.CompletedProcess(command, 7, "partial\n", "failed\n")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="non-zero exit code 7"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert summary["returncode"] == 7
+    assert summary["timed_out"] is False
+
+
+def test_timeout_is_recorded(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        raise subprocess.TimeoutExpired(command, timeout_seconds, output="partial")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="timed out"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            timeout_seconds=0.5,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["timed_out"] is True
+    assert summary["returncode"] is None
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("missing", "generated files are missing"),
+        ("empty", "generated files are empty"),
+        ("stale", "generated files are stale"),
+    ],
+)
+def test_invalid_generated_output_is_rejected_and_recorded(
+    tmp_path: Path,
+    mode: str,
+    expected: str,
+) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(
+            case["workspace"] / "DATfiles",
+            missing="CTtrans.dat" if mode == "missing" else None,
+            empty="CTvoxel.dat" if mode == "empty" else None,
+            stale=mode == "stale",
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(Ct2PhitsFrontendError, match=expected):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert expected in summary["failure_reason"]
+
+
+def test_existing_workspace_is_never_overwritten(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    case["workspace"].mkdir(parents=True)
+    marker = case["workspace"] / "keep.txt"
+    marker.write_text("user data\n", encoding="utf-8")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="already exists"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            platform_system="Windows",
+        )
+
+    assert marker.read_text(encoding="utf-8") == "user data\n"
+
+
+def test_multiple_ct_series_require_explicit_selection(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    frame_uid = _uid()
+    first_uid = _uid()
+    second_uid = _uid()
+    _write_ct_series(
+        root,
+        frame_uid=frame_uid,
+        series_uid=first_uid,
+        name_prefix="A",
+    )
+    _write_ct_series(
+        root,
+        frame_uid=frame_uid,
+        series_uid=second_uid,
+        name_prefix="B",
+    )
+
+    with pytest.raises(Ct2PhitsFrontendError, match="multiple CT DICOM series"):
+        select_ct_series(root)
+
+    selected = select_ct_series(root, series_instance_uid=second_uid)
+    assert selected.series_instance_uid == second_uid
+    assert len(selected.files) == 2

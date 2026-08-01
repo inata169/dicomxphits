@@ -40,6 +40,23 @@ runtime image. It intentionally has no privileged mode, Docker socket, host
 network, host tool folders, patient-data mounts, credentials, PHITS tools, or
 real DICOM inputs.
 
+After the CT2PHITS frontend mock tests pass on Windows, repeat this cross-check
+in the workplace Dev Container:
+
+```bash
+python -m pytest tests/test_run_ct2phits.py -q -p no:cacheprovider
+python -m pytest -q -p no:cacheprovider
+python -m compileall src
+python tools/verify_public_tree.py
+git diff --check
+git status --short
+```
+
+The Dev Container check is synthetic/mock validation only. Do not mount or run
+RT-PHITS, CT2PHITS, PHITS, Sumtally, phits2dicom, GPR, or real DICOM there.
+Until these commands are actually run in that container, report the Linux/Dev
+Container validation as unverified rather than passed.
+
 Windows Local and the Dev Container cover Python development, synthetic and
 mock tests, documentation, and the public-boundary audit. Real PHITS, Sumtally,
 ct2phits, phits2dicom, GPR, real DICOM, and long calculations are outside this

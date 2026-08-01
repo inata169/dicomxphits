@@ -19,6 +19,7 @@ test = [
 ]
 
 [project.scripts]
+dicomxphits-run-ct2phits = "dicomxphits.run_ct2phits:main"
 dicomxphits-prepare-3dcrt-workspace = "dicomxphits.prepare_3dcrt_workspace:main"
 dicomxphits-prepare-ct-calibration = "dicomxphits.prepare_ct_calibration:main"
 dicomxphits-run-segments = "dicomxphits.run_segments:main"

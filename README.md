@@ -131,10 +131,12 @@ The workflow must keep these paths separate:
 - phits2dicom executable path: used for RTDOSE conversion
 
 No PHITS or RTphits official distribution file is bundled in this tree.
-The user's licensed PHITS installation, including phits2dicom where that stage
-is used, is the only external software prerequisite for the default workflow.
-Workspace preparation also requires the raw `DATfiles` directory emitted by
-`ct2phits.exe` for a confirmed non-patient phantom, plus one CT DICOM slice
+The user's separately obtained licensed installations are external
+prerequisites. The optional Windows CT2PHITS frontend requires the user-supplied
+`RTphits_win.bat` and `data/HumanVoxelTable.data`; it never invokes
+`ct2phits_win.exe` directly. Workspace preparation requires the raw `DATfiles`
+directory emitted through that batch path for a confirmed non-patient phantom,
+plus one CT DICOM slice
 from that same series. These are input data, not bundled software. Supply them
 with `--ct-datfiles-root`, `--ct-reference-dicom`, and
 `--confirm-non-patient-phantom`. dicomxphits validates the complete raw
@@ -143,6 +145,49 @@ Frame of Reference, and prepares the required PHITS include files. Do not
 rename `CTuniverse.dat`, `CTvoxel.dat`, or `CTtrans.dat` by hand.
 The default does not require Elekta files, an NDA, paid vendor data, facility
 geometry or calibration, or the original IAEA phase-space/header files.
+
+## CT2PHITS Frontend Adapter
+
+On Windows, create a new CT2PHITS workspace below the separately supplied
+RT-PHITS root and run the verified batch path explicitly:
+
+```powershell
+dicomxphits-run-ct2phits `
+  --ct-dicom-root <non-patient-ct-directory> `
+  --rtplan <non-patient-rtplan.dcm> `
+  --rtphits-root <licensed-rtphits-root> `
+  --workspace-root <licensed-rtphits-root>/work/<case-id> `
+  --timeout-seconds 300 `
+  --confirm-non-patient-phantom
+```
+
+If the input directory contains multiple CT series, also pass
+`--ct-series-instance-uid <uid>`. The stage refuses non-Windows execution,
+missing batch/table prerequisites, an existing workspace, failed or timed-out
+execution, and missing, empty, or stale outputs. It writes
+`ct2phits_workspace_manifest.json`, `ct2phits_execution_summary.json`, captured
+logs, the complete nine-file `DATfiles` inventory, and
+`prepared_ct_assets/`. The summary records the eight-file raw handoff validated
+by `validate_raw_ct2phits_datfiles()` and the coordinate-corrected assets
+created by `prepare_ct2phits_assets()`; generated `CTtrans.dat` is inventoried,
+while the downstream transform is the validated `CTtrans.inp`.
+
+The generated handoff can then be supplied to the existing workspace adapter:
+
+```powershell
+dicomxphits-prepare-3dcrt-workspace `
+  --rtplan <non-patient-rtplan.dcm> `
+  --workspace-root <new-public-workspace> `
+  --phits-root-folder <licensed-phits-root> `
+  --phits-executable-path <licensed-phits-executable> `
+  --phits2dicom-executable-path <licensed-phits2dicom-executable> `
+  --ct-datfiles-root <ct2phits-workspace>/DATfiles `
+  --ct-reference-dicom <ct2phits-workspace>/CT/CT000001.dcm `
+  --confirm-non-patient-phantom
+```
+
+Neither adapter runs PHITS, Sumtally, phits2dicom, or GPR as part of this
+frontend stage.
 
 ## Directory Layout
 
