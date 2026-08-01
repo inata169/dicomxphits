@@ -54,6 +54,7 @@ def _write_ct_series(
     columns: int = 96,
     name_prefix: str = "CT",
     z_positions_mm: tuple[float, ...] = (-100.0, -50.0),
+    pixel_spacing_mm: tuple[float, float] = (0.8, 0.8),
 ) -> tuple[Path, ...]:
     root.mkdir(exist_ok=True)
     paths: list[Path] = []
@@ -70,6 +71,7 @@ def _write_ct_series(
         dataset.PatientPosition = "HFS"
         dataset.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
         dataset.ImagePositionPatient = [-120.0, -80.0, z_mm]
+        dataset.PixelSpacing = list(pixel_spacing_mm)
         dataset.Rows = rows
         dataset.Columns = columns
         dataset.save_as(str(path))
@@ -353,6 +355,24 @@ def test_default_runner_terminates_child_process_tree_on_timeout(
     assert "parent started" in str(timeout.value.stdout)
     time.sleep(1.5)
     assert not orphan_marker.exists()
+
+
+def test_default_runner_decodes_process_output_with_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_ct2phits_module.locale, "getencoding", lambda: "ascii")
+    command = [
+        sys.executable,
+        "-c",
+        "import os; os.write(1, b'out\\xff'); os.write(2, b'err\\xfe')",
+    ]
+
+    completed = run_ct2phits_module._default_runner(command, tmp_path, 5.0)
+
+    assert completed.returncode == 0
+    assert completed.stdout == "out\ufffd"
+    assert completed.stderr == "err\ufffd"
 
 
 @pytest.mark.parametrize(
@@ -694,6 +714,51 @@ def test_in_plane_ct_slice_shift_is_rejected(tmp_path: Path) -> None:
         Ct2PhitsFrontendError,
         match="inconsistent ImagePositionPatient X or Y values",
     ):
+        select_ct_series(root)
+
+
+def test_missing_ct_pixel_spacing_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    paths = _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+    )
+    missing = pydicom.dcmread(str(paths[1]))
+    del missing.PixelSpacing
+    missing.save_as(str(paths[1]))
+
+    with pytest.raises(Ct2PhitsFrontendError, match="CT PixelSpacing"):
+        select_ct_series(root)
+
+
+def test_non_positive_ct_pixel_spacing_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    paths = _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+    )
+    invalid = pydicom.dcmread(str(paths[1]))
+    invalid.PixelSpacing = [0.0, 0.8]
+    invalid.save_as(str(paths[1]))
+
+    with pytest.raises(Ct2PhitsFrontendError, match="must be positive"):
+        select_ct_series(root)
+
+
+def test_inconsistent_ct_pixel_spacing_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    paths = _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+    )
+    inconsistent = pydicom.dcmread(str(paths[1]))
+    inconsistent.PixelSpacing = [0.8, 0.9]
+    inconsistent.save_as(str(paths[1]))
+
+    with pytest.raises(Ct2PhitsFrontendError, match="inconsistent PixelSpacing"):
         select_ct_series(root)
 
 

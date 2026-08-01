@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import locale
 import math
 import os
 import platform
@@ -56,6 +57,7 @@ class SelectedCtSeries:
     files: tuple[Path, ...]
     rows: int
     columns: int
+    pixel_spacing_mm: tuple[float, float]
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,7 @@ def _read_ct_header(path: Path) -> Any | None:
                 "SeriesInstanceUID",
                 "Rows",
                 "Columns",
+                "PixelSpacing",
             ],
         )
     except Exception:
@@ -206,6 +209,7 @@ def select_ct_series(
     selected = series[selected_uid]
     frame_uids: set[str] = set()
     dimensions: set[tuple[int, int]] = set()
+    pixel_spacings: set[tuple[float, float]] = set()
     positioned: list[tuple[tuple[float, float, float], Path]] = []
     for path, dataset in selected:
         try:
@@ -227,6 +231,11 @@ def select_ct_series(
             ) from exc
         dimensions.add((rows, columns))
         try:
+            pixel_spacing = _finite_vector(
+                getattr(dataset, "PixelSpacing", None),
+                length=2,
+                label="CT PixelSpacing",
+            )
             position = _finite_vector(
                 getattr(dataset, "ImagePositionPatient", None),
                 length=3,
@@ -234,6 +243,11 @@ def select_ct_series(
             )
         except Ct2PhitsDatfilesError as exc:
             raise Ct2PhitsFrontendError(str(exc)) from exc
+        if any(value <= 0.0 for value in pixel_spacing):
+            raise Ct2PhitsFrontendError(
+                f"CT PixelSpacing values must be positive: {path.name}"
+            )
+        pixel_spacings.add(pixel_spacing)
         positioned.append((position, path))
 
     if len(frame_uids) != 1:
@@ -249,6 +263,11 @@ def select_ct_series(
         raise Ct2PhitsFrontendError(
             "selected CT series Rows and Columns must be positive"
         )
+    if len(pixel_spacings) != 1:
+        raise Ct2PhitsFrontendError(
+            "selected CT series contains inconsistent PixelSpacing values"
+        )
+    pixel_spacing = next(iter(pixel_spacings))
     in_plane_positions = {
         (position[0], position[1]) for position, _path in positioned
     }
@@ -287,6 +306,7 @@ def select_ct_series(
         files=tuple(path for _position, path in positioned),
         rows=rows,
         columns=columns,
+        pixel_spacing_mm=pixel_spacing,
     )
 
 
@@ -375,15 +395,14 @@ def _default_runner(
 ) -> subprocess.CompletedProcess[str]:
     command_list = list(command)
     with (
-        tempfile.TemporaryFile(mode="w+", encoding="utf-8", newline="") as stdout,
-        tempfile.TemporaryFile(mode="w+", encoding="utf-8", newline="") as stderr,
+        tempfile.TemporaryFile(mode="w+b") as stdout,
+        tempfile.TemporaryFile(mode="w+b") as stderr,
     ):
         process = subprocess.Popen(
             command_list,
             cwd=str(cwd),
             stdout=stdout,
             stderr=stderr,
-            text=True,
         )
         try:
             returncode = process.wait(timeout=timeout_seconds)
@@ -400,6 +419,8 @@ def _default_runner(
                     check=False,
                     capture_output=True,
                     text=True,
+                    encoding=locale.getencoding(),
+                    errors="replace",
                     timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS,
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
@@ -431,8 +452,8 @@ def _default_runner(
             raise subprocess.TimeoutExpired(
                 command_list,
                 timeout_seconds,
-                output=stdout.read(),
-                stderr=stderr.read(),
+                output=_output_text(stdout.read()),
+                stderr=_output_text(stderr.read()),
             ) from None
         stdout.flush()
         stderr.flush()
@@ -441,8 +462,8 @@ def _default_runner(
         return subprocess.CompletedProcess(
             command_list,
             returncode,
-            stdout.read(),
-            stderr.read(),
+            _output_text(stdout.read()),
+            _output_text(stderr.read()),
         )
 
 
@@ -450,7 +471,7 @@ def _output_text(value: str | bytes | None) -> str:
     if value is None:
         return ""
     if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
+        return value.decode(locale.getencoding(), errors="replace")
     return value
 
 
@@ -633,6 +654,7 @@ def run_ct2phits_frontend(
             "slice_count": len(copied_files),
             "rows": selected.rows,
             "columns": selected.columns,
+            "pixel_spacing_mm": list(selected.pixel_spacing_mm),
             "copied_files": copied_files,
             "sha256": copied_sha256,
             "ct_origin_dicom_cm": list(ct_origin),

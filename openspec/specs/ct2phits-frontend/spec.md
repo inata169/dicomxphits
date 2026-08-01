@@ -39,7 +39,8 @@ than one series is present and SHALL reject unreadable or inconsistent geometry
 needed by the existing axial HFS coordinate contract. The selected CT series
 and RT Plan MUST share a Frame of Reference UID. Adjacent DICOM Z positions
 MUST have uniform spacing using relative tolerance zero and absolute tolerance
-`1.0e-6 mm`.
+`1.0e-6 mm`. Every slice MUST provide the same two finite, positive
+`PixelSpacing` values.
 
 #### Scenario: Single valid CT series
 
@@ -94,7 +95,9 @@ hashes, and revalidate the copied CT series before external execution.
 The frontend SHALL invoke `RTphits_win.bat` through the Windows command
 processor and MUST NOT invoke `ct2phits_win.exe` directly. It SHALL enforce a
 positive finite timeout and capture return code, stdout, stderr, timing, and a
-failure reason in workspace logs and summary JSON.
+failure reason in workspace logs and summary JSON. Process output SHALL be
+captured as bytes and decoded using the Windows locale encoding with replacement
+for undecodable byte sequences.
 
 #### Scenario: Successful batch execution
 
