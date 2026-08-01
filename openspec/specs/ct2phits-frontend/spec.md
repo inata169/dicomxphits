@@ -90,6 +90,11 @@ hashes, and revalidate the copied CT series before external execution.
 - **WHEN** the required batch file or HU conversion table is missing
 - **THEN** the frontend rejects execution before workspace creation
 
+#### Scenario: Unsafe command-processor path
+
+- **WHEN** the workspace-relative input path contains a `cmd.exe` metacharacter
+- **THEN** the frontend rejects execution before workspace creation
+
 ### Requirement: Verified Windows Batch Adapter
 
 The frontend SHALL invoke `RTphits_win.bat` through the Windows command

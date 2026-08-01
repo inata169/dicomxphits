@@ -524,6 +524,29 @@ def test_existing_workspace_is_never_overwritten(tmp_path: Path) -> None:
     assert marker.read_text(encoding="utf-8") == "user data\n"
 
 
+def test_workspace_with_cmd_metacharacter_is_rejected_before_creation(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+    workspace = case["rtphits"] / "work" / "R&D" / "case"
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("unsafe workspace path must reject before execution")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="cmd.exe metacharacters"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=workspace,
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    assert not workspace.exists()
+
+
 def test_repository_workspace_is_rejected_independently_of_installation_path(
     tmp_path: Path,
 ) -> None:

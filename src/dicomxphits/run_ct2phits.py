@@ -43,6 +43,7 @@ CT2PHITS_COARSE_GRAINING = (8, 8, 2)
 CT_SLICE_SPACING_TOLERANCE_MM = 1.0e-6
 RTPLAN_SNAPSHOT_NAME = "RTPLAN.dcm"
 PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS = 10.0
+CMD_ARGUMENT_METACHARACTERS = frozenset("&|<>^()%!\r\n")
 
 
 class Ct2PhitsFrontendError(ValueError):
@@ -365,6 +366,16 @@ def _validate_external_layout(
     if _is_within_dicomxphits_repository(workspace):
         raise Ct2PhitsFrontendError(
             "CT2PHITS workspace must remain outside the dicomxphits repository"
+        )
+    workspace_relative = str(workspace.relative_to(root))
+    unsafe_characters = sorted(
+        set(workspace_relative).intersection(CMD_ARGUMENT_METACHARACTERS)
+    )
+    if unsafe_characters:
+        rendered = ", ".join(repr(character) for character in unsafe_characters)
+        raise Ct2PhitsFrontendError(
+            "CT2PHITS workspace relative path must not contain cmd.exe "
+            f"metacharacters: {rendered}"
         )
     return root, workspace, batch, table
 
