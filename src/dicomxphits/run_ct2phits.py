@@ -49,6 +49,27 @@ class Ct2PhitsFrontendError(ValueError):
     """Raised when the CT2PHITS frontend cannot complete safely."""
 
 
+class Ct2PhitsProcessTimeout(subprocess.TimeoutExpired):
+    """Timeout evidence, including any process-tree termination failure."""
+
+    def __init__(
+        self,
+        command: Sequence[str],
+        timeout_seconds: float,
+        *,
+        output: str,
+        stderr: str,
+        termination_error: str | None,
+    ) -> None:
+        super().__init__(
+            command,
+            timeout_seconds,
+            output=output,
+            stderr=stderr,
+        )
+        self.termination_error = termination_error
+
+
 @dataclass(frozen=True)
 class SelectedCtSeries:
     source_root: Path
@@ -407,6 +428,8 @@ def _default_runner(
         try:
             returncode = process.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
+            termination_errors: list[str] = []
+            taskkill_succeeded = False
             try:
                 terminated = subprocess.run(
                     [
@@ -423,37 +446,49 @@ def _default_runner(
                     errors="replace",
                     timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS,
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                process.kill()
-                process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
-                raise OSError(
-                    "failed to terminate the timed-out Windows process tree"
-                ) from exc
-            if terminated.returncode != 0:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
-                raise OSError(
-                    "taskkill failed to terminate the timed-out Windows process tree: "
-                    + terminated.stderr.strip()
+            except OSError as exc:
+                termination_errors.append(f"taskkill could not start: {exc}")
+            except subprocess.TimeoutExpired:
+                termination_errors.append(
+                    "taskkill exceeded the process-tree termination timeout"
                 )
+            else:
+                taskkill_succeeded = terminated.returncode == 0
+                if not taskkill_succeeded:
+                    diagnostic = terminated.stderr.strip() or "no diagnostic output"
+                    termination_errors.append(
+                        f"taskkill returned {terminated.returncode}: {diagnostic}"
+                    )
+            if not taskkill_succeeded and process.poll() is None:
+                try:
+                    process.kill()
+                except OSError as exc:
+                    termination_errors.append(f"direct process kill failed: {exc}")
             try:
                 process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired as exc:
-                process.kill()
-                process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
-                raise OSError(
-                    "timed-out Windows process tree did not terminate"
-                ) from exc
+            except subprocess.TimeoutExpired:
+                termination_errors.append(
+                    "timed-out direct process did not terminate after cleanup"
+                )
+                try:
+                    process.kill()
+                    process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    termination_errors.append(
+                        f"final direct process cleanup failed: {exc}"
+                    )
+            except OSError as exc:
+                termination_errors.append(f"waiting for direct process failed: {exc}")
             stdout.flush()
             stderr.flush()
             stdout.seek(0)
             stderr.seek(0)
-            raise subprocess.TimeoutExpired(
+            raise Ct2PhitsProcessTimeout(
                 command_list,
                 timeout_seconds,
                 output=_output_text(stdout.read()),
                 stderr=_output_text(stderr.read()),
+                termination_error="; ".join(termination_errors) or None,
             ) from None
         stdout.flush()
         stderr.flush()
@@ -701,6 +736,7 @@ def run_ct2phits_frontend(
     started_at = datetime.now(timezone.utc).isoformat()
     returncode: int | None = None
     timed_out = False
+    process_tree_termination_error: str | None = None
     stdout = ""
     stderr = ""
     failure: str | None = None
@@ -755,6 +791,12 @@ def run_ct2phits_frontend(
         stdout = _output_text(exc.stdout)
         stderr = _output_text(exc.stderr)
         failure = f"RTphits_win.bat timed out after {timeout_seconds:g} seconds"
+        process_tree_termination_error = getattr(exc, "termination_error", None)
+        if process_tree_termination_error is not None:
+            failure += (
+                "; process-tree termination failed: "
+                + process_tree_termination_error
+            )
     except (
         Ct2PhitsFrontendError,
         Ct2PhitsDatfilesError,
@@ -781,6 +823,7 @@ def run_ct2phits_frontend(
         "finished_at_utc": datetime.now(timezone.utc).isoformat(),
         "duration_seconds": (finished_ns - started_ns) / 1_000_000_000,
         "timed_out": timed_out,
+        "process_tree_termination_error": process_tree_termination_error,
         "returncode": returncode,
         "stdout_path": "logs/ct2phits.stdout.log",
         "stderr_path": "logs/ct2phits.stderr.log",

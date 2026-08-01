@@ -114,7 +114,7 @@ for undecodable byte sequences.
 
 - **WHEN** the batch adapter exceeds the configured timeout
 - **THEN** the frontend records available output, marks the execution timed out,
-  and marks the stage failed
+  records any separate process-tree termination failure, and marks the stage failed
 
 ### Requirement: Nine-File Generated Output Inventory
 

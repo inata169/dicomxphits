@@ -325,7 +325,54 @@ def test_timeout_is_recorded(tmp_path: Path) -> None:
         )
     )
     assert summary["timed_out"] is True
+    assert summary["process_tree_termination_error"] is None
     assert summary["returncode"] is None
+
+
+def test_timeout_termination_failure_preserves_logs_and_summary(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        raise run_ct2phits_module.Ct2PhitsProcessTimeout(
+            command,
+            timeout_seconds,
+            output="partial output\n",
+            stderr="partial error\n",
+            termination_error="taskkill could not start: unavailable",
+        )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="process-tree termination failed",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            timeout_seconds=0.5,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["timed_out"] is True
+    assert summary["process_tree_termination_error"] == (
+        "taskkill could not start: unavailable"
+    )
+    assert (case["workspace"] / "logs" / "ct2phits.stdout.log").read_text(
+        encoding="utf-8"
+    ) == "partial output\n"
+    assert (case["workspace"] / "logs" / "ct2phits.stderr.log").read_text(
+        encoding="utf-8"
+    ) == "partial error\n"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows process-tree behavior")
@@ -355,6 +402,45 @@ def test_default_runner_terminates_child_process_tree_on_timeout(
     assert "parent started" in str(timeout.value.stdout)
     time.sleep(1.5)
     assert not orphan_marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("taskkill_failure", "expected_error"),
+    [
+        ("unavailable", "taskkill could not start"),
+        ("timeout", "taskkill exceeded the process-tree termination timeout"),
+        ("nonzero", "taskkill returned 5"),
+    ],
+)
+def test_default_runner_preserves_output_when_taskkill_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    taskkill_failure: str,
+    expected_error: str,
+) -> None:
+    original_run = subprocess.run
+
+    def failing_taskkill(command, *args, **kwargs):
+        if Path(command[0]).name.lower() == "taskkill.exe":
+            if taskkill_failure == "unavailable":
+                raise FileNotFoundError("taskkill unavailable")
+            if taskkill_failure == "timeout":
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return subprocess.CompletedProcess(command, 5, "", "access denied")
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(run_ct2phits_module.subprocess, "run", failing_taskkill)
+    command = [
+        sys.executable,
+        "-c",
+        "import os, time; os.write(1, b'partial output'); time.sleep(4)",
+    ]
+
+    with pytest.raises(run_ct2phits_module.Ct2PhitsProcessTimeout) as timeout:
+        run_ct2phits_module._default_runner(command, tmp_path, 0.5)
+
+    assert timeout.value.stdout == "partial output"
+    assert expected_error in str(timeout.value.termination_error)
 
 
 def test_default_runner_decodes_process_output_with_replacement(
