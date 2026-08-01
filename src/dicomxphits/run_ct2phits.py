@@ -332,6 +332,65 @@ def select_ct_series(
     )
 
 
+def _verify_workspace_input_snapshots(
+    *,
+    workspace: Path,
+    ct_root: Path,
+    rtplan_snapshot: Path,
+    expected_rtplan_sha256: str,
+    expected_ct_sha256: Mapping[str, str],
+    expected_ct_series: SelectedCtSeries,
+    expected_rtplan_isocenter: tuple[float, float, float],
+) -> None:
+    expected_ct_names = {
+        Path(relative_path).name for relative_path in expected_ct_sha256
+    }
+    try:
+        actual_ct_names = {path.name for path in ct_root.iterdir()}
+        changed: list[str] = []
+        if actual_ct_names != expected_ct_names:
+            changed.append("CT directory contents")
+        if rtplan_snapshot.is_symlink() or not rtplan_snapshot.is_file():
+            changed.append(RTPLAN_SNAPSHOT_NAME)
+        elif _sha256(rtplan_snapshot) != expected_rtplan_sha256:
+            changed.append(RTPLAN_SNAPSHOT_NAME)
+        for relative_path, expected_sha256 in expected_ct_sha256.items():
+            snapshot = workspace / relative_path
+            if snapshot.is_symlink() or not snapshot.is_file():
+                changed.append(relative_path)
+            elif _sha256(snapshot) != expected_sha256:
+                changed.append(relative_path)
+    except OSError as exc:
+        raise Ct2PhitsFrontendError(
+            "could not verify workspace input snapshots after external execution"
+        ) from exc
+    if changed:
+        raise Ct2PhitsFrontendError(
+            "workspace input snapshots changed after preparation: "
+            + ", ".join(changed)
+        )
+
+    verified_ct_series = select_ct_series(
+        ct_root,
+        series_instance_uid=expected_ct_series.series_instance_uid,
+    )
+    if verified_ct_series != expected_ct_series:
+        raise Ct2PhitsFrontendError(
+            "workspace CT series changed during external execution"
+        )
+    try:
+        verified_isocenter = _rtplan_isocenter(
+            rtplan_snapshot,
+            expected_frame_uid=expected_ct_series.frame_of_reference_uid,
+        )
+    except Ct2PhitsDatfilesError as exc:
+        raise Ct2PhitsFrontendError(str(exc)) from exc
+    if verified_isocenter != expected_rtplan_isocenter:
+        raise Ct2PhitsFrontendError(
+            "workspace RT Plan geometry changed during external execution"
+        )
+
+
 def _validate_external_layout(
     *,
     rtphits_root: Path,
@@ -783,6 +842,15 @@ def run_ct2phits_frontend(
         returncode = completed.returncode
         stdout = _output_text(completed.stdout)
         stderr = _output_text(completed.stderr)
+        _verify_workspace_input_snapshots(
+            workspace=workspace,
+            ct_root=ct_root,
+            rtplan_snapshot=rtplan_snapshot,
+            expected_rtplan_sha256=rtplan_source_sha256,
+            expected_ct_sha256=copied_sha256,
+            expected_ct_series=selected,
+            expected_rtplan_isocenter=rtplan_isocenter,
+        )
         if returncode != 0:
             raise Ct2PhitsFrontendError(
                 f"RTphits_win.bat returned non-zero exit code {returncode}"
@@ -816,6 +884,15 @@ def run_ct2phits_frontend(
             raise Ct2PhitsFrontendError(
                 "CT2PHITS generated files changed during downstream handoff"
             )
+        _verify_workspace_input_snapshots(
+            workspace=workspace,
+            ct_root=ct_root,
+            rtplan_snapshot=rtplan_snapshot,
+            expected_rtplan_sha256=rtplan_source_sha256,
+            expected_ct_sha256=copied_sha256,
+            expected_ct_series=selected,
+            expected_rtplan_isocenter=rtplan_isocenter,
+        )
         inventory = post_handoff_inventory
         prepared_hashes = dict(prepared.assets.sha256)
     except subprocess.TimeoutExpired as exc:

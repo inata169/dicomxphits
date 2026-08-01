@@ -749,6 +749,115 @@ def test_rtplan_snapshot_copy_failure_is_controlled_and_workspace_is_removed(
     assert not case["workspace"].exists()
 
 
+@pytest.mark.parametrize("snapshot_kind", ["rtplan", "ct"])
+def test_workspace_input_snapshot_change_during_runner_is_rejected(
+    tmp_path: Path,
+    snapshot_kind: str,
+) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        if snapshot_kind == "rtplan":
+            snapshot = case["workspace"] / "RTPLAN.dcm"
+            dataset = pydicom.dcmread(str(snapshot))
+            dataset.BeamSequence[0].ControlPointSequence[0].IsocenterPosition = [
+                40.0,
+                50.0,
+                60.0,
+            ]
+        else:
+            snapshot = case["workspace"] / "CT" / "CT000001.dcm"
+            dataset = pydicom.dcmread(str(snapshot))
+            dataset.ImagePositionPatient = [-119.0, -80.0, -50.0]
+        dataset.save_as(str(snapshot))
+        _write_generated_datfiles(case["workspace"] / "DATfiles")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="workspace input snapshots changed after preparation",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = json.loads(
+        (case["workspace"] / "ct2phits_workspace_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert manifest["status"] == "failed"
+    assert not (case["workspace"] / "prepared_ct_assets").exists()
+
+
+@pytest.mark.parametrize("snapshot_kind", ["rtplan", "ct"])
+def test_workspace_input_snapshot_change_during_handoff_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot_kind: str,
+) -> None:
+    case = _case(tmp_path)
+    original_prepare = run_ct2phits_module.prepare_ct2phits_assets
+
+    def mutating_prepare(**kwargs):
+        prepared = original_prepare(**kwargs)
+        if snapshot_kind == "rtplan":
+            snapshot = case["workspace"] / "RTPLAN.dcm"
+            dataset = pydicom.dcmread(str(snapshot))
+            dataset.BeamSequence[0].ControlPointSequence[0].IsocenterPosition = [
+                40.0,
+                50.0,
+                60.0,
+            ]
+        else:
+            snapshot = case["workspace"] / "CT" / "CT000001.dcm"
+            dataset = pydicom.dcmread(str(snapshot))
+            dataset.ImagePositionPatient = [-119.0, -80.0, -50.0]
+        dataset.save_as(str(snapshot))
+        return prepared
+
+    monkeypatch.setattr(
+        run_ct2phits_module,
+        "prepare_ct2phits_assets",
+        mutating_prepare,
+    )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="workspace input snapshots changed after preparation",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=_success_runner(case["workspace"]),
+            platform_system="Windows",
+            timeout_seconds=12.0,
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert summary["prepared_assets_sha256"] is None
+
+
 def test_ct_change_during_snapshot_copy_is_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

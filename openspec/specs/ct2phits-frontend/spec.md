@@ -71,7 +71,10 @@ DICOM coordinate mode `1`. The frontend SHALL record the source RT Plan SHA-256,
 copy it into the isolated workspace without modification, verify the snapshot
 hash, and use only that stable snapshot for the downstream handoff. It SHALL
 also verify each CT slice hash before and after copying, record the snapshot
-hashes, and revalidate the copied CT series before external execution.
+hashes, and revalidate the copied CT series before external execution. After
+external execution and again after downstream preparation, it SHALL recheck the
+RT Plan and every CT snapshot hash, the exact CT directory contents, and the
+DICOM geometry of both snapshots before accepting the handoff.
 
 #### Scenario: New workspace preparation
 
@@ -95,6 +98,12 @@ hashes, and revalidate the copied CT series before external execution.
 - **WHEN** copying or hashing the RT Plan snapshot fails before external execution
 - **THEN** the frontend reports a controlled failure and removes the newly
   created workspace when cleanup succeeds
+
+#### Scenario: Workspace input changes during external execution
+
+- **WHEN** the RT Plan snapshot, any CT snapshot, or the CT directory contents
+  change while the external batch runs
+- **THEN** the frontend rejects the generated output before downstream handoff
 
 #### Scenario: Unsafe command-processor path
 
