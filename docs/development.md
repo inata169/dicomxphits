@@ -27,6 +27,9 @@ In a Dev Container-capable editor, open this repository and choose **Reopen in
 Container**. The container uses Linux, Python 3.12, the non-root `vscode` user,
 and mounts only this repository as `/workspaces/dicomxphits`. Its repeatable
 post-create command installs `.[test]`; rerunning that command is safe.
+Pulling the image and installing dependencies during container setup may need
+network access. That setup-time access is separate from the disabled network
+access for normal Codex agent work and must not carry into that runtime.
 
 Inside the container, run the same `compileall`, pytest, and public-tree audit
 commands shown above. This is a development environment, not a production
