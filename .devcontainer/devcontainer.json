@@ -1,0 +1,9 @@
+{
+  "name": "dicomxphits public Python development",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "workspaceFolder": "/workspaces/dicomxphits",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/dicomxphits,type=bind,consistency=cached",
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+  "postCreateCommand": "python -m pip install -e \".[test]\""
+}
