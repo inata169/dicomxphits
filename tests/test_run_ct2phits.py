@@ -275,6 +275,47 @@ def test_missing_batch_is_rejected_before_workspace_creation(tmp_path: Path) -> 
     assert not case["workspace"].exists()
 
 
+@pytest.mark.parametrize(
+    ("number_kind", "expected"),
+    [
+        ("beam", "RTPLAN BeamNumber must be an integer"),
+        (
+            "referenced_beam",
+            "RTPLAN ReferencedBeamNumber must be an integer",
+        ),
+    ],
+)
+def test_invalid_rtplan_beam_number_is_rejected_before_workspace_creation(
+    tmp_path: Path,
+    number_kind: str,
+    expected: str,
+) -> None:
+    case = _case(tmp_path)
+    dataset = pydicom.dcmread(str(case["rtplan"]))
+    if number_kind == "beam":
+        dataset.BeamSequence[0].BeamNumber = None
+    else:
+        dataset.FractionGroupSequence[0].ReferencedBeamSequence[
+            0
+        ].ReferencedBeamNumber = None
+    dataset.save_as(str(case["rtplan"]))
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match=expected,
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            platform_system="Windows",
+        )
+
+    assert not case["workspace"].exists()
+
+
 def test_nonzero_return_code_is_recorded(tmp_path: Path) -> None:
     case = _case(tmp_path)
 
@@ -502,6 +543,65 @@ def test_invalid_generated_output_is_rejected_and_recorded(
     )
     assert summary["status"] == "failed"
     assert expected in summary["failure_reason"]
+
+
+def test_log_write_failure_preserves_execution_failure_and_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    original_write_text = Path.write_text
+
+    def failing_write_text(path, data, *args, **kwargs):
+        if path.name == "ct2phits.stdout.log":
+            raise PermissionError("synthetic stdout log failure")
+        return original_write_text(path, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing_write_text)
+
+    def runner(command, cwd, timeout_seconds):
+        return subprocess.CompletedProcess(
+            command,
+            7,
+            "stdout evidence",
+            "stderr evidence",
+        )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="non-zero exit code 7",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    manifest = json.loads(
+        (case["workspace"] / "ct2phits_workspace_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert "non-zero exit code 7" in summary["failure_reason"]
+    assert "could not write CT2PHITS stdout log" in summary["failure_reason"]
+    assert summary["log_write_errors"]["stdout"] == (
+        "synthetic stdout log failure"
+    )
+    assert manifest["status"] == "failed"
+    assert not (case["workspace"] / "logs" / "ct2phits.stdout.log").exists()
+    assert (
+        case["workspace"] / "logs" / "ct2phits.stderr.log"
+    ).read_text(encoding="utf-8") == "stderr evidence"
 
 
 def test_generated_outputs_with_coarse_old_mtime_are_accepted(tmp_path: Path) -> None:
@@ -735,6 +835,97 @@ def test_rtplan_snapshot_copy_failure_is_controlled_and_workspace_is_removed(
     with pytest.raises(
         Ct2PhitsFrontendError,
         match="could not create RT Plan workspace snapshot",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    assert not case["workspace"].exists()
+
+
+def test_ct_snapshot_copy_failure_is_controlled_and_workspace_is_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    ct_sources = sorted(case["ct_root"].glob("*.dcm"))
+    failing_source = ct_sources[1].resolve()
+    original_copyfile = run_ct2phits_module.shutil.copyfile
+
+    def failing_copyfile(source, destination):
+        if Path(source) == failing_source:
+            Path(destination).write_bytes(b"partial CT snapshot")
+            raise PermissionError("synthetic CT copy failure")
+        return original_copyfile(source, destination)
+
+    monkeypatch.setattr(
+        run_ct2phits_module.shutil,
+        "copyfile",
+        failing_copyfile,
+    )
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("failed CT snapshot copy must reject before execution")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="could not create stable CT DICOM snapshot",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    assert not case["workspace"].exists()
+
+
+def test_source_ct_series_membership_change_during_snapshot_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    first_source = sorted(case["ct_root"].glob("*.dcm"))[0].resolve()
+    source_header = pydicom.dcmread(str(first_source), stop_before_pixels=True)
+    original_copyfile = run_ct2phits_module.shutil.copyfile
+    added = False
+
+    def adding_copyfile(source, destination):
+        nonlocal added
+        result = original_copyfile(source, destination)
+        if Path(source) == first_source and not added:
+            added = True
+            _write_ct_series(
+                case["ct_root"],
+                frame_uid=str(source_header.FrameOfReferenceUID),
+                series_uid=str(source_header.SeriesInstanceUID),
+                name_prefix="ADDED",
+                z_positions_mm=(0.0,),
+            )
+        return result
+
+    monkeypatch.setattr(
+        run_ct2phits_module.shutil,
+        "copyfile",
+        adding_copyfile,
+    )
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("changed source membership must reject before execution")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="source CT series membership or geometry changed",
     ):
         run_ct2phits_frontend(
             ct_dicom_root=case["ct_root"],

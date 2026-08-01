@@ -133,6 +133,26 @@ def _write_json(path: Path, value: Mapping[str, Any]) -> None:
     )
 
 
+def _abort_workspace_preparation(
+    workspace: Path,
+    exc: Exception,
+    *,
+    failure_message: str | None = None,
+) -> None:
+    message = failure_message or (
+        str(exc)
+        if isinstance(exc, (Ct2PhitsFrontendError, Ct2PhitsDatfilesError))
+        else "could not prepare CT2PHITS workspace"
+    )
+    try:
+        shutil.rmtree(workspace)
+    except OSError as cleanup_exc:
+        raise Ct2PhitsFrontendError(
+            f"{message}; cleanup of the new workspace also failed: {cleanup_exc}"
+        ) from exc
+    raise Ct2PhitsFrontendError(message) from exc
+
+
 def _is_relative_to(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -330,6 +350,42 @@ def select_ct_series(
         columns=columns,
         pixel_spacing_mm=pixel_spacing,
     )
+
+
+def _verify_source_ct_series_snapshot(
+    *,
+    expected_series: SelectedCtSeries,
+    copied_files: Sequence[str],
+    copied_sha256: Mapping[str, str],
+) -> None:
+    refreshed_series = select_ct_series(
+        expected_series.source_root,
+        series_instance_uid=expected_series.series_instance_uid,
+    )
+    if refreshed_series != expected_series:
+        raise Ct2PhitsFrontendError(
+            "source CT series membership or geometry changed while creating "
+            "the workspace snapshot"
+        )
+    try:
+        changed_sources = [
+            source.name
+            for source, copied_path in zip(
+                expected_series.files,
+                copied_files,
+                strict=True,
+            )
+            if _sha256(source) != copied_sha256[copied_path]
+        ]
+    except OSError as exc:
+        raise Ct2PhitsFrontendError(
+            "could not recheck source CT DICOM files after snapshot creation"
+        ) from exc
+    if changed_sources:
+        raise Ct2PhitsFrontendError(
+            "source CT DICOM files changed while creating the workspace snapshot: "
+            + ", ".join(changed_sources)
+        )
 
 
 def _verify_workspace_input_snapshots(
@@ -689,23 +745,25 @@ def run_ct2phits_frontend(
     rtplan_snapshot = workspace / RTPLAN_SNAPSHOT_NAME
 
     workspace.mkdir(parents=True)
-    ct_root.mkdir()
-    datfiles_root.mkdir()
-    logs_root.mkdir()
+    try:
+        ct_root.mkdir()
+        datfiles_root.mkdir()
+        logs_root.mkdir()
+    except OSError as exc:
+        _abort_workspace_preparation(
+            workspace,
+            exc,
+            failure_message="could not initialize CT2PHITS workspace",
+        )
     try:
         shutil.copyfile(rtplan_source, rtplan_snapshot)
         rtplan_snapshot_sha256 = _sha256(rtplan_snapshot)
     except OSError as exc:
-        try:
-            shutil.rmtree(workspace)
-        except OSError as cleanup_exc:
-            raise Ct2PhitsFrontendError(
-                "could not create RT Plan workspace snapshot; cleanup of the "
-                f"new workspace also failed: {cleanup_exc}"
-            ) from exc
-        raise Ct2PhitsFrontendError(
-            "could not create RT Plan workspace snapshot"
-        ) from exc
+        _abort_workspace_preparation(
+            workspace,
+            exc,
+            failure_message="could not create RT Plan workspace snapshot",
+        )
     if rtplan_snapshot_sha256 != rtplan_source_sha256:
         try:
             shutil.rmtree(workspace)
@@ -722,23 +780,25 @@ def run_ct2phits_frontend(
             rtplan_snapshot,
             expected_frame_uid=frame_uid,
         )
-    except Ct2PhitsDatfilesError as exc:
-        raise Ct2PhitsFrontendError(str(exc)) from exc
-    copied_files: list[str] = []
-    copied_sha256: dict[str, str] = {}
-    for index, source in enumerate(selected.files, start=1):
-        name = f"CT{index:06d}.dcm"
-        copied_path = f"CT/{name}"
-        copied_sha256[copied_path] = _copy_stable_ct_slice(
-            source,
-            ct_root / name,
+        copied_files: list[str] = []
+        copied_sha256: dict[str, str] = {}
+        for index, source in enumerate(selected.files, start=1):
+            name = f"CT{index:06d}.dcm"
+            copied_path = f"CT/{name}"
+            copied_sha256[copied_path] = _copy_stable_ct_slice(
+                source,
+                ct_root / name,
+            )
+            copied_files.append(copied_path)
+        _verify_source_ct_series_snapshot(
+            expected_series=selected,
+            copied_files=copied_files,
+            copied_sha256=copied_sha256,
         )
-        copied_files.append(copied_path)
-    frozen_selected = select_ct_series(
-        ct_root,
-        series_instance_uid=selected.series_instance_uid,
-    )
-    try:
+        frozen_selected = select_ct_series(
+            ct_root,
+            series_instance_uid=selected.series_instance_uid,
+        )
         ct_origin, frame_uid, _series_uid, frozen_count = _ct_series_origin(
             frozen_selected.files[0]
         )
@@ -746,28 +806,28 @@ def run_ct2phits_frontend(
             rtplan_snapshot,
             expected_frame_uid=frame_uid,
         )
-    except Ct2PhitsDatfilesError as exc:
-        raise Ct2PhitsFrontendError(str(exc)) from exc
-    if frozen_count != len(copied_files) or len(frozen_selected.files) != len(
-        copied_files
-    ):
-        raise Ct2PhitsFrontendError(
-            "CT series count changed while creating the workspace snapshot"
+        if frozen_count != len(copied_files) or len(frozen_selected.files) != len(
+            copied_files
+        ):
+            raise Ct2PhitsFrontendError(
+                "CT series count changed while creating the workspace snapshot"
+            )
+        selected = frozen_selected
+        ct_reference = selected.files[0]
+        input_path.write_text(
+            render_ct2phits_input(
+                rtphits_root=root,
+                ct_root=ct_root,
+                datfiles_root=datfiles_root,
+                slice_count=len(copied_files),
+                rows=selected.rows,
+                columns=selected.columns,
+            ),
+            encoding="utf-8",
+            newline="\n",
         )
-    selected = frozen_selected
-    ct_reference = selected.files[0]
-    input_path.write_text(
-        render_ct2phits_input(
-            rtphits_root=root,
-            ct_root=ct_root,
-            datfiles_root=datfiles_root,
-            slice_count=len(copied_files),
-            rows=selected.rows,
-            columns=selected.columns,
-        ),
-        encoding="utf-8",
-        newline="\n",
-    )
+    except (Ct2PhitsFrontendError, Ct2PhitsDatfilesError, OSError) as exc:
+        _abort_workspace_preparation(workspace, exc)
 
     manifest: dict[str, Any] = {
         "schema_version": "dicomxphits_ct2phits_workspace_v1",
@@ -809,7 +869,10 @@ def run_ct2phits_frontend(
             ),
         },
     }
-    _write_json(manifest_path, manifest)
+    try:
+        _write_json(manifest_path, manifest)
+    except OSError as exc:
+        _abort_workspace_preparation(workspace, exc)
 
     input_relative = input_path.relative_to(root)
     command = (
@@ -831,6 +894,7 @@ def run_ct2phits_frontend(
     stdout = ""
     stderr = ""
     failure: str | None = None
+    log_write_errors: dict[str, str] = {}
     inventory: dict[str, dict[str, Any]] = {}
     raw_hashes: dict[str, str] | None = None
     prepared_hashes: dict[str, str] | None = None
@@ -914,8 +978,20 @@ def run_ct2phits_frontend(
     ) as exc:
         failure = str(exc)
     finally:
-        stdout_path.write_text(stdout, encoding="utf-8", newline="\n")
-        stderr_path.write_text(stderr, encoding="utf-8", newline="\n")
+        for stream_name, path, content in (
+            ("stdout", stdout_path, stdout),
+            ("stderr", stderr_path, stderr),
+        ):
+            try:
+                path.write_text(content, encoding="utf-8", newline="\n")
+            except OSError as exc:
+                log_write_errors[stream_name] = str(exc)
+        if log_write_errors:
+            log_failure = "; ".join(
+                f"could not write CT2PHITS {stream_name} log: {message}"
+                for stream_name, message in log_write_errors.items()
+            )
+            failure = f"{failure}; {log_failure}" if failure else log_failure
 
     status = "failed" if failure is not None else "completed"
     finished_ns = time.time_ns()
@@ -937,6 +1013,7 @@ def run_ct2phits_frontend(
         "returncode": returncode,
         "stdout_path": "logs/ct2phits.stdout.log",
         "stderr_path": "logs/ct2phits.stderr.log",
+        "log_write_errors": log_write_errors,
         "failure_reason": failure,
         "generated_inventory": inventory,
         "raw_datfiles_sha256": raw_hashes,

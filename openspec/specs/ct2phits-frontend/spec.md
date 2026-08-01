@@ -40,7 +40,8 @@ needed by the existing axial HFS coordinate contract. The selected CT series
 and RT Plan MUST share a Frame of Reference UID. Adjacent DICOM Z positions
 MUST have uniform spacing using relative tolerance zero and absolute tolerance
 `1.0e-6 mm`. Every slice MUST provide the same two finite, positive
-`PixelSpacing` values.
+`PixelSpacing` values. RT Plan `BeamNumber` and `ReferencedBeamNumber` values
+used to select treatment beams MUST be valid integers.
 
 #### Scenario: Single valid CT series
 
@@ -60,6 +61,12 @@ MUST have uniform spacing using relative tolerance zero and absolute tolerance
   metadata violate the supported contract
 - **THEN** the frontend rejects the input before external execution
 
+#### Scenario: Invalid RT Plan beam identifier
+
+- **WHEN** a treatment beam or referenced beam has a non-integer beam number
+- **THEN** the frontend reports a controlled input failure before workspace
+  creation
+
 ### Requirement: Isolated CT2PHITS Workspace and Input
 
 The frontend SHALL create a new workspace below the supplied RT-PHITS root and
@@ -71,10 +78,11 @@ DICOM coordinate mode `1`. The frontend SHALL record the source RT Plan SHA-256,
 copy it into the isolated workspace without modification, verify the snapshot
 hash, and use only that stable snapshot for the downstream handoff. It SHALL
 also verify each CT slice hash before and after copying, record the snapshot
-hashes, and revalidate the copied CT series before external execution. After
-external execution and again after downstream preparation, it SHALL recheck the
-RT Plan and every CT snapshot hash, the exact CT directory contents, and the
-DICOM geometry of both snapshots before accepting the handoff.
+hashes, re-enumerate the source series membership, recheck every source hash,
+and revalidate the copied CT series before external execution. After external
+execution and again after downstream preparation, it SHALL recheck the RT Plan
+and every CT snapshot hash, the exact CT directory contents, and the DICOM
+geometry of both snapshots before accepting the handoff.
 
 #### Scenario: New workspace preparation
 
@@ -99,6 +107,20 @@ DICOM geometry of both snapshots before accepting the handoff.
 - **THEN** the frontend reports a controlled failure and removes the newly
   created workspace when cleanup succeeds
 
+#### Scenario: Other workspace preparation failure
+
+- **WHEN** CT snapshot copying, copied-series revalidation, input generation,
+  or initial manifest writing fails before external execution
+- **THEN** the frontend reports a controlled failure and removes the newly
+  created workspace when cleanup succeeds
+
+#### Scenario: Source series changes during snapshot creation
+
+- **WHEN** the selected source series gains, loses, or changes a slice while
+  workspace snapshots are being created
+- **THEN** the frontend rejects the snapshot before external execution and
+  removes the new workspace when cleanup succeeds
+
 #### Scenario: Workspace input changes during external execution
 
 - **WHEN** the RT Plan snapshot, any CT snapshot, or the CT directory contents
@@ -117,7 +139,9 @@ processor and MUST NOT invoke `ct2phits_win.exe` directly. It SHALL enforce a
 positive finite timeout and capture return code, stdout, stderr, timing, and a
 failure reason in workspace logs and summary JSON. Process output SHALL be
 captured as bytes and decoded using the Windows locale encoding with replacement
-for undecodable byte sequences.
+for undecodable byte sequences. A process-log write failure SHALL be recorded
+separately in the summary and MUST NOT replace earlier execution-failure
+evidence or prevent the other process log from being written.
 
 #### Scenario: Successful batch execution
 
@@ -135,6 +159,13 @@ for undecodable byte sequences.
 - **WHEN** the batch adapter exceeds the configured timeout
 - **THEN** the frontend records available output, marks the execution timed out,
   records any separate process-tree termination failure, and marks the stage failed
+
+#### Scenario: Process-log write failure
+
+- **WHEN** stdout or stderr cannot be written to its workspace log
+- **THEN** the frontend preserves any earlier execution failure, records the
+  log-write error in the summary, attempts the other log, and marks the stage
+  failed
 
 ### Requirement: Nine-File Generated Output Inventory
 

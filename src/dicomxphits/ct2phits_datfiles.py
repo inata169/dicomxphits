@@ -228,8 +228,10 @@ def _referenced_beam_numbers(dataset: Any) -> set[int]:
             value = getattr(item, "ReferencedBeamNumber", None)
             try:
                 numbers.add(int(value))
-            except (TypeError, ValueError):
-                continue
+            except (TypeError, ValueError) as exc:
+                raise Ct2PhitsDatfilesError(
+                    "RTPLAN ReferencedBeamNumber must be an integer"
+                ) from exc
     return numbers
 
 
@@ -281,11 +283,19 @@ def _rtplan_isocenter(
 
     referenced = _referenced_beam_numbers(dataset)
     beams = list(getattr(dataset, "BeamSequence", []) or [])
+    numbered_beams: list[tuple[int, Any]] = []
+    for beam in beams:
+        try:
+            beam_number = int(getattr(beam, "BeamNumber", None))
+        except (TypeError, ValueError) as exc:
+            raise Ct2PhitsDatfilesError(
+                "RTPLAN BeamNumber must be an integer"
+            ) from exc
+        numbered_beams.append((beam_number, beam))
     selected = [
         beam
-        for beam in beams
-        if not referenced
-        or int(getattr(beam, "BeamNumber", -1)) in referenced
+        for beam_number, beam in numbered_beams
+        if not referenced or beam_number in referenced
     ]
     if not selected:
         raise Ct2PhitsDatfilesError("RTPLAN has no referenced treatment beams")
