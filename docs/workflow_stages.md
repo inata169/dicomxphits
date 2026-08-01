@@ -5,13 +5,15 @@ until the previous stage gate has passed.
 
 ## Stages
 
-1. Prepare a strict 3D-CRT segment manifest and PHITS input workspace.
-2. Run PHITS explicitly.
-3. Generate and run Sumtally explicitly.
-4. Convert the Sumtally output to RTDOSE and correct its patient coordinates.
-5. Execute the external GPR comparison or record an explicit knowledge-based
+1. Optionally run the independent Windows CT2PHITS frontend for a confirmed
+   non-patient phantom and validate its raw DATfiles handoff.
+2. Prepare a strict 3D-CRT segment manifest and PHITS input workspace.
+3. Run PHITS explicitly.
+4. Generate and run Sumtally explicitly.
+5. Convert the Sumtally output to RTDOSE and correct its patient coordinates.
+6. Execute the external GPR comparison or record an explicit knowledge-based
    skip.
-6. Review summaries and logs.
+7. Review summaries and logs.
 
 ## Gate Rules
 
@@ -35,6 +37,21 @@ until the previous stage gate has passed.
 
 The synthetic dummy CT option is not the default for clinical-like workflow
 review.
+
+## CT2PHITS Frontend Adapter
+
+`dicomxphits-run-ct2phits` is an independent, explicit Windows-only stage. It
+selects one CT series, copies it into a new user-selected workspace below the
+supplied RT-PHITS root, writes an OpenSpec-compatible `ct2phits.inp`, and calls
+the supplied `RTphits_win.bat`. It does not discover an RT-PHITS installation
+or invoke `ct2phits_win.exe` directly.
+
+The stage inventories all nine generated files, rejects pre-existing, missing,
+or empty output, records SHA-256 digests and process logs, and hands the
+eight downstream raw files plus the copied CT reference to the existing CT
+asset preparation functions. `CTtrans.dat` remains part of the nine-file
+generation inventory; downstream geometry uses the validated `CTtrans.inp`
+created by the existing coordinate-processing path.
 
 ## Prepare Workspace Adapter
 

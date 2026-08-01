@@ -37,6 +37,29 @@ sanitized template `templates/phits2dicom_rtdose_template.dcm`. Never open it as
 part of a repository-boundary audit. Do not add a blanket `*.dcm` ignore rule:
 a new tracked DICOM requires explicit human review and an allowlist change.
 
+## Human question format
+
+Every question directed to this repository's primary user must be answerable
+with `yes` or `no`. State the evidence or context first, make one concrete
+proposal, and end a Japanese question with the equivalent of
+`Is <proposal> acceptable? yes/no`.
+
+- Do not combine independent choices, permissions, paths, or external actions
+  into one yes/no question.
+- When multiple options exist, recommend one concrete option and ask about it
+  first. If the answer is `no`, do not infer approval for another option; offer
+  the next concrete option separately.
+- When a free-form value is needed, propose a safe value derived from available
+  evidence and ask whether it is acceptable. The user may include a preferred
+  replacement together with `no`.
+- A `yes` authorizes only the action and scope stated in that question. Silence,
+  ambiguity, and `no` are not consent.
+- Do not weaken a safety stop or disguise an unresolved specification, physics,
+  clinical, or scope decision merely to force it into a binary format. Report
+  the blocker declaratively, then ask about one safe next step.
+
+Status reports and completion reports do not need to end with a question.
+
 ## External execution
 
 Run PHITS, Sumtally, ct2phits, phits2dicom, GPR, long Monte Carlo calculations,
@@ -62,6 +85,45 @@ twice, the remaining error or validation delta does not shrink, a hard-coded
 test bypass or weaker validation would be needed, the specification/test/
 fixture/reference may be wrong, or an out-of-scope change would be required.
 Record each observed failure and result; do not hide or delete evidence.
+
+## OpenSpec change management
+
+Use `openspec/` to manage planned repository capabilities and behavioral
+contracts. For a human-requested new capability, public-contract change,
+architecture change, or scope expansion:
+
+- inspect `openspec/project.md`, current specifications, and active changes;
+- create a unique verb-led change under `openspec/changes/` before changing
+  runtime code;
+- include a proposal, task checklist, and requirement deltas with scenarios;
+- obtain human approval of the proposal before implementation; and
+- keep the change active while implementation or required validation remains.
+
+Archiving is a required part of completing an approved OpenSpec-managed task.
+Once its human-approved acceptance criteria and required checks pass, the agent
+must, on the same branch and before the completion report:
+
+- update the task checklist accurately and record any explicitly deferred,
+  non-blocking verification;
+- promote the accepted deltas into the current specifications under
+  `openspec/specs/`;
+- move the change to
+  `openspec/changes/archive/YYYY-MM-DD-<change-id>/`; and
+- validate the resulting current specifications and archived change, using
+  strict OpenSpec CLI validation when available or a reported manual structural
+  review otherwise.
+
+This routine archive cleanup is authorized by the approved task and does not
+require a separate follow-up request. It does not authorize marking incomplete
+or blocked work complete. A change with unmet acceptance criteria, failed
+required validation, or an outstanding required human decision must remain
+active and be reported as such.
+
+A human may explicitly waive or defer this workflow. Fixes that restore an
+existing documented contract, and documentation-only corrections that do not
+change behavior, do not require a proposal. OpenSpec never overrides the
+protected-material, external-execution, public-scope, physics, or human-decision
+boundaries in this file.
 
 ## Pull request stopping rule
 

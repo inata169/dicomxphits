@@ -14,6 +14,31 @@ remote, and tags. Read the files relevant to the task and make the smallest
 in-scope change. Do not alter runtime behavior, public physics, DICOM meaning,
 or protected data unless a human explicitly approves that separate work.
 
+Every direct question to this repository's primary user must present one
+concrete proposal that can be answered with `yes` or `no`, and should end in
+Japanese with the equivalent of `Is <proposal> acceptable? yes/no`. Do not
+bundle independent decisions or permissions into one question. When a decision
+is not naturally binary, first state the relevant evidence, propose the safest
+concrete option, and ask for a yes/no decision; if rejected, offer the next
+concrete option separately. A `no` rejects only the stated proposal and never
+authorizes an alternative.
+
+Use the OpenSpec workflow in `openspec/AGENTS.md` for a new capability,
+behavioral or public-contract change, architecture change, or other planned
+scope expansion. Create the change proposal and delta specifications before
+implementation, validate them, and obtain human approval. A human may
+explicitly waive or defer the proposal, as happened for work approved before
+OpenSpec was added to this repository. A bug fix that only restores already
+documented behavior does not require a new change proposal.
+
+OpenSpec cleanup is part of task completion, not a later follow-up. When the
+human-approved acceptance criteria and required checks for an active change are
+complete, promote its accepted deltas into `openspec/specs/`, move the change to
+`openspec/changes/archive/YYYY-MM-DD-<change-id>/`, and validate the resulting
+specification tree before the completion report. Do not archive a change that
+is incomplete, blocked, or awaiting a required human decision; report why it
+remains active instead.
+
 Use the inner loop only for safe failures caused by the current diff: change,
 run focused validation, inspect the result and diff, and apply a bounded fix as
 defined in `AI_AGENT_RULES.md`. Use the outer loop for specification, physics,
@@ -26,6 +51,8 @@ current diff may justify one final minimal correction round in the same pull
 request. Treat robustness ideas, refactors, optional coverage, and future work
 as non-blocking; do not create a follow-up branch, pull request, Issue, OpenSpec
 change, automation, or other work item unless a human explicitly requests it.
+The required OpenSpec promotion and archive cleanup above belongs to the
+current task and is not a follow-up work item.
 
 Run the applicable focused checks, then the full public checks:
 

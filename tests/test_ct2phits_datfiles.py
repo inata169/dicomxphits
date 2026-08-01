@@ -12,6 +12,7 @@ PUBLIC_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
+import dicomxphits.ct2phits_datfiles as ct2phits_datfiles_module
 from dicomxphits.ct2phits_datfiles import (
     Ct2PhitsDatfilesError,
     RAW_CT2PHITS_NAMES,
@@ -128,6 +129,35 @@ def _write_raw_datfiles(root: Path) -> Path:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(1, 1), ("1", 1), (1.0, 1), ("-2", -2)],
+)
+def test_integral_beam_number_values_are_preserved(value, expected: int) -> None:
+    assert (
+        ct2phits_datfiles_module._require_integral_beam_number(
+            value,
+            label="RTPLAN BeamNumber",
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [1.5, "1.5", float("nan"), float("inf"), float("-inf"), True, None, ""],
+)
+def test_non_integral_beam_number_values_are_rejected(value) -> None:
+    with pytest.raises(
+        Ct2PhitsDatfilesError,
+        match="RTPLAN BeamNumber must be an integer",
+    ):
+        ct2phits_datfiles_module._require_integral_beam_number(
+            value,
+            label="RTPLAN BeamNumber",
+        )
 
 
 def test_raw_datfiles_are_prepared_from_ct_and_rtplan_without_mutating_source(
