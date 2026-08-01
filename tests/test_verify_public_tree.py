@@ -16,19 +16,13 @@ sys.modules[SPEC.name] = verify_public_tree
 SPEC.loader.exec_module(verify_public_tree)
 
 
-def _write_clean_tree(root: Path):
-    for relative in verify_public_tree.REQUIRED_FILES:
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n", encoding="utf-8")
-
-    (root / ".codex" / "config.toml").write_text(
+def _clean_audit_input():
+    codex_config = (
         'approval_policy = "on-request"\n'
         'approvals_reviewer = "user"\n'
         'sandbox_mode = "workspace-write"\n\n'
         '[sandbox_workspace_write]\n'
-        'network_access = false\n',
-        encoding="utf-8",
+        'network_access = false\n'
     )
     devcontainer = {
         "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
@@ -37,104 +31,132 @@ def _write_clean_tree(root: Path):
         ),
         "remoteUser": "vscode",
     }
-    (root / ".devcontainer" / "devcontainer.json").write_text(
-        json.dumps(devcontainer), encoding="utf-8"
+    paths = [*verify_public_tree.REQUIRED_FILES, "config/dicomxphits.paths.example.json"]
+    entries = [
+        verify_public_tree.TrackedEntry(path, object_id=f"test-object-{index}")
+        for index, path in enumerate(paths)
+    ]
+    template_path, template_object_id = next(
+        iter(verify_public_tree.ALLOWED_DICOM_BLOBS.items())
     )
-    paths = [*verify_public_tree.REQUIRED_FILES]
-    config_example = root / "config" / "dicomxphits.paths.example.json"
-    config_example.parent.mkdir(parents=True, exist_ok=True)
-    config_example.write_text(
-        json.dumps({"phits_executable_path": ""}), encoding="utf-8"
+    entries.append(
+        verify_public_tree.TrackedEntry(template_path, object_id=template_object_id)
     )
-    paths.append("config/dicomxphits.paths.example.json")
-    paths.append("templates/phits2dicom_rtdose_template.dcm")
-    return [verify_public_tree.TrackedEntry(path) for path in paths]
+    blobs = {entry.path: b"\n" for entry in entries}
+    blobs[".codex/config.toml"] = codex_config.encode("utf-8")
+    blobs[".devcontainer/devcontainer.json"] = json.dumps(devcontainer).encode("utf-8")
+    blobs["config/dicomxphits.paths.example.json"] = json.dumps(
+        {"phits_executable_path": ""}
+    ).encode("utf-8")
+    blobs[template_path] = b"\0" * 128 + b"DICM"
+    return entries, blobs
 
 
-def test_clean_public_tree_and_allowlisted_template_pass(tmp_path):
-    entries = _write_clean_tree(tmp_path)
-    (tmp_path / "untracked.env").write_text("not audited", encoding="utf-8")
+def test_clean_public_tree_and_allowlisted_template_pass():
+    entries, blobs = _clean_audit_input()
 
-    assert verify_public_tree.audit_entries(tmp_path, entries) == []
+    assert verify_public_tree.audit_entries(entries, blobs) == []
 
 
-def test_protected_and_generated_tracked_paths_fail(tmp_path):
-    entries = _write_clean_tree(tmp_path)
-    entries.extend(
-        verify_public_tree.TrackedEntry(path)
-        for path in (
+def test_protected_and_generated_tracked_paths_fail():
+    entries, blobs = _clean_audit_input()
+    for index, path in enumerate(
+        (
             ".env",
             "build/output.txt",
             "private/patient.dcm",
             "results/phits.out",
             "source.IAEAphsp",
         )
-    )
+    ):
+        entries.append(verify_public_tree.TrackedEntry(path, object_id=f"bad-{index}"))
+        blobs[path] = b"not DICOM"
 
-    issues = verify_public_tree.audit_entries(tmp_path, entries)
+    issues = verify_public_tree.audit_entries(entries, blobs)
     issue_paths = {path for path, _reason in issues}
 
     assert {".env", "build/output.txt", "private/patient.dcm"} <= issue_paths
     assert {"results/phits.out", "source.IAEAphsp"} <= issue_paths
 
 
-def test_escaping_and_absolute_symlinks_fail(tmp_path):
-    entries = _write_clean_tree(tmp_path)
+def test_replaced_template_and_extensionless_dicom_fail():
+    entries, blobs = _clean_audit_input()
+    template_path = next(iter(verify_public_tree.ALLOWED_DICOM_BLOBS))
+    entries = [
+        verify_public_tree.TrackedEntry(entry.path, entry.mode, "replacement-object")
+        if entry.path == template_path
+        else entry
+        for entry in entries
+    ]
+    extensionless = verify_public_tree.TrackedEntry(
+        "private/patient-image", object_id="extensionless-dicom"
+    )
+    entries.append(extensionless)
+    blobs[extensionless.path] = b"\0" * 128 + b"DICM" + b"payload"
+
+    issues = verify_public_tree.audit_entries(entries, blobs)
+    issue_paths = {path for path, _reason in issues}
+
+    assert {template_path, extensionless.path} <= issue_paths
+
+
+def test_escaping_and_absolute_symlinks_fail():
+    entries, blobs = _clean_audit_input()
     entries.extend(
         (
             verify_public_tree.TrackedEntry(
-                "links/outside", mode="120000", link_target="../../outside"
+                "links/outside", mode="120000", object_id="outside-link"
             ),
             verify_public_tree.TrackedEntry(
-                "links/absolute", mode="120000", link_target="C:/patient-data"
+                "links/absolute", mode="120000", object_id="absolute-link"
             ),
         )
     )
+    blobs["links/outside"] = b"../../outside"
+    blobs["links/absolute"] = b"C:/patient-data"
 
-    issues = verify_public_tree.audit_entries(tmp_path, entries)
+    issues = verify_public_tree.audit_entries(entries, blobs)
     issue_paths = {path for path, _reason in issues}
 
     assert {"links/outside", "links/absolute"} <= issue_paths
 
 
-def test_dangerous_codex_and_devcontainer_settings_fail(tmp_path):
-    entries = _write_clean_tree(tmp_path)
-    (tmp_path / ".codex" / "config.toml").write_text(
+def test_dangerous_indexed_codex_and_devcontainer_settings_fail():
+    entries, blobs = _clean_audit_input()
+    blobs[".codex/config.toml"] = (
         'approval_policy = "never"\n'
         'approvals_reviewer = "user"\n'
         'sandbox_mode = "danger-full-access"\n\n'
         '[sandbox_workspace_write]\n'
         'network_access = true\n'
-        'writable_roots = ["C:/patient-data"]\n',
-        encoding="utf-8",
-    )
-    (tmp_path / ".devcontainer" / "devcontainer.json").write_text(
-        json.dumps(
-            {
-                "image": "python:3.12",
-                "privileged": True,
-                "mounts": ["source=/var/run/docker.sock,target=/var/run/docker.sock"],
-                "remoteUser": "root",
-            }
-        ),
-        encoding="utf-8",
-    )
+        'writable_roots = ["C:/patient-data"]\n'
+    ).encode("utf-8")
+    blobs[".devcontainer/devcontainer.json"] = json.dumps(
+        {
+            "image": "python:3.12",
+            "privileged": True,
+            "mounts": ["source=/home,target=/host,type=bind"],
+            "remoteUser": "root",
+        }
+    ).encode("utf-8")
 
-    issues = verify_public_tree.audit_entries(tmp_path, entries)
-    issue_paths = {path for path, _reason in issues}
+    issues = verify_public_tree.audit_entries(entries, blobs)
+    issue_pairs = set(issues)
 
-    assert ".codex/config.toml" in issue_paths
-    assert ".devcontainer/devcontainer.json" in issue_paths
+    assert any(path == ".codex/config.toml" for path, _reason in issue_pairs)
+    assert (
+        ".devcontainer/devcontainer.json",
+        "additional host bind mounts are not allowed",
+    ) in issue_pairs
 
 
-def test_local_absolute_path_in_tracked_configuration_fails(tmp_path):
-    entries = _write_clean_tree(tmp_path)
-    (tmp_path / "config" / "dicomxphits.paths.example.json").write_text(
-        json.dumps({"phits_executable_path": "C:/PHITS/bin/phits.exe"}),
-        encoding="utf-8",
-    )
+def test_local_absolute_path_in_indexed_configuration_fails():
+    entries, blobs = _clean_audit_input()
+    blobs["config/dicomxphits.paths.example.json"] = json.dumps(
+        {"phits_executable_path": "C:/PHITS/bin/phits.exe"}
+    ).encode("utf-8")
 
-    issues = verify_public_tree.audit_entries(tmp_path, entries)
+    issues = verify_public_tree.audit_entries(entries, blobs)
 
     assert (
         "config/dicomxphits.paths.example.json",

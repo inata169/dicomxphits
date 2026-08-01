@@ -10,7 +10,7 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Iterable
+from typing import Iterable, Mapping
 
 
 REQUIRED_FILES = (
@@ -24,7 +24,11 @@ REQUIRED_FILES = (
     "tests/test_verify_public_tree.py",
     "tools/verify_public_tree.py",
 )
-ALLOWED_DICOM = frozenset({"templates/phits2dicom_rtdose_template.dcm"})
+ALLOWED_DICOM_BLOBS = {
+    "templates/phits2dicom_rtdose_template.dcm": (
+        "2268aac6213d0e889dac1136dc24c36e16bc1824"
+    )
+}
 GENERATED_DIRS = frozenset(
     {
         ".cache",
@@ -72,8 +76,7 @@ PHITS_RESULT_NAMES = frozenset(
 class TrackedEntry:
     path: str
     mode: str = "100644"
-    object_id: str | None = None
-    link_target: str | None = None
+    object_id: str = ""
 
 
 def _run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
@@ -105,17 +108,50 @@ def tracked_entries(repo: Path) -> list[TrackedEntry]:
         if stage != "0":
             raise RuntimeError("git index contains an unresolved merge entry")
         path = raw_path.decode("utf-8", errors="surrogateescape").replace("\\", "/")
-        link_target = None
-        if mode == "120000":
-            blob = _run_git(repo, "cat-file", "-p", object_id)
-            if blob.returncode != 0:
-                raise RuntimeError(f"could not read symlink target for {path}")
-            link_target = blob.stdout.decode("utf-8", errors="surrogateescape")
-        entries.append(TrackedEntry(path, mode, object_id, link_target))
+        entries.append(TrackedEntry(path, mode, object_id))
     return entries
 
 
-def _path_issues(entry: TrackedEntry) -> list[str]:
+def indexed_blobs(repo: Path, entries: Iterable[TrackedEntry]) -> dict[str, bytes]:
+    entries = list(entries)
+    object_ids = list(dict.fromkeys(entry.object_id for entry in entries))
+    process = subprocess.Popen(
+        ["git", "-C", str(repo), "cat-file", "--batch"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    request = b"".join(object_id.encode("ascii") + b"\n" for object_id in object_ids)
+    output, error = process.communicate(request)
+    if process.returncode != 0:
+        detail = error.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"git cat-file failed: {detail or 'unknown error'}")
+
+    objects: dict[str, bytes] = {}
+    cursor = 0
+    for requested_id in object_ids:
+        header_end = output.find(b"\n", cursor)
+        if header_end < 0:
+            raise RuntimeError("git cat-file returned an incomplete header")
+        fields = output[cursor:header_end].decode("ascii").split()
+        if len(fields) != 3 or fields[1] != "blob":
+            raise RuntimeError(f"git object {requested_id} is not a readable blob")
+        actual_id, _object_type, size_text = fields
+        size = int(size_text)
+        data_start = header_end + 1
+        data_end = data_start + size
+        if data_end >= len(output) or output[data_end : data_end + 1] != b"\n":
+            raise RuntimeError(f"git cat-file returned incomplete data for {requested_id}")
+        objects[actual_id] = output[data_start:data_end]
+        cursor = data_end + 1
+    return {entry.path: objects[entry.object_id] for entry in entries}
+
+
+def _looks_like_dicom(blob: bytes) -> bool:
+    return len(blob) >= 132 and blob[128:132] == b"DICM"
+
+
+def _path_issues(entry: TrackedEntry, blob: bytes) -> list[str]:
     path = entry.path
     pure = PurePosixPath(path)
     parts = tuple(part.lower() for part in pure.parts)
@@ -123,7 +159,10 @@ def _path_issues(entry: TrackedEntry) -> list[str]:
     suffix = pure.suffix.lower()
     issues: list[str] = []
 
-    if suffix == ".dcm" and path not in ALLOWED_DICOM:
+    approved_object_id = ALLOWED_DICOM_BLOBS.get(path)
+    if approved_object_id is not None and entry.object_id != approved_object_id:
+        issues.append("reviewed DICOM template does not match its approved Git object ID")
+    elif approved_object_id is None and (suffix == ".dcm" or _looks_like_dicom(blob)):
         issues.append("tracked DICOM is not the reviewed public template")
     if any(part in GENERATED_DIRS or part.endswith(".egg-info") for part in parts):
         issues.append("cache, virtual-environment, or build output is tracked")
@@ -150,10 +189,10 @@ def _path_issues(entry: TrackedEntry) -> list[str]:
     return issues
 
 
-def _symlink_issue(entry: TrackedEntry) -> str | None:
+def _symlink_issue(entry: TrackedEntry, blob: bytes) -> str | None:
     if entry.mode != "120000":
         return None
-    target = (entry.link_target or "").strip()
+    target = blob.decode("utf-8", errors="surrogateescape").strip()
     if not target:
         return "symlink target is empty"
     if PurePosixPath(target).is_absolute() or PureWindowsPath(target).is_absolute():
@@ -164,12 +203,10 @@ def _symlink_issue(entry: TrackedEntry) -> str | None:
     return None
 
 
-def _codex_config_issues(repo: Path) -> list[tuple[str, str]]:
-    path = repo / ".codex" / "config.toml"
+def _codex_config_issues(blob: bytes) -> list[tuple[str, str]]:
     try:
-        with path.open("rb") as handle:
-            config = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        config = tomllib.loads(blob.decode("utf-8"))
+    except (UnicodeError, tomllib.TOMLDecodeError) as exc:
         return [(".codex/config.toml", f"cannot parse required Codex config: {exc}")]
 
     expected = {
@@ -192,12 +229,11 @@ def _codex_config_issues(repo: Path) -> list[tuple[str, str]]:
     return issues
 
 
-def _devcontainer_issues(repo: Path) -> list[tuple[str, str]]:
+def _devcontainer_issues(blob: bytes) -> list[tuple[str, str]]:
     relative = ".devcontainer/devcontainer.json"
-    path = repo / ".devcontainer" / "devcontainer.json"
     try:
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        config = json.loads(blob.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
         return [(relative, f"cannot parse required Dev Container config: {exc}")]
     if not isinstance(config, dict):
         return [(relative, "Dev Container config must be a JSON object")]
@@ -214,6 +250,19 @@ def _devcontainer_issues(repo: Path) -> list[tuple[str, str]]:
 
     mounts = config.get("mounts", [])
     mount_text = json.dumps(mounts, sort_keys=True).lower()
+    for mount in mounts:
+        if isinstance(mount, dict):
+            mount_type = str(mount.get("type", "")).lower()
+        else:
+            fields = {}
+            for item in str(mount).split(","):
+                key, separator, value = item.strip().partition("=")
+                if separator:
+                    fields[key.lower()] = value
+            mount_type = fields.get("type", "").lower()
+        if mount_type == "bind":
+            issues.append((relative, "additional host bind mounts are not allowed"))
+            break
     forbidden_mount_markers = (
         "docker.sock",
         "patient",
@@ -253,14 +302,16 @@ def _string_values(value: object) -> Iterable[str]:
             yield from _string_values(child)
 
 
-def _repository_config_issues(repo: Path, tracked: set[str]) -> list[tuple[str, str]]:
+def _repository_config_issues(
+    tracked: set[str], blobs: Mapping[str, bytes]
+) -> list[tuple[str, str]]:
     issues: list[tuple[str, str]] = []
     for relative in sorted(tracked):
         if not relative.startswith("config/") or not relative.lower().endswith(".json"):
             continue
         try:
-            value = json.loads((repo / relative).read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            value = json.loads(blobs[relative].decode("utf-8"))
+        except (KeyError, UnicodeError, json.JSONDecodeError) as exc:
             issues.append((relative, f"cannot parse tracked JSON configuration: {exc}"))
             continue
         for text in _string_values(value):
@@ -272,7 +323,9 @@ def _repository_config_issues(repo: Path, tracked: set[str]) -> list[tuple[str, 
     return issues
 
 
-def audit_entries(repo: Path, entries: Iterable[TrackedEntry]) -> list[tuple[str, str]]:
+def audit_entries(
+    entries: Iterable[TrackedEntry], blobs: Mapping[str, bytes]
+) -> list[tuple[str, str]]:
     entries = list(entries)
     tracked = {entry.path for entry in entries}
     issues: list[tuple[str, str]] = []
@@ -280,21 +333,23 @@ def audit_entries(repo: Path, entries: Iterable[TrackedEntry]) -> list[tuple[str
         if required not in tracked:
             issues.append((required, "required development-loop file is not tracked"))
     for entry in entries:
-        issues.extend((entry.path, reason) for reason in _path_issues(entry))
-        symlink_reason = _symlink_issue(entry)
+        blob = blobs.get(entry.path, b"")
+        issues.extend((entry.path, reason) for reason in _path_issues(entry, blob))
+        symlink_reason = _symlink_issue(entry, blob)
         if symlink_reason:
             issues.append((entry.path, symlink_reason))
     if ".codex/config.toml" in tracked:
-        issues.extend(_codex_config_issues(repo))
+        issues.extend(_codex_config_issues(blobs[".codex/config.toml"]))
     if ".devcontainer/devcontainer.json" in tracked:
-        issues.extend(_devcontainer_issues(repo))
-    issues.extend(_repository_config_issues(repo, tracked))
+        issues.extend(_devcontainer_issues(blobs[".devcontainer/devcontainer.json"]))
+    issues.extend(_repository_config_issues(tracked, blobs))
     return sorted(set(issues))
 
 
 def audit_repository(repo: Path) -> tuple[list[tuple[str, str]], int]:
     entries = tracked_entries(repo)
-    return audit_entries(repo, entries), len(entries)
+    blobs = indexed_blobs(repo, entries)
+    return audit_entries(entries, blobs), len(entries)
 
 
 def main() -> int:
