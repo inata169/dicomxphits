@@ -174,7 +174,7 @@ def select_ct_series(
     selected = series[selected_uid]
     frame_uids: set[str] = set()
     dimensions: set[tuple[int, int]] = set()
-    positioned: list[tuple[float, Path]] = []
+    positioned: list[tuple[tuple[float, float, float], Path]] = []
     for path, dataset in selected:
         try:
             _require_axial_hfs_ct(dataset, path=path)
@@ -202,7 +202,7 @@ def select_ct_series(
             )
         except Ct2PhitsDatfilesError as exc:
             raise Ct2PhitsFrontendError(str(exc)) from exc
-        positioned.append((position[2], path))
+        positioned.append((position, path))
 
     if len(frame_uids) != 1:
         raise Ct2PhitsFrontendError(
@@ -217,12 +217,19 @@ def select_ct_series(
         raise Ct2PhitsFrontendError(
             "selected CT series Rows and Columns must be positive"
         )
-    positions = [position for position, _path in positioned]
-    if len(set(positions)) != len(positions):
+    in_plane_positions = {
+        (position[0], position[1]) for position, _path in positioned
+    }
+    if len(in_plane_positions) != 1:
+        raise Ct2PhitsFrontendError(
+            "selected CT series contains inconsistent ImagePositionPatient X or Y values"
+        )
+    z_positions = [position[2] for position, _path in positioned]
+    if len(set(z_positions)) != len(z_positions):
         raise Ct2PhitsFrontendError(
             "selected CT series contains duplicate ImagePositionPatient Z values"
         )
-    positioned.sort(key=lambda item: item[0])
+    positioned.sort(key=lambda item: item[0][2])
     return SelectedCtSeries(
         source_root=root,
         series_instance_uid=selected_uid,
@@ -550,6 +557,15 @@ def run_ct2phits_frontend(
             raise Ct2PhitsFrontendError(
                 "raw CT2PHITS DATfiles changed during downstream handoff"
             )
+        post_handoff_inventory = _generated_inventory(
+            datfiles_root,
+            started_ns=started_ns,
+        )
+        if inventory != post_handoff_inventory:
+            raise Ct2PhitsFrontendError(
+                "CT2PHITS generated files changed during downstream handoff"
+            )
+        inventory = post_handoff_inventory
         prepared_hashes = dict(prepared.assets.sha256)
     except subprocess.TimeoutExpired as exc:
         timed_out = True

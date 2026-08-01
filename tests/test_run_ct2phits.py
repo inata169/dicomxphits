@@ -443,6 +443,24 @@ def test_unrelated_non_dicom_file_is_ignored(tmp_path: Path) -> None:
     assert len(selected.files) == 2
 
 
+def test_in_plane_ct_slice_shift_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    paths = _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+    )
+    shifted = pydicom.dcmread(str(paths[1]))
+    shifted.ImagePositionPatient = [-119.0, -80.0, -50.0]
+    shifted.save_as(str(paths[1]))
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="inconsistent ImagePositionPatient X or Y values",
+    ):
+        select_ct_series(root)
+
+
 def test_raw_datfile_change_during_handoff_is_rejected(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -487,3 +505,99 @@ def test_raw_datfile_change_during_handoff_is_rejected(
     )
     assert summary["status"] == "failed"
     assert "changed during downstream handoff" in summary["failure_reason"]
+
+
+def test_cttrans_change_during_handoff_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    original_prepare = run_ct2phits_module.prepare_ct2phits_assets
+
+    def mutating_prepare(**kwargs):
+        prepared = original_prepare(**kwargs)
+        raw_root = Path(kwargs["raw_datfiles_root"])
+        (raw_root / "CTtrans.dat").write_text(
+            "$ synthetic changed during handoff\n",
+            encoding="utf-8",
+        )
+        return prepared
+
+    monkeypatch.setattr(
+        run_ct2phits_module,
+        "prepare_ct2phits_assets",
+        mutating_prepare,
+    )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="CT2PHITS generated files changed during downstream handoff",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            timeout_seconds=12.0,
+            runner=_success_runner(case["workspace"]),
+            platform_system="Windows",
+        )
+
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert "generated files changed" in summary["failure_reason"]
+
+
+def test_raw_change_after_initial_inventory_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    original_inventory = run_ct2phits_module._generated_inventory
+    inventory_calls = 0
+
+    def mutating_inventory(datfiles_root: Path, *, started_ns: int):
+        nonlocal inventory_calls
+        result = original_inventory(datfiles_root, started_ns=started_ns)
+        inventory_calls += 1
+        if inventory_calls == 1:
+            (datfiles_root / "CTsurf.dat").write_text(
+                "$ synthetic changed after initial inventory\n",
+                encoding="utf-8",
+            )
+        return result
+
+    monkeypatch.setattr(
+        run_ct2phits_module,
+        "_generated_inventory",
+        mutating_inventory,
+    )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="CT2PHITS generated files changed during downstream handoff",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            timeout_seconds=12.0,
+            runner=_success_runner(case["workspace"]),
+            platform_system="Windows",
+        )
+
+    assert inventory_calls == 2
+    summary = json.loads(
+        (case["workspace"] / "ct2phits_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "failed"
+    assert "generated files changed" in summary["failure_reason"]
