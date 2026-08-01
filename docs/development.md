@@ -1,5 +1,8 @@
 # Development
 
+See [Project status](project-status.md) for the durable completion baseline,
+unverified items, and the human-approved starting point for future work.
+
 Use Python 3.12 or newer. Development and automated validation must use public
 source, synthetic inputs, mocks, and fake runners. Never put real patient or
 facility data, credentials, official PHITS/RT-PHITS files, original IAEA
