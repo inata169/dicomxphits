@@ -29,3 +29,6 @@ jobs:
 
       - name: Run tests
         run: pytest tests -q -p no:cacheprovider
+
+      - name: Verify public repository boundary
+        run: python tools/verify_public_tree.py

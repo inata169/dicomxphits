@@ -1,2 +1,16 @@
 config/*.local.json
 *.egg-info/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest-*/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.coverage
+htmlcov/
+.env
+.env.*
