@@ -276,29 +276,49 @@ def test_missing_batch_is_rejected_before_workspace_creation(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
-    ("number_kind", "expected"),
+    ("number_kind", "invalid_value", "expected"),
     [
-        ("beam", "RTPLAN BeamNumber must be an integer"),
+        ("beam", None, "RTPLAN BeamNumber must be an integer"),
+        ("beam", 1.5, "RTPLAN BeamNumber must be an integer"),
         (
             "referenced_beam",
+            None,
+            "RTPLAN ReferencedBeamNumber must be an integer",
+        ),
+        (
+            "referenced_beam",
+            1.5,
             "RTPLAN ReferencedBeamNumber must be an integer",
         ),
     ],
 )
+@pytest.mark.filterwarnings(
+    "ignore:Value .* is not valid for elements with a VR of IS"
+)
+@pytest.mark.filterwarnings("ignore:Invalid value for VR IS")
 def test_invalid_rtplan_beam_number_is_rejected_before_workspace_creation(
     tmp_path: Path,
     number_kind: str,
+    invalid_value,
     expected: str,
 ) -> None:
     case = _case(tmp_path)
     dataset = pydicom.dcmread(str(case["rtplan"]))
-    if number_kind == "beam":
-        dataset.BeamSequence[0].BeamNumber = None
+
+    def write_invalid_rtplan() -> None:
+        if number_kind == "beam":
+            dataset.BeamSequence[0].BeamNumber = invalid_value
+        else:
+            dataset.FractionGroupSequence[0].ReferencedBeamSequence[
+                0
+            ].ReferencedBeamNumber = invalid_value
+        dataset.save_as(str(case["rtplan"]))
+
+    if invalid_value == 1.5:
+        with pytest.warns(UserWarning, match="not valid|Invalid value"):
+            write_invalid_rtplan()
     else:
-        dataset.FractionGroupSequence[0].ReferencedBeamSequence[
-            0
-        ].ReferencedBeamNumber = None
-    dataset.save_as(str(case["rtplan"]))
+        write_invalid_rtplan()
 
     with pytest.raises(
         Ct2PhitsFrontendError,

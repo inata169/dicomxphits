@@ -172,11 +172,13 @@ by `validate_raw_ct2phits_datfiles()` and the coordinate-corrected assets
 created by `prepare_ct2phits_assets()`; generated `CTtrans.dat` is inventoried,
 while the downstream transform is the validated `CTtrans.inp`.
 
-The generated handoff can then be supplied to the existing workspace adapter:
+The generated handoff can then be supplied to the existing workspace adapter.
+Reuse the frontend's frozen RT Plan snapshot so the downstream coordinate
+transform is derived from the same RT Plan that the frontend validated:
 
 ```powershell
 dicomxphits-prepare-3dcrt-workspace `
-  --rtplan <non-patient-rtplan.dcm> `
+  --rtplan <ct2phits-workspace>/RTPLAN.dcm `
   --workspace-root <new-public-workspace> `
   --phits-root-folder <licensed-phits-root> `
   --phits-executable-path <licensed-phits-executable> `

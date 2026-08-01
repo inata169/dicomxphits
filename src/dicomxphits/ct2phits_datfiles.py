@@ -5,6 +5,7 @@ import math
 import re
 import shutil
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -221,17 +222,29 @@ def _rtplan_frame_uids(dataset: Any) -> set[str]:
     return values
 
 
+def _require_integral_beam_number(value: Any, *, label: str) -> int:
+    if isinstance(value, bool):
+        raise Ct2PhitsDatfilesError(f"{label} must be an integer")
+    try:
+        numeric = Decimal(str(value).strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise Ct2PhitsDatfilesError(f"{label} must be an integer") from exc
+    if not numeric.is_finite() or numeric != numeric.to_integral_value():
+        raise Ct2PhitsDatfilesError(f"{label} must be an integer")
+    return int(numeric)
+
+
 def _referenced_beam_numbers(dataset: Any) -> set[int]:
     numbers: set[int] = set()
     for group in getattr(dataset, "FractionGroupSequence", []) or []:
         for item in getattr(group, "ReferencedBeamSequence", []) or []:
             value = getattr(item, "ReferencedBeamNumber", None)
-            try:
-                numbers.add(int(value))
-            except (TypeError, ValueError) as exc:
-                raise Ct2PhitsDatfilesError(
-                    "RTPLAN ReferencedBeamNumber must be an integer"
-                ) from exc
+            numbers.add(
+                _require_integral_beam_number(
+                    value,
+                    label="RTPLAN ReferencedBeamNumber",
+                )
+            )
     return numbers
 
 
@@ -285,12 +298,10 @@ def _rtplan_isocenter(
     beams = list(getattr(dataset, "BeamSequence", []) or [])
     numbered_beams: list[tuple[int, Any]] = []
     for beam in beams:
-        try:
-            beam_number = int(getattr(beam, "BeamNumber", None))
-        except (TypeError, ValueError) as exc:
-            raise Ct2PhitsDatfilesError(
-                "RTPLAN BeamNumber must be an integer"
-            ) from exc
+        beam_number = _require_integral_beam_number(
+            getattr(beam, "BeamNumber", None),
+            label="RTPLAN BeamNumber",
+        )
         numbered_beams.append((beam_number, beam))
     selected = [
         beam
