@@ -53,10 +53,11 @@ def _write_ct_series(
     rows: int = 64,
     columns: int = 96,
     name_prefix: str = "CT",
+    z_positions_mm: tuple[float, ...] = (-100.0, -50.0),
 ) -> tuple[Path, ...]:
     root.mkdir(exist_ok=True)
     paths: list[Path] = []
-    for index, z_mm in enumerate((-100.0, -50.0), start=1):
+    for index, z_mm in enumerate(z_positions_mm, start=1):
         path = root / f"{name_prefix}.{index}.dcm"
         dataset = _dataset(
             path,
@@ -388,6 +389,133 @@ def test_existing_workspace_is_never_overwritten(tmp_path: Path) -> None:
     assert marker.read_text(encoding="utf-8") == "user data\n"
 
 
+def test_repository_workspace_is_rejected_independently_of_installation_path(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+    repository = tmp_path / "synthetic_checkout"
+    repository.mkdir()
+    (repository / "pyproject.toml").write_text(
+        '[project]\nname = "dicomxphits"\n',
+        encoding="utf-8",
+    )
+    (repository / "src" / "dicomxphits").mkdir(parents=True)
+    rtphits = _fake_rtphits_root(repository / "licensed_rtphits")
+    workspace = rtphits / "work" / "case"
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("repository boundary must reject before execution")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="outside the dicomxphits repository",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=rtphits,
+            workspace_root=workspace,
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    assert not workspace.exists()
+
+
+def test_rtplan_snapshot_is_stable_during_external_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    original_prepare = run_ct2phits_module.prepare_ct2phits_assets
+    prepared_rtplan_paths: list[Path] = []
+
+    def recording_prepare(**kwargs):
+        prepared_rtplan_paths.append(Path(kwargs["rtplan_path"]))
+        return original_prepare(**kwargs)
+
+    monkeypatch.setattr(
+        run_ct2phits_module,
+        "prepare_ct2phits_assets",
+        recording_prepare,
+    )
+
+    def runner(command, cwd, timeout_seconds):
+        changed = pydicom.dcmread(str(case["rtplan"]))
+        changed.BeamSequence[0].ControlPointSequence[0].IsocenterPosition = [
+            40.0,
+            50.0,
+            60.0,
+        ]
+        changed.save_as(str(case["rtplan"]))
+        _write_generated_datfiles(case["workspace"] / "DATfiles")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"],
+        rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"],
+        workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True,
+        runner=runner,
+        platform_system="Windows",
+    )
+
+    snapshot = case["workspace"] / "RTPLAN.dcm"
+    frozen = pydicom.dcmread(str(snapshot))
+    assert list(
+        frozen.BeamSequence[0].ControlPointSequence[0].IsocenterPosition
+    ) == [10.0, 20.0, 30.0]
+    assert prepared_rtplan_paths == [snapshot]
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["rtplan"]["snapshot_path"] == "RTPLAN.dcm"
+    assert manifest["rtplan"]["sha256"] == run_ct2phits_module._sha256(snapshot)
+    assert manifest["rtplan"]["isocenter_dicom_cm"] == [1.0, 2.0, 3.0]
+
+
+def test_rtplan_change_during_snapshot_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    original_copyfile = run_ct2phits_module.shutil.copyfile
+
+    def mutating_copyfile(source, destination):
+        if Path(source) == case["rtplan"].resolve():
+            changed = pydicom.dcmread(str(source))
+            changed.BeamSequence[0].ControlPointSequence[0].IsocenterPosition = [
+                40.0,
+                50.0,
+                60.0,
+            ]
+            changed.save_as(str(source))
+        return original_copyfile(source, destination)
+
+    monkeypatch.setattr(
+        run_ct2phits_module.shutil,
+        "copyfile",
+        mutating_copyfile,
+    )
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("unstable RT Plan must be rejected before execution")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="changed while creating the workspace snapshot",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+
 def test_multiple_ct_series_require_explicit_selection(tmp_path: Path) -> None:
     root = tmp_path / "ct"
     frame_uid = _uid()
@@ -457,6 +585,54 @@ def test_in_plane_ct_slice_shift_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(
         Ct2PhitsFrontendError,
         match="inconsistent ImagePositionPatient X or Y values",
+    ):
+        select_ct_series(root)
+
+
+def test_non_uniform_ct_slice_spacing_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+        z_positions_mm=(0.0, 1.0, 3.0),
+    )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="non-uniform ImagePositionPatient Z spacing",
+    ):
+        select_ct_series(root)
+
+
+def test_ct_slice_spacing_uses_reviewed_absolute_tolerance(tmp_path: Path) -> None:
+    root = tmp_path / "ct"
+    _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+        z_positions_mm=(0.0, 1.0, 2.0000005),
+    )
+
+    selected = select_ct_series(root)
+
+    assert len(selected.files) == 3
+
+
+def test_ct_slice_spacing_beyond_reviewed_absolute_tolerance_is_rejected(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "ct"
+    _write_ct_series(
+        root,
+        frame_uid=_uid(),
+        series_uid=_uid(),
+        z_positions_mm=(0.0, 1.0, 2.000002),
+    )
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="non-uniform ImagePositionPatient Z spacing",
     ):
         select_ct_series(root)
 

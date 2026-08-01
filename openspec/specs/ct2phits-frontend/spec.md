@@ -37,7 +37,9 @@ The frontend SHALL select exactly one CT DICOM series from the supplied
 directory. It SHALL require explicit Series Instance UID selection when more
 than one series is present and SHALL reject unreadable or inconsistent geometry
 needed by the existing axial HFS coordinate contract. The selected CT series
-and RT Plan MUST share a Frame of Reference UID.
+and RT Plan MUST share a Frame of Reference UID. Adjacent DICOM Z positions
+MUST have uniform spacing using relative tolerance zero and absolute tolerance
+`1.0e-6 mm`.
 
 #### Scenario: Single valid CT series
 
@@ -64,7 +66,9 @@ outside the `dicomxphits` repository. It SHALL refuse an existing workspace,
 copy selected CT slices without modifying their sources, write a manifest, and
 generate `ct2phits.inp` using the reviewed CT2PHITS procedure. The input SHALL
 use the selected slice count and Rows and Columns, coarse graining `8 8 2`, and
-DICOM coordinate mode `1`.
+DICOM coordinate mode `1`. The frontend SHALL record the source RT Plan SHA-256,
+copy it into the isolated workspace without modification, verify the snapshot
+hash, and use only that stable snapshot for the downstream handoff.
 
 #### Scenario: New workspace preparation
 

@@ -38,6 +38,8 @@ CT2PHITS_SUMMARY_NAME = "ct2phits_execution_summary.json"
 CT2PHITS_BATCH_NAME = "RTphits_win.bat"
 CT2PHITS_TABLE_RELATIVE = Path("data") / "HumanVoxelTable.data"
 CT2PHITS_COARSE_GRAINING = (8, 8, 2)
+CT_SLICE_SPACING_TOLERANCE_MM = 1.0e-6
+RTPLAN_SNAPSHOT_NAME = "RTPLAN.dcm"
 
 
 class Ct2PhitsFrontendError(ValueError):
@@ -92,6 +94,15 @@ def _is_relative_to(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _is_within_dicomxphits_repository(path: Path) -> bool:
+    for candidate in (path, *path.parents):
+        if (candidate / "pyproject.toml").is_file() and (
+            candidate / "src" / "dicomxphits"
+        ).is_dir():
+            return True
+    return False
 
 
 def _read_ct_header(path: Path) -> Any | None:
@@ -224,11 +235,29 @@ def select_ct_series(
         raise Ct2PhitsFrontendError(
             "selected CT series contains inconsistent ImagePositionPatient X or Y values"
         )
-    z_positions = [position[2] for position, _path in positioned]
+    z_positions = sorted(position[2] for position, _path in positioned)
     if len(set(z_positions)) != len(z_positions):
         raise Ct2PhitsFrontendError(
             "selected CT series contains duplicate ImagePositionPatient Z values"
         )
+    if len(z_positions) >= 3:
+        expected_spacing = z_positions[1] - z_positions[0]
+        adjacent_spacings = [
+            current - previous
+            for previous, current in zip(z_positions, z_positions[1:])
+        ]
+        if not all(
+            math.isclose(
+                spacing,
+                expected_spacing,
+                rel_tol=0.0,
+                abs_tol=CT_SLICE_SPACING_TOLERANCE_MM,
+            )
+            for spacing in adjacent_spacings[1:]
+        ):
+            raise Ct2PhitsFrontendError(
+                "selected CT series contains non-uniform ImagePositionPatient Z spacing"
+            )
     positioned.sort(key=lambda item: item[0][2])
     return SelectedCtSeries(
         source_root=root,
@@ -271,8 +300,7 @@ def _validate_external_layout(
         raise Ct2PhitsFrontendError(
             "CT2PHITS workspace must be a new directory below the supplied RT-PHITS root"
         )
-    public_repository = Path(__file__).resolve().parents[2]
-    if _is_relative_to(workspace, public_repository):
+    if _is_within_dicomxphits_repository(workspace):
         raise Ct2PhitsFrontendError(
             "CT2PHITS workspace must remain outside the dicomxphits repository"
         )
@@ -418,16 +446,23 @@ def run_ct2phits_frontend(
         ct_dicom_root,
         series_instance_uid=series_instance_uid,
     )
+    rtplan_source = rtplan_path.resolve()
     try:
         ct_origin, frame_uid, _series_uid, selected_count = _ct_series_origin(
             selected.files[0]
         )
-        rtplan_isocenter = _rtplan_isocenter(
-            rtplan_path,
+        _rtplan_isocenter(
+            rtplan_source,
             expected_frame_uid=frame_uid,
         )
     except Ct2PhitsDatfilesError as exc:
         raise Ct2PhitsFrontendError(str(exc)) from exc
+    try:
+        rtplan_source_sha256 = _sha256(rtplan_source)
+    except OSError as exc:
+        raise Ct2PhitsFrontendError(
+            f"could not hash RT Plan input: {rtplan_source}"
+        ) from exc
     if selected_count != len(selected.files):
         raise Ct2PhitsFrontendError(
             "selected CT series count changed during preflight inspection"
@@ -440,11 +475,24 @@ def run_ct2phits_frontend(
     manifest_path = workspace / CT2PHITS_MANIFEST_NAME
     summary_path = workspace / CT2PHITS_SUMMARY_NAME
     input_path = workspace / CT2PHITS_INPUT_NAME
+    rtplan_snapshot = workspace / RTPLAN_SNAPSHOT_NAME
 
     workspace.mkdir(parents=True)
     ct_root.mkdir()
     datfiles_root.mkdir()
     logs_root.mkdir()
+    shutil.copyfile(rtplan_source, rtplan_snapshot)
+    if _sha256(rtplan_snapshot) != rtplan_source_sha256:
+        raise Ct2PhitsFrontendError(
+            "RT Plan input changed while creating the workspace snapshot"
+        )
+    try:
+        rtplan_isocenter = _rtplan_isocenter(
+            rtplan_snapshot,
+            expected_frame_uid=frame_uid,
+        )
+    except Ct2PhitsDatfilesError as exc:
+        raise Ct2PhitsFrontendError(str(exc)) from exc
     copied_files: list[str] = []
     for index, source in enumerate(selected.files, start=1):
         name = f"CT{index:06d}.dcm"
@@ -480,6 +528,8 @@ def run_ct2phits_frontend(
         },
         "rtplan": {
             "source_name": rtplan_path.name,
+            "snapshot_path": RTPLAN_SNAPSHOT_NAME,
+            "sha256": rtplan_source_sha256,
             "isocenter_dicom_cm": list(rtplan_isocenter),
             "frame_of_reference_match": True,
         },
@@ -541,7 +591,7 @@ def run_ct2phits_frontend(
         prepared = prepare_ct2phits_assets(
             raw_datfiles_root=datfiles_root,
             ct_reference_dicom=ct_reference,
-            rtplan_path=rtplan_path,
+            rtplan_path=rtplan_snapshot,
             output_root=prepared_root,
             confirmed_non_patient_phantom=True,
         )
