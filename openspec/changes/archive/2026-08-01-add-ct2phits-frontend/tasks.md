@@ -40,7 +40,7 @@
 - [ ] 4.2 Repeat pytest, compileall, and the public-tree audit in the workplace
   Dev Container. Deferred as a non-blocking workplace cross-check; Linux
   validation is not claimed.
-- [ ] 4.3 Open a Draft PR when GitHub tooling or connectivity is available.
-  Deferred as a non-blocking handoff item; no Draft PR is claimed.
+- [x] 4.3 Open a Draft PR when GitHub tooling or connectivity is available.
+  Draft PR 3 was created with the GitHub plugin on 2026-08-01.
 - [x] 4.4 At task completion, promote the accepted delta specification and move
   this change to `openspec/changes/archive/YYYY-MM-DD-add-ct2phits-frontend/`.
