@@ -36,8 +36,11 @@ The frontend:
   and RT Plan snapshots;
 - strictly rejects missing, non-integral, non-finite, or Boolean RT Plan beam
   identifiers instead of coercing them;
-- terminates the Windows process tree on timeout and preserves timeout,
-  termination, return-code, stdout, stderr, and log-write evidence;
+- attempts to terminate the Windows process tree on timeout and records any
+  process-tree termination failure separately; when
+  `process_tree_termination_error` is not null, a human must verify that no
+  child process remains before reusing the external workspace;
+- preserves timeout, return-code, stdout, stderr, and log-write evidence;
 - requires all nine generated files to be newly produced, non-empty regular
   files and records their SHA-256 digests;
 - revalidates all snapshots and generated outputs after execution and after
