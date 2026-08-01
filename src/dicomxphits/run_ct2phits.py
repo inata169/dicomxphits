@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -40,6 +41,7 @@ CT2PHITS_TABLE_RELATIVE = Path("data") / "HumanVoxelTable.data"
 CT2PHITS_COARSE_GRAINING = (8, 8, 2)
 CT_SLICE_SPACING_TOLERANCE_MM = 1.0e-6
 RTPLAN_SNAPSHOT_NAME = "RTPLAN.dcm"
+PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS = 10.0
 
 
 class Ct2PhitsFrontendError(ValueError):
@@ -78,6 +80,25 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _copy_stable_ct_slice(source: Path, destination: Path) -> str:
+    try:
+        source_sha256_before = _sha256(source)
+        shutil.copyfile(source, destination)
+        snapshot_sha256 = _sha256(destination)
+        source_sha256_after = _sha256(source)
+    except OSError as exc:
+        raise Ct2PhitsFrontendError(
+            f"could not create stable CT DICOM snapshot: {source.name}"
+        ) from exc
+    if not (
+        source_sha256_before == snapshot_sha256 == source_sha256_after
+    ):
+        raise Ct2PhitsFrontendError(
+            f"CT DICOM changed while creating the workspace snapshot: {source.name}"
+        )
+    return snapshot_sha256
 
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
@@ -352,14 +373,77 @@ def _default_runner(
     cwd: Path,
     timeout_seconds: float,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        list(command),
-        cwd=str(cwd),
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-    )
+    command_list = list(command)
+    with (
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8", newline="") as stdout,
+        tempfile.TemporaryFile(mode="w+", encoding="utf-8", newline="") as stderr,
+    ):
+        process = subprocess.Popen(
+            command_list,
+            cwd=str(cwd),
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+        )
+        try:
+            returncode = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            try:
+                terminated = subprocess.run(
+                    [
+                        "taskkill.exe",
+                        "/PID",
+                        str(process.pid),
+                        "/T",
+                        "/F",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                process.kill()
+                process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
+                raise OSError(
+                    "failed to terminate the timed-out Windows process tree"
+                ) from exc
+            if terminated.returncode != 0:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
+                raise OSError(
+                    "taskkill failed to terminate the timed-out Windows process tree: "
+                    + terminated.stderr.strip()
+                )
+            try:
+                process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                process.wait(timeout=PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS)
+                raise OSError(
+                    "timed-out Windows process tree did not terminate"
+                ) from exc
+            stdout.flush()
+            stderr.flush()
+            stdout.seek(0)
+            stderr.seek(0)
+            raise subprocess.TimeoutExpired(
+                command_list,
+                timeout_seconds,
+                output=stdout.read(),
+                stderr=stderr.read(),
+            ) from None
+        stdout.flush()
+        stderr.flush()
+        stdout.seek(0)
+        stderr.seek(0)
+        return subprocess.CompletedProcess(
+            command_list,
+            returncode,
+            stdout.read(),
+            stderr.read(),
+        )
 
 
 def _output_text(value: str | bytes | None) -> str:
@@ -494,11 +578,37 @@ def run_ct2phits_frontend(
     except Ct2PhitsDatfilesError as exc:
         raise Ct2PhitsFrontendError(str(exc)) from exc
     copied_files: list[str] = []
+    copied_sha256: dict[str, str] = {}
     for index, source in enumerate(selected.files, start=1):
         name = f"CT{index:06d}.dcm"
-        shutil.copyfile(source, ct_root / name)
-        copied_files.append(f"CT/{name}")
-    ct_reference = ct_root / "CT000001.dcm"
+        copied_path = f"CT/{name}"
+        copied_sha256[copied_path] = _copy_stable_ct_slice(
+            source,
+            ct_root / name,
+        )
+        copied_files.append(copied_path)
+    frozen_selected = select_ct_series(
+        ct_root,
+        series_instance_uid=selected.series_instance_uid,
+    )
+    try:
+        ct_origin, frame_uid, _series_uid, frozen_count = _ct_series_origin(
+            frozen_selected.files[0]
+        )
+        rtplan_isocenter = _rtplan_isocenter(
+            rtplan_snapshot,
+            expected_frame_uid=frame_uid,
+        )
+    except Ct2PhitsDatfilesError as exc:
+        raise Ct2PhitsFrontendError(str(exc)) from exc
+    if frozen_count != len(copied_files) or len(frozen_selected.files) != len(
+        copied_files
+    ):
+        raise Ct2PhitsFrontendError(
+            "CT series count changed while creating the workspace snapshot"
+        )
+    selected = frozen_selected
+    ct_reference = selected.files[0]
     input_path.write_text(
         render_ct2phits_input(
             rtphits_root=root,
@@ -524,6 +634,7 @@ def run_ct2phits_frontend(
             "rows": selected.rows,
             "columns": selected.columns,
             "copied_files": copied_files,
+            "sha256": copied_sha256,
             "ct_origin_dicom_cm": list(ct_origin),
         },
         "rtplan": {

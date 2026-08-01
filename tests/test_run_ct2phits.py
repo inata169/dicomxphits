@@ -326,6 +326,35 @@ def test_timeout_is_recorded(tmp_path: Path) -> None:
     assert summary["returncode"] is None
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-tree behavior")
+def test_default_runner_terminates_child_process_tree_on_timeout(
+    tmp_path: Path,
+) -> None:
+    orphan_marker = tmp_path / "orphan.txt"
+    child_code = (
+        "import pathlib, sys, time; "
+        "time.sleep(1.5); "
+        "pathlib.Path(sys.argv[1]).write_text('orphan', encoding='utf-8')"
+    )
+    parent_code = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', sys.argv[1], sys.argv[2]]); "
+        "print('parent started', flush=True); "
+        "time.sleep(4)"
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired) as timeout:
+        run_ct2phits_module._default_runner(
+            [sys.executable, "-c", parent_code, child_code, str(orphan_marker)],
+            tmp_path,
+            0.5,
+        )
+
+    assert "parent started" in str(timeout.value.stdout)
+    time.sleep(1.5)
+    assert not orphan_marker.exists()
+
+
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
@@ -504,6 +533,85 @@ def test_rtplan_change_during_snapshot_is_rejected(
     with pytest.raises(
         Ct2PhitsFrontendError,
         match="changed while creating the workspace snapshot",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+
+def test_ct_change_during_snapshot_copy_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    ct_sources = sorted(case["ct_root"].glob("*.dcm"))
+    changing_source = ct_sources[1].resolve()
+    original_copyfile = run_ct2phits_module.shutil.copyfile
+
+    def mutating_copyfile(source, destination):
+        if Path(source) == changing_source:
+            changed = pydicom.dcmread(str(source))
+            changed.ImagePositionPatient = [-119.0, -80.0, -50.0]
+            changed.save_as(str(source))
+        return original_copyfile(source, destination)
+
+    monkeypatch.setattr(
+        run_ct2phits_module.shutil,
+        "copyfile",
+        mutating_copyfile,
+    )
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("unstable CT snapshot must be rejected before execution")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="changed while creating the workspace snapshot",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+
+def test_copied_ct_series_is_revalidated_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    ct_sources = sorted(case["ct_root"].glob("*.dcm"))
+    changing_source = ct_sources[1].resolve()
+    original_sha256 = run_ct2phits_module._sha256
+    changed_source = False
+
+    def mutating_sha256(path: Path) -> str:
+        nonlocal changed_source
+        if Path(path) == changing_source and not changed_source:
+            changed = pydicom.dcmread(str(path))
+            changed.ImagePositionPatient = [-119.0, -80.0, -50.0]
+            changed.save_as(str(path))
+            changed_source = True
+        return original_sha256(path)
+
+    monkeypatch.setattr(run_ct2phits_module, "_sha256", mutating_sha256)
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("changed CT geometry must be rejected before execution")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="inconsistent ImagePositionPatient X or Y values",
     ):
         run_ct2phits_frontend(
             ct_dicom_root=case["ct_root"],

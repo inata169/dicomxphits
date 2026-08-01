@@ -68,7 +68,9 @@ generate `ct2phits.inp` using the reviewed CT2PHITS procedure. The input SHALL
 use the selected slice count and Rows and Columns, coarse graining `8 8 2`, and
 DICOM coordinate mode `1`. The frontend SHALL record the source RT Plan SHA-256,
 copy it into the isolated workspace without modification, verify the snapshot
-hash, and use only that stable snapshot for the downstream handoff.
+hash, and use only that stable snapshot for the downstream handoff. It SHALL
+also verify each CT slice hash before and after copying, record the snapshot
+hashes, and revalidate the copied CT series before external execution.
 
 #### Scenario: New workspace preparation
 
