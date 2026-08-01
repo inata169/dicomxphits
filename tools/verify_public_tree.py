@@ -81,6 +81,13 @@ DICOM_LONG_VRS = frozenset(
     vr.encode("ascii") for vr in "OB OD OF OL OV OW SQ UC UN UR UT".split()
 )
 DICOM_INITIAL_GROUPS = frozenset({0x0002, 0x0008})
+PRIVATE_KEY_MARKERS = tuple(
+    b"-----BEGIN " + key_type + b" PRIVATE KEY-----"
+    for key_type in (b"OPENSSH", b"RSA", b"DSA", b"EC")
+) + (
+    b"-----BEGIN " + b"PRIVATE KEY-----",
+    b"-----BEGIN " + b"ENCRYPTED PRIVATE KEY-----",
+)
 
 
 @dataclass(frozen=True)
@@ -239,6 +246,8 @@ def _path_issues(entry: TrackedEntry, blob: bytes) -> list[str]:
         issues.append("environment/credential file is tracked")
     if name in SECRET_FILENAMES or suffix in SECRET_SUFFIXES:
         issues.append("credential or private-key file is tracked")
+    if any(marker in blob for marker in PRIVATE_KEY_MARKERS):
+        issues.append("recognizable private-key material is tracked")
     if suffix in {".json", ".toml", ".yaml", ".yml"} and any(
         marker in pure.stem.lower() for marker in ("credential", "secret", "token")
     ):
@@ -310,10 +319,30 @@ def _devcontainer_issues(blob: bytes) -> list[tuple[str, str]]:
         issues.append((relative, "privileged mode is not allowed"))
     if str(config.get("networkMode", "")).lower() == "host":
         issues.append((relative, "host network mode is not allowed"))
-    run_args = " ".join(str(value) for value in config.get("runArgs", []))
-    lowered_args = run_args.lower()
-    if "--privileged" in lowered_args or "--network=host" in lowered_args:
+    raw_run_args = config.get("runArgs", [])
+    run_args = (
+        [str(value).strip().lower() for value in raw_run_args]
+        if isinstance(raw_run_args, list)
+        else [str(raw_run_args).strip().lower()]
+    )
+    if any(argument.startswith("--privileged") for argument in run_args):
         issues.append((relative, "runArgs enable privileged or host-network mode"))
+    if any(
+        argument in {"--network=host", "--net=host"}
+        or (
+            argument in {"--network", "--net"}
+            and index + 1 < len(run_args)
+            and run_args[index + 1] == "host"
+        )
+        for index, argument in enumerate(run_args)
+    ):
+        issues.append((relative, "runArgs enable privileged or host-network mode"))
+    if any(
+        argument in {"--mount", "--volume", "-v"}
+        or argument.startswith(("--mount=", "--volume=", "-v="))
+        for argument in run_args
+    ):
+        issues.append((relative, "runArgs mount options are not allowed"))
 
     mounts = config.get("mounts", [])
     mount_text = json.dumps(mounts, sort_keys=True).lower()
@@ -428,7 +457,8 @@ def audit_entries(
 
 def audit_repository(repo: Path) -> tuple[list[tuple[str, str]], int]:
     entries = tracked_entries(repo)
-    blobs = indexed_blobs(repo, entries)
+    blob_entries = [entry for entry in entries if entry.path not in ALLOWED_DICOM_BLOBS]
+    blobs = indexed_blobs(repo, blob_entries)
     return audit_entries(entries, blobs), len(entries)
 
 

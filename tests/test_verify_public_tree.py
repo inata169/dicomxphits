@@ -79,6 +79,17 @@ def test_protected_and_generated_tracked_paths_fail():
     assert {"results/phits.out", "source.IAEAphsp"} <= issue_paths
 
 
+def test_private_key_material_with_innocuous_filename_fails():
+    entries, blobs = _clean_audit_input()
+    path = "notes/backup.txt"
+    entries.append(verify_public_tree.TrackedEntry(path, object_id="private-key"))
+    blobs[path] = b"-----BEGIN " + b"OPENSSH PRIVATE KEY-----\nsynthetic\n"
+
+    issues = verify_public_tree.audit_entries(entries, blobs)
+
+    assert (path, "recognizable private-key material is tracked") in issues
+
+
 def test_replaced_template_and_extensionless_dicom_fail():
     entries, blobs = _clean_audit_input()
     template_path = next(iter(verify_public_tree.ALLOWED_DICOM_BLOBS))
@@ -162,6 +173,12 @@ def test_dangerous_indexed_codex_and_devcontainer_settings_fail():
             "image": "python:3.12",
             "privileged": True,
             "mounts": ["source=/home,target=/host,type=bind"],
+            "runArgs": [
+                "--network",
+                "host",
+                "--mount",
+                "type=bind,source=/home,target=/host",
+            ],
             "remoteUser": "root",
         }
     ).encode("utf-8")
@@ -174,6 +191,35 @@ def test_dangerous_indexed_codex_and_devcontainer_settings_fail():
         ".devcontainer/devcontainer.json",
         "additional host bind mounts are not allowed",
     ) in issue_pairs
+    assert (
+        ".devcontainer/devcontainer.json",
+        "runArgs enable privileged or host-network mode",
+    ) in issue_pairs
+    assert (
+        ".devcontainer/devcontainer.json",
+        "runArgs mount options are not allowed",
+    ) in issue_pairs
+
+
+def test_repository_audit_does_not_load_allowlisted_dicom(monkeypatch):
+    entries, source_blobs = _clean_audit_input()
+    template_path = next(iter(verify_public_tree.ALLOWED_DICOM_BLOBS))
+    loaded_paths = []
+
+    monkeypatch.setattr(verify_public_tree, "tracked_entries", lambda _repo: entries)
+
+    def fake_indexed_blobs(_repo, requested_entries):
+        requested_entries = list(requested_entries)
+        loaded_paths.extend(entry.path for entry in requested_entries)
+        return {entry.path: source_blobs[entry.path] for entry in requested_entries}
+
+    monkeypatch.setattr(verify_public_tree, "indexed_blobs", fake_indexed_blobs)
+
+    issues, tracked_count = verify_public_tree.audit_repository(ROOT)
+
+    assert issues == []
+    assert tracked_count == len(entries)
+    assert template_path not in loaded_paths
 
 
 def test_local_absolute_path_in_indexed_json_and_toml_configuration_fails():
