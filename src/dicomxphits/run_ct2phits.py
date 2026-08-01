@@ -633,8 +633,28 @@ def run_ct2phits_frontend(
     ct_root.mkdir()
     datfiles_root.mkdir()
     logs_root.mkdir()
-    shutil.copyfile(rtplan_source, rtplan_snapshot)
-    if _sha256(rtplan_snapshot) != rtplan_source_sha256:
+    try:
+        shutil.copyfile(rtplan_source, rtplan_snapshot)
+        rtplan_snapshot_sha256 = _sha256(rtplan_snapshot)
+    except OSError as exc:
+        try:
+            shutil.rmtree(workspace)
+        except OSError as cleanup_exc:
+            raise Ct2PhitsFrontendError(
+                "could not create RT Plan workspace snapshot; cleanup of the "
+                f"new workspace also failed: {cleanup_exc}"
+            ) from exc
+        raise Ct2PhitsFrontendError(
+            "could not create RT Plan workspace snapshot"
+        ) from exc
+    if rtplan_snapshot_sha256 != rtplan_source_sha256:
+        try:
+            shutil.rmtree(workspace)
+        except OSError as cleanup_exc:
+            raise Ct2PhitsFrontendError(
+                "RT Plan input changed while creating the workspace snapshot; "
+                f"cleanup of the new workspace also failed: {cleanup_exc}"
+            ) from cleanup_exc
         raise Ct2PhitsFrontendError(
             "RT Plan input changed while creating the workspace snapshot"
         )

@@ -90,6 +90,12 @@ hashes, and revalidate the copied CT series before external execution.
 - **WHEN** the required batch file or HU conversion table is missing
 - **THEN** the frontend rejects execution before workspace creation
 
+#### Scenario: RT Plan snapshot copy failure
+
+- **WHEN** copying or hashing the RT Plan snapshot fails before external execution
+- **THEN** the frontend reports a controlled failure and removes the newly
+  created workspace when cleanup succeeds
+
 #### Scenario: Unsafe command-processor path
 
 - **WHEN** the workspace-relative input path contains a `cmd.exe` metacharacter

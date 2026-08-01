@@ -707,6 +707,47 @@ def test_rtplan_change_during_snapshot_is_rejected(
             platform_system="Windows",
         )
 
+    assert not case["workspace"].exists()
+
+
+def test_rtplan_snapshot_copy_failure_is_controlled_and_workspace_is_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _case(tmp_path)
+    original_copyfile = run_ct2phits_module.shutil.copyfile
+
+    def failing_copyfile(source, destination):
+        if Path(source) == case["rtplan"].resolve():
+            Path(destination).write_bytes(b"partial snapshot")
+            raise PermissionError("synthetic copy failure")
+        return original_copyfile(source, destination)
+
+    monkeypatch.setattr(
+        run_ct2phits_module.shutil,
+        "copyfile",
+        failing_copyfile,
+    )
+
+    def runner(command, cwd, timeout_seconds):
+        raise AssertionError("failed snapshot copy must reject before execution")
+
+    with pytest.raises(
+        Ct2PhitsFrontendError,
+        match="could not create RT Plan workspace snapshot",
+    ):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"],
+            rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"],
+            workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True,
+            runner=runner,
+            platform_system="Windows",
+        )
+
+    assert not case["workspace"].exists()
+
 
 def test_ct_change_during_snapshot_copy_is_rejected(
     tmp_path: Path,
