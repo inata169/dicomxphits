@@ -20,6 +20,13 @@ defined in `AI_AGENT_RULES.md`. Use the outer loop for specification, physics,
 clinical, real-data, real-tool, destructive, external-write, or scope decisions:
 report the evidence and wait for a human.
 
+Once the human-approved acceptance criteria are met and the required checks
+pass, stop deepening the work. Only a concrete merge-blocking defect in the
+current diff may justify one final minimal correction round in the same pull
+request. Treat robustness ideas, refactors, optional coverage, and future work
+as non-blocking; do not create a follow-up branch, pull request, Issue, OpenSpec
+change, automation, or other work item unless a human explicitly requests it.
+
 Run the applicable focused checks, then the full public checks:
 
 ```text

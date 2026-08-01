@@ -63,6 +63,34 @@ test bypass or weaker validation would be needed, the specification/test/
 fixture/reference may be wrong, or an out-of-scope change would be required.
 Record each observed failure and result; do not hide or delete evidence.
 
+## Pull request stopping rule
+
+Completion is defined by the human-approved task and acceptance criteria, not
+by the absence of any possible improvement. Once those criteria are met and
+the required validation passes:
+
+- stop expanding or deepening the pull request;
+- consider further review feedback only when it identifies a concrete
+  merge-blocking defect in the current diff, such as a safety, security, or
+  privacy exposure, a violated approved requirement, a required-validation
+  failure, or an unambiguous regression;
+- treat a reviewer severity label such as P1 as an indicator, not sufficient
+  authority by itself: the reported defect must be verified against the code
+  and approved scope;
+- allow at most one additional review-driven correction round, keep it minimal,
+  and make it on the same branch and pull request;
+- treat robustness suggestions, refactors, optional coverage, stylistic
+  preferences, and future capabilities as non-blocking for that pull request;
+  and
+- do not create a follow-up branch, pull request, Issue, OpenSpec change,
+  automation, or other work item unless a human explicitly requests it.
+
+If the final correction round reveals another possible blocker, report the
+evidence and stop for a human decision instead of starting a recursive review
+loop. A human decides whether to mark the pull request ready or merge it; an
+agent may report evidence and recommend that action but must not merge
+automatically.
+
 ## Outer human loop
 
 Do not decide any of the following automatically. Report the evidence and stop:
