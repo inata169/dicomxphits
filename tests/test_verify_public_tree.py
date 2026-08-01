@@ -100,6 +100,32 @@ def test_replaced_template_and_extensionless_dicom_fail():
     assert {template_path, extensionless.path} <= issue_paths
 
 
+def test_headerless_explicit_and_implicit_vr_dicom_fail():
+    entries, blobs = _clean_audit_input()
+    sop_class_uid = b"1.2.840.10008.5.1.4.1.1.2\0"
+    explicit_vr = (
+        b"\x08\x00\x16\x00UI"
+        + len(sop_class_uid).to_bytes(2, "little")
+        + sop_class_uid
+    )
+    implicit_vr = (
+        b"\x08\x00\x16\x00"
+        + len(sop_class_uid).to_bytes(4, "little")
+        + sop_class_uid
+        + b"\x08\x00\x18\x00\x04\x00\x00\x00" + b"1.2\0"
+    )
+    for index, (path, blob) in enumerate(
+        (("private/raw-explicit", explicit_vr), ("private/raw-implicit", implicit_vr))
+    ):
+        entries.append(verify_public_tree.TrackedEntry(path, object_id=f"raw-{index}"))
+        blobs[path] = blob
+
+    issues = verify_public_tree.audit_entries(entries, blobs)
+    issue_paths = {path for path, _reason in issues}
+
+    assert {"private/raw-explicit", "private/raw-implicit"} <= issue_paths
+
+
 def test_escaping_and_absolute_symlinks_fail():
     entries, blobs = _clean_audit_input()
     entries.extend(
@@ -150,11 +176,14 @@ def test_dangerous_indexed_codex_and_devcontainer_settings_fail():
     ) in issue_pairs
 
 
-def test_local_absolute_path_in_indexed_configuration_fails():
+def test_local_absolute_path_in_indexed_json_and_toml_configuration_fails():
     entries, blobs = _clean_audit_input()
     blobs["config/dicomxphits.paths.example.json"] = json.dumps(
         {"phits_executable_path": "C:/PHITS/bin/phits.exe"}
     ).encode("utf-8")
+    toml_path = "config/site.toml"
+    entries.append(verify_public_tree.TrackedEntry(toml_path, object_id="site-toml"))
+    blobs[toml_path] = b'patient_data = "/srv/patient-data"\n'
 
     issues = verify_public_tree.audit_entries(entries, blobs)
 
@@ -162,3 +191,15 @@ def test_local_absolute_path_in_indexed_configuration_fails():
         "config/dicomxphits.paths.example.json",
         "configuration contains a local absolute path",
     ) in issues
+    assert (toml_path, "configuration contains a local absolute path") in issues
+
+
+def test_unsupported_indexed_configuration_format_fails_closed():
+    entries, blobs = _clean_audit_input()
+    yaml_path = "config/site.yaml"
+    entries.append(verify_public_tree.TrackedEntry(yaml_path, object_id="site-yaml"))
+    blobs[yaml_path] = b"patient_data: C:/patient-data\n"
+
+    issues = verify_public_tree.audit_entries(entries, blobs)
+
+    assert (yaml_path, "unsupported tracked configuration format") in issues

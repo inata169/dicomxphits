@@ -70,6 +70,17 @@ PHITS_RESULT_NAMES = frozenset(
         "sumtally.out",
     }
 )
+DICOM_VRS = frozenset(
+    vr.encode("ascii")
+    for vr in (
+        "AE AS AT CS DA DS DT FD FL IS LO LT OB OD OF OL OV OW PN SH SL SQ SS "
+        "ST SV TM UC UI UL UN UR US UT UV"
+    ).split()
+)
+DICOM_LONG_VRS = frozenset(
+    vr.encode("ascii") for vr in "OB OD OF OL OV OW SQ UC UN UR UT".split()
+)
+DICOM_INITIAL_GROUPS = frozenset({0x0002, 0x0008})
 
 
 @dataclass(frozen=True)
@@ -147,8 +158,64 @@ def indexed_blobs(repo: Path, entries: Iterable[TrackedEntry]) -> dict[str, byte
     return {entry.path: objects[entry.object_id] for entry in entries}
 
 
+def _dicom_tag(blob: bytes, offset: int, byteorder: str) -> tuple[int, int] | None:
+    if offset + 4 > len(blob):
+        return None
+    return (
+        int.from_bytes(blob[offset : offset + 2], byteorder),
+        int.from_bytes(blob[offset + 2 : offset + 4], byteorder),
+    )
+
+
+def _looks_like_explicit_vr_dicom(blob: bytes, byteorder: str) -> bool:
+    tag = _dicom_tag(blob, 0, byteorder)
+    if tag is None or tag[0] not in DICOM_INITIAL_GROUPS:
+        return False
+    vr = blob[4:6]
+    if vr not in DICOM_VRS:
+        return False
+    if vr in DICOM_LONG_VRS:
+        if len(blob) < 12 or blob[6:8] != b"\0\0":
+            return False
+        value_length = int.from_bytes(blob[8:12], byteorder)
+        header_length = 12
+    else:
+        if len(blob) < 8:
+            return False
+        value_length = int.from_bytes(blob[6:8], byteorder)
+        header_length = 8
+    if value_length == 0xFFFFFFFF:
+        return vr == b"SQ"
+    return header_length + value_length <= len(blob)
+
+
+def _looks_like_implicit_vr_dicom(blob: bytes) -> bool:
+    first_tag = _dicom_tag(blob, 0, "little")
+    if first_tag is None or first_tag[0] not in DICOM_INITIAL_GROUPS or len(blob) < 8:
+        return False
+    first_length = int.from_bytes(blob[4:8], "little")
+    if first_length == 0xFFFFFFFF:
+        return False
+    second_offset = 8 + first_length
+    second_tag = _dicom_tag(blob, second_offset, "little")
+    if (
+        second_tag is None
+        or second_tag[0] not in DICOM_INITIAL_GROUPS
+        or second_tag < first_tag
+        or second_offset + 8 > len(blob)
+    ):
+        return False
+    second_length = int.from_bytes(blob[second_offset + 4 : second_offset + 8], "little")
+    return second_length == 0xFFFFFFFF or second_offset + 8 + second_length <= len(blob)
+
+
 def _looks_like_dicom(blob: bytes) -> bool:
-    return len(blob) >= 132 and blob[128:132] == b"DICM"
+    return (
+        (len(blob) >= 132 and blob[128:132] == b"DICM")
+        or _looks_like_explicit_vr_dicom(blob, "little")
+        or _looks_like_explicit_vr_dicom(blob, "big")
+        or _looks_like_implicit_vr_dicom(blob)
+    )
 
 
 def _path_issues(entry: TrackedEntry, blob: bytes) -> list[str]:
@@ -307,12 +374,25 @@ def _repository_config_issues(
 ) -> list[tuple[str, str]]:
     issues: list[tuple[str, str]] = []
     for relative in sorted(tracked):
-        if not relative.startswith("config/") or not relative.lower().endswith(".json"):
+        if not relative.startswith("config/"):
             continue
+        suffix = PurePosixPath(relative).suffix.lower()
         try:
-            value = json.loads(blobs[relative].decode("utf-8"))
-        except (KeyError, UnicodeError, json.JSONDecodeError) as exc:
-            issues.append((relative, f"cannot parse tracked JSON configuration: {exc}"))
+            text = blobs[relative].decode("utf-8")
+            if suffix == ".json":
+                value = json.loads(text)
+            elif suffix == ".toml":
+                value = tomllib.loads(text)
+            else:
+                issues.append((relative, "unsupported tracked configuration format"))
+                continue
+        except (
+            KeyError,
+            UnicodeError,
+            json.JSONDecodeError,
+            tomllib.TOMLDecodeError,
+        ) as exc:
+            issues.append((relative, f"cannot parse tracked configuration: {exc}"))
             continue
         for text in _string_values(value):
             if text.startswith(("http://", "https://")):
