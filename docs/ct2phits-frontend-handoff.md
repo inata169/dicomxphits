@@ -79,8 +79,10 @@ git diff --check
 passed
 ```
 
-GitHub Actions `dicomxphits public CI` run `#42` passed for the final feature
-commit. A final Codex review of that commit reported no major issues.
+GitHub Actions `dicomxphits public CI` run `#42` passed the synthetic/mock
+compile, full pytest, and public-tree checks on `ubuntu-latest` for the final
+feature commit. This is Linux CI evidence, separate from the Windows local
+validation above. A final Codex review of that commit reported no major issues.
 
 An explicitly authorized Windows smoke test used a designated non-patient
 phantom outside the repository. It completed with return code zero, no timeout,
@@ -121,9 +123,10 @@ dicomxphits-prepare-3dcrt-workspace `
 
 ## Unverified item
 
-The workplace Dev Container cross-check has not run. Linux or Dev Container
-validation must not be claimed until a human runs the following synthetic/mock
-checks inside the existing container:
+The workplace Dev Container cross-check has not run, so validation in that
+specific container environment must not be claimed until a human runs the
+following synthetic/mock checks there. This gap does not negate the completed
+`ubuntu-latest` Linux CI evidence recorded above:
 
 ```bash
 python -m pytest tests/test_run_ct2phits.py tests/test_ct2phits_datfiles.py -q -p no:cacheprovider
@@ -135,8 +138,10 @@ git status --short
 ```
 
 Do not mount or run RT-PHITS, CT2PHITS, PHITS, Sumtally, phits2dicom, GPR, or
-real DICOM in that container. A future documentation update may record the
-cross-check only after the human explicitly performs or authorizes it.
+real DICOM in that container. Neither Linux CI nor a future Dev Container
+cross-check validates the real Windows RT-PHITS runtime. A future documentation
+update may record the container cross-check only after the human explicitly
+performs or authorizes it.
 
 ## Restart checklist
 

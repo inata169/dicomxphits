@@ -28,23 +28,29 @@ request [#1](https://github.com/inata169/dicomxphits/pull/1), squash commit
 
 ## Validation baseline
 
-The completion state for pull request #3 was validated on Windows with:
+The completion state for pull request #3 was validated locally on Windows
+with:
 
 - 65 focused CT2PHITS frontend and DATfiles tests;
 - 456 full pytest tests;
 - Python compilation of the public source;
-- a passing public-tree audit of 85 tracked files;
-- successful `dicomxphits public CI` run `#42`; and
+- a passing public-tree audit of 85 tracked files; and
 - a final Codex review reporting no major issues.
+
+Separately, `dicomxphits public CI` run `#42` passed the synthetic/mock compile,
+full pytest, and public-tree checks on GitHub's `ubuntu-latest` Linux runner.
+This is Linux CI evidence; it does not validate the real Windows RT-PHITS
+runtime.
 
 An explicitly authorized Windows smoke test with a designated non-patient
 phantom outside the repository completed successfully. No real input,
 distribution, or generated result was committed. PHITS, Sumtally,
 phits2dicom, and GPR were not run for this frontend task.
 
-The workplace Dev Container cross-check has not run. This remains unverified
-synthetic/mock evidence and is not an automatically scheduled task. Linux or
-Dev Container validation is not claimed.
+The workplace Dev Container cross-check has not run. Validation in that
+specific container environment remains unverified synthetic/mock evidence and
+is not an automatically scheduled task. This is distinct from the completed
+Ubuntu GitHub Actions validation above.
 
 Pull request #3 changed runtime code, DICOM input validation, documentation,
 and the public CT2PHITS frontend specification within its approved scope. It
