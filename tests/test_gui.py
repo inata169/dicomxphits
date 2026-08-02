@@ -23,6 +23,7 @@ from dicomxphits.gui import (
     _browse_directories,
     _ct2phits_handoff_from_result,
     _default_values,
+    _read_gui_settings,
     _save_gui_settings,
     browse_initial_directory,
     build_stage_command,
@@ -32,6 +33,7 @@ from dicomxphits.gui import (
     run_stage,
     stage_by_key,
     suggest_case_paths,
+    validate_prepare_handoff_selection,
     validate_stage,
     workspace_path_from_parent,
 )
@@ -665,6 +667,46 @@ def test_completed_handoff_is_bound_to_result_summary_workspace(
     }
 
 
+def test_saved_legacy_handoff_paths_do_not_authorize_prepare(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "rtplan_path": "stale-RTPLAN.dcm",
+                "ct_reference_dicom": "stale-CT000001.dcm",
+                "ct_datfiles_root": "stale-DATfiles",
+            }
+        ),
+        encoding="utf-8",
+    )
+    defaults = _default_values(defaults_path)
+
+    assert defaults["rtplan_path"] == "stale-RTPLAN.dcm"
+    assert defaults["ct_reference_dicom"] == "stale-CT000001.dcm"
+    assert defaults["ct_datfiles_root"] == "stale-DATfiles"
+    with pytest.raises(GuiValidationError, match="Run CT2PHITS successfully"):
+        validate_prepare_handoff_selection(
+            manual_handoff_selected=False,
+            verified_handoff_available=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("manual_handoff_selected", "verified_handoff_available"),
+    [(True, False), (False, True)],
+)
+def test_prepare_accepts_explicit_manual_or_verified_handoff(
+    manual_handoff_selected: bool,
+    verified_handoff_available: bool,
+) -> None:
+    validate_prepare_handoff_selection(
+        manual_handoff_selected=manual_handoff_selected,
+        verified_handoff_available=verified_handoff_available,
+    )
+
+
 def test_gui_settings_persist_stable_paths_and_independent_browse_history(
     tmp_path: Path,
 ) -> None:
@@ -713,6 +755,35 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
         {},
     ) == tmp_path
     assert _default_values(defaults_path)["phits_root_folder"] == "remembered-phits"
+
+
+def test_gui_settings_invalid_encoding_falls_back_safely(tmp_path: Path) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_bytes(b"\x80\x81\x82")
+
+    assert _read_gui_settings(defaults_path) == {}
+    assert _default_values(defaults_path) == gui_module._base_default_values()
+
+
+def test_gui_settings_failed_replace_removes_ignored_temporary_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults_path = tmp_path / "config" / "dicomxphits.gui.local.json"
+    temporary_path = defaults_path.with_name(
+        defaults_path.stem + ".tmp.local.json"
+    )
+
+    def fail_replace(_source: Path, _target: Path) -> Path:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        _save_gui_settings({}, {}, defaults_path)
+
+    assert temporary_path.name.endswith(".local.json")
+    assert not temporary_path.exists()
 
 
 def test_gui_stage_execution_guard_prevents_overlapping_stages() -> None:

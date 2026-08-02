@@ -254,6 +254,20 @@ def _ct2phits_timeout_value(config: GuiConfig) -> float:
     return value
 
 
+def validate_prepare_handoff_selection(
+    *,
+    manual_handoff_selected: bool,
+    verified_handoff_available: bool,
+) -> None:
+    if manual_handoff_selected or verified_handoff_available:
+        return
+    raise GuiValidationError(
+        "Run CT2PHITS successfully or select "
+        "'Use an existing validated CT2PHITS handoff (advanced)' before "
+        "preparing the workspace"
+    )
+
+
 def validate_stage(
     config: GuiConfig,
     spec: StageSpec,
@@ -513,7 +527,7 @@ def _read_gui_settings(defaults_path: Path | None = None) -> dict[str, object]:
     try:
         with path.open("r", encoding="utf-8-sig") as stream:
             data = json.load(stream)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+    except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError, OSError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -566,12 +580,19 @@ def _save_gui_settings(
         if isinstance(value, str):
             payload[key] = value
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(path)
+    temporary = path.with_name(path.stem + ".tmp.local.json")
+    try:
+        temporary.write_text(
+            json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            # The temporary name remains covered by config/*.local.json.
+            pass
     return path
 
 
@@ -902,6 +923,7 @@ def _build_gui() -> int:
     overwrite = tk.BooleanVar(value=False)
     confirmed_non_patient_phantom = tk.BooleanVar(value=False)
     manual_handoff = tk.BooleanVar(value=False)
+    verified_handoff_available = tk.BooleanVar(value=False)
     handoff_status = tk.StringVar(value="Not generated")
     execution_guard = StageExecutionGuard()
     action_buttons: list[ttk.Button] = []
@@ -1464,6 +1486,7 @@ def _build_gui() -> int:
                 entry.state(["readonly"])
                 button.state(["disabled"])
         if enabled:
+            verified_handoff_available.set(False)
             handoff_status.set("Manual handoff")
         elif handoff_status.get() == "Manual handoff":
             handoff_status.set("Not generated")
@@ -1625,6 +1648,7 @@ def _build_gui() -> int:
             for name, value in handoff.items():
                 values[name].set(value)
             manual_handoff.set(False)
+            verified_handoff_available.set(True)
             handoff_status.set("Verified frozen handoff")
             append("Frozen CT2PHITS handoff applied to downstream preparation.", "success")
         nav_status[stage_to_nav[spec.key]].set(
@@ -1647,10 +1671,18 @@ def _build_gui() -> int:
         spec = stage_by_key(stage_key)
         config = config_from_entries()
         try:
+            if spec.key == "prepare_workspace":
+                validate_prepare_handoff_selection(
+                    manual_handoff_selected=manual_handoff.get(),
+                    verified_handoff_available=verified_handoff_available.get(),
+                )
             validate_stage(config, spec)
         except GuiValidationError as exc:
             finish_stage_error(spec, str(exc), validation=True)
             return
+        if spec.key == "run_ct2phits":
+            verified_handoff_available.set(False)
+            handoff_status.set("Not generated")
         set_busy(stage_key)
         nav_status[stage_to_nav[stage_key]].set("Running")
         append(f"{spec.label}: started")
