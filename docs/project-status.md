@@ -6,19 +6,27 @@ when a human approves a new goal or when a completed pull request materially
 changes the status described here.
 
 For the detailed same-day record covering the merged CT2PHITS GUI baseline,
-the demonstrated non-patient Windows workflow, and the PR #8 RTDOSE provenance
-review cycle, see
+the demonstrated non-patient Windows workflow, and the completed PR #8 RTDOSE
+provenance review cycle, see
 [`development-progress-2026-08-02.md`](development-progress-2026-08-02.md).
 
 ## Current baseline
 
 - Public release: `v1.0.0`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Latest completed project: guided CT2PHITS GUI integration
+- Latest completed project: RTDOSE full-plan provenance correction
 - Completion pull request:
-  [#5](https://github.com/inata169/dicomxphits/pull/5)
-- Squash merge commit: `bc6296d5f6949f461e7d50b86db6a0b4579e048d`
+  [#8](https://github.com/inata169/dicomxphits/pull/8)
+- Squash merge commit: `854e5e216f501403e725fc39a085abd3ddc2d2e2`
 - Status last reviewed: 2026-08-02
+
+The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
+the frozen RT Plan, complete treatment delivery, canonical segment manifest,
+generated Sumtally inputs and dependencies, produced dose output, and every
+file consumed by `phits2dicom`. Sumtally and RTDOSE conversion now require a
+new output or changed SHA-256; timestamp-only changes to stale output fail
+closed. The accepted contract is in
+[`openspec/specs/rtdose-dicom-semantics/spec.md`](../openspec/specs/rtdose-dicom-semantics/spec.md).
 
 The guided CT2PHITS GUI integration is complete. It made the accepted frontend
 the first guided stage, applies only a verified frozen handoff to downstream
@@ -42,30 +50,32 @@ request [#1](https://github.com/inata169/dicomxphits/pull/1), squash commit
 
 ## Validation baseline
 
-The completion state for pull request #5 was validated locally on Windows
+The completion state for pull request #8 was validated locally on Windows
 with:
 
-- 45 focused GUI tests;
-- 470 full pytest tests;
+- 77 focused Sumtally/RTDOSE dependency tests;
+- 508 full synthetic/mock pytest tests;
 - Python compilation of the public source;
-- a passing public-tree audit of 91 tracked files;
+- a passing public-tree audit of 98 tracked files;
 - passing Git diff and status checks; and
-- a final Codex review of head commit `56bb88f3ec` reporting no major issues.
+- a final Codex review of head commit `1c6d6ea78c` reporting no major issues.
 
-OpenSpec CLI `1.6.0` strict validation subsequently passed for both current
-specifications and both archived changes, with zero failures. Because the CLI
-does not include archived directories in `validate --all`, each archived change
-was copied to an isolated temporary workspace and validated there as an active
-change. The temporary copies were removed after validation, and the repository
-retains zero active change directories.
+OpenSpec CLI `1.6.0` strict validation passed all three current specifications
+with zero failures. The accepted CT2PHITS frontend, guided GUI, and RTDOSE
+changes are archived, and the repository retains zero active change
+directories. Each archived change was also copied individually to an isolated
+temporary OpenSpec root, validated there as an active change in strict mode,
+and removed after all three validations passed.
 
-An explicitly authorized Windows smoke test with designated non-patient phantom
-data outside the repository completed CT2PHITS and downstream workspace
-preparation. PHITS segment execution started successfully and parsed the
-generated inputs without an observed fatal error at the PR handoff. PHITS
-completion, Sumtally, RTDOSE preparation and conversion, phits2dicom execution,
-and dose validation remained unverified when pull request #5 was merged. No
-real input, distribution, personal path, or generated result was committed.
+An explicitly authorized Windows workflow with designated non-patient phantom
+data outside the repository completed CT2PHITS, workspace preparation, PHITS
+segment execution, Sumtally Generate/Run, and RTDOSE Prepare/Run. The final
+coordinate-corrected RTDOSE was located through the execution summary. The
+later final PR #8 provenance guards were validated with synthetic DICOM and
+fake/mock runners and were not rerun with the licensed tools. This is
+integration evidence for that research phantom, not clinical validation or
+general dose-accuracy evidence. No real input, distribution, personal path,
+or generated result was committed.
 
 Separately, `dicomxphits public CI` run `#42` passed the synthetic/mock compile,
 full pytest, and public-tree checks for the earlier frontend baseline on
@@ -78,11 +88,11 @@ specific container environment remains unverified synthetic/mock evidence and
 is not an automatically scheduled task. This is distinct from the completed
 Ubuntu GitHub Actions validation above.
 
-Pull request #5 changed GUI runtime and local-settings behavior, the RT-PHITS
-batch adapter's non-interactive process input, documentation, and the public
-guided-GUI specification within its approved scope. It did not change PHITS
-physics, dose, MU, machine-model behavior, DICOM coordinate meaning, the public
-fixed-field 3D-CRT scope, version, tag, or release.
+Pull request #8 changed fail-closed provenance validation, Sumtally/RTDOSE stage
+failure behavior, documentation, and the public RTDOSE semantic specification
+within its approved scope. It did not change PHITS physics, calculated dose,
+MU, normalization, machine-model behavior, DICOM coordinate meaning, the
+public fixed-field 3D-CRT scope, version, tag, or release.
 
 ## Current development plan
 
@@ -101,14 +111,13 @@ The following facts may inform a future human decision, but they are not
 approved work:
 
 - a Dev Container build has not yet been verified;
-- completion of the PHITS, Sumtally, RTDOSE, phits2dicom, and optional GPR
-  real-tool evidence remains outside ordinary public development and requires
-  an explicit, exact human request;
+- an optional external GPR comparison remains outside ordinary public
+  development and requires an explicit, exact human request;
 - any change to the public fixed-field 3D-CRT scope, physics, geometry, dose,
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from pull request #5.
+  from pull request #8.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -120,7 +129,7 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains squash merge commit `bc6296d5f694` or a later
+3. Confirm that `main` contains squash merge commit `854e5e216f50` or a later
    descendant.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the

@@ -1,7 +1,11 @@
 # rtdose-dicom-semantics Specification
 
 ## Purpose
-TBD - created by archiving change fix-rtdose-plan-references. Update Purpose after archive.
+
+Define the fail-closed provenance, frozen-plan reference, semantic validation,
+and dose/geometry preservation requirements for accepting the documented
+full-plan RTDOSE output in the fixed-field 3D-CRT research workflow.
+
 ## Requirements
 ### Requirement: Full-Plan Dose Summation Gate
 

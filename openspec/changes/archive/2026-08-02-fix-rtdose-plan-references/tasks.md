@@ -151,3 +151,10 @@
 - [x] 13.3 Add mtime-only regressions and rerun required validation: 77 focused
   tests and the final 508-test public suite passed; compilation, public-tree
   audit, OpenSpec strict validation, and Git diff checks passed.
+
+## 14. Final Review and Merge
+
+- [x] 14.1 Request a final Codex review on exact head `1c6d6ea78c`; it reported
+  no major issues.
+- [x] 14.2 Squash merge pull request #8 into `main` as
+  `854e5e216f501403e725fc39a085abd3ddc2d2e2` and delete its feature branch.
