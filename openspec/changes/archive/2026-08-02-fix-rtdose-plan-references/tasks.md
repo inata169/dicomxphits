@@ -121,3 +121,12 @@
 - [x] 10.3 Add mutation and zero-MU regressions and rerun required validation:
   54 focused tests and the final 497-test public suite passed; compilation,
   public-tree audit, OpenSpec strict validation, and Git diff checks passed.
+
+## 11. Automated Review Loop
+
+- [x] 11.1 Apply the finite nonnegative skipped non-treatment exception in the
+  shared workspace and Sumtally strict 3D-CRT gate.
+- [x] 11.2 Add upstream gate and Sumtally regressions and rerun required
+  validation: 115 focused tests and the final 502-test public suite passed;
+  compilation, public-tree audit, OpenSpec strict validation, and Git diff
+  checks passed. Request review on the resulting exact commit after push.

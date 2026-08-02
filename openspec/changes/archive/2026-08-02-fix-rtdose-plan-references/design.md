@@ -98,6 +98,9 @@ Treatment-eligible referenced beams retain the positive-MU requirement.
 Skipped non-treatment beams use a finite nonnegative meterset contract, so a
 zero-MU `SETUP` beam remains valid evidence without becoming active treatment
 coverage or changing normalization.
+The shared strict 3D-CRT gate used by workspace preparation and Sumtally applies
+that exception only to skipped manifest entries classified as `unsupported`;
+active or treatment-eligible beams retain the positive finite MU requirement.
 
 When that gate passes, the all-active-segments result represents the entire RT
 Plan delivery and will use `DoseSummationType = PLAN`. This change does not add

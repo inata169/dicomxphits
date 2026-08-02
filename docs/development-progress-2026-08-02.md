@@ -82,6 +82,8 @@ fail-closed corrections:
 - referenced non-treatment beams such as `SETUP` are accepted only as skipped,
   zero-segment-MU evidence and do not become active treatment coverage; their
   referenced meterset may be zero but not negative or non-finite;
+- the shared Workspace Prepare and Sumtally gate applies that same zero-MU
+  exception only to skipped non-treatment evidence;
 - Sumtally Generate, Sumtally Run, and RTDOSE preparation are bound to one
   canonical segment-manifest digest;
 - the generated Sumtally wrapper, `sumtally.inp`, and produced dose output are
@@ -116,14 +118,14 @@ The latest strict validation reported:
 
 ## Validation evidence for the active branch
 
-After the two final review findings were corrected, the latest development
-checks for the active RTDOSE branch were:
+After the final review findings and upstream zero-MU gate inconsistency were
+corrected, the latest development checks for the active RTDOSE branch were:
 
 ```text
-Focused RTDOSE/manual-smoke/manifest tests: 54 passed
-Full synthetic/mock public suite: 497 passed
+Focused Workspace/Sumtally/RTDOSE tests: 115 passed
+Full synthetic/mock public suite: 502 passed
 Python compileall: passed
-Public-tree audit: 97 tracked files passed
+Public-tree audit: 98 tracked files passed
 OpenSpec strict validation: 3 passed, 0 failed
 Git diff check: passed
 ```

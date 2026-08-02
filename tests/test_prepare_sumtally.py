@@ -111,6 +111,29 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert "seg_001/deposit-target-3D.out  50" in content
 
 
+def test_generate_sumtally_accepts_zero_mu_skipped_non_treatment_beam(tmp_path):
+    active = active_segment(0, beam_number=1)
+    skipped = active_segment(
+        1,
+        beam_number=2,
+        delivery_type="unsupported",
+        beam_meterset_mu=0.0,
+        segment_mu=0.0,
+        mu_weight=0.0,
+        skip_reason="delivery_type unsupported is not generation-capable in this workflow",
+    )
+    workspace, _ = write_workspace(tmp_path, active, skipped)
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    assert summary["stage_status"] == "success"
+    assert [item["beam_number"] for item in summary["sumtally_segment_paths"]] == [1]
+
+
 def test_generate_sumtally_is_standalone_without_project_root(tmp_path):
     workspace, _ = write_workspace(tmp_path)
 

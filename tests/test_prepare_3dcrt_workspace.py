@@ -250,6 +250,41 @@ def test_strict_gate_rejects_invalid_beam_mu_on_skipped_segments(value):
         validate_public_strict_3dcrt_gate(manifest)
 
 
+def test_strict_gate_accepts_zero_mu_skipped_non_treatment_beam():
+    valid = active_segment(segment_id="seg_001", beam_number=1)
+    skipped = active_segment(
+        segment_id="seg_002",
+        beam_number=2,
+        delivery_type="unsupported",
+        beam_meterset_mu=0.0,
+        segment_mu=0.0,
+        mu_weight=0.0,
+        skip_reason="delivery_type unsupported is not generation-capable in this workflow",
+    )
+
+    summary = validate_public_strict_3dcrt_gate(manifest_with(valid, skipped))
+
+    assert summary["status"] == "passed"
+    assert summary["active_segment_count"] == 1
+
+
+@pytest.mark.parametrize("value", [None, -1.0, float("inf")])
+def test_strict_gate_rejects_invalid_mu_on_skipped_non_treatment_beam(value):
+    valid = active_segment(segment_id="seg_001", beam_number=1)
+    skipped = active_segment(
+        segment_id="seg_002",
+        beam_number=2,
+        delivery_type="unsupported",
+        beam_meterset_mu=value,
+        segment_mu=0.0,
+        mu_weight=0.0,
+        skip_reason="delivery_type unsupported is not generation-capable in this workflow",
+    )
+
+    with pytest.raises(ValueError, match="beam 2: beam_meterset_mu"):
+        validate_public_strict_3dcrt_gate(manifest_with(valid, skipped))
+
+
 def test_strict_gate_accepts_valid_3dcrt_mu_segment():
     summary = validate_public_strict_3dcrt_gate(manifest_with(active_segment()))
 

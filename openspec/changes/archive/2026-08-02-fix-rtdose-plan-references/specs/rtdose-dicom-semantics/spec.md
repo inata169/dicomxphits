@@ -22,6 +22,9 @@ excluded from active treatment coverage only when the manifest represents each
 one as skipped with zero segment MU and a matching finite nonnegative beam
 meterset. The adapter SHALL keep the manifest plan, included, and normalization
 MU totals bound to the complete fraction-group referenced beam total.
+Workspace preparation and Sumtally generation SHALL apply the same nonnegative
+exception to those skipped non-treatment beams while retaining the positive-MU
+requirement for every treatment-eligible beam.
 The adapter SHALL bind the frozen RT Plan by its full-file SHA-256 recorded in
 the adjacent completed CT2PHITS workspace manifest. When that legacy evidence
 is absent, it SHALL reconstruct segments from the RT Plan and recorded sampling
