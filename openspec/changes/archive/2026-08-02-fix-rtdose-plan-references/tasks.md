@@ -51,4 +51,6 @@
   OpenSpec CLI archived the change as
   `2026-08-02-fix-rtdose-plan-references`; strict validation passed all three
   current specifications with zero failures.
-- [ ] 4.4 Create a reviewable pull request without merging it automatically.
+- [x] 4.4 Create a reviewable pull request without merging it automatically.
+  Draft pull request #8 was created on 2026-08-02:
+  https://github.com/inata169/dicomxphits/pull/8
