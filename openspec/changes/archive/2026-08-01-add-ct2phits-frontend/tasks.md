@@ -48,3 +48,6 @@
   seven review-accepted scenarios already present in the current specification
   from the same squash merge. The archive was synchronized without changing the
   current contract; both forms now contain seven requirements and 25 scenarios.
+  OpenSpec CLI `1.6.0` later passed strict validation of the current
+  specification and an isolated active-change copy of this archive, with zero
+  failures.
