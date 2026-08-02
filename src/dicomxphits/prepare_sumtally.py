@@ -274,6 +274,7 @@ def generate_sumtally(
     base_input: Path | None = None,
     command_argv: list[str] | None = None,
 ) -> dict[str, Any]:
+    workspace_root = workspace_root.resolve()
     generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
     try:
         require_generation_paths(paths)
@@ -440,6 +441,7 @@ def run_sumtally(
     command_argv: list[str] | None = None,
     runner=subprocess.run,
 ) -> dict[str, Any]:
+    workspace_root = workspace_root.resolve()
     execution_summary_path = workspace_root / "analysis" / "sumtally_execution_summary.json"
     phits_started = False
     try:

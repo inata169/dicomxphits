@@ -508,6 +508,41 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     )
 
 
+def test_relative_workspace_root_round_trips_generated_paths(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, manifest = write_workspace(tmp_path)
+    for segment in manifest["segments"]:
+        output = workspace / segment["expected_output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("segment dose", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    relative_workspace = workspace.relative_to(tmp_path)
+
+    generation = generate_sumtally(
+        workspace_root=relative_workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+
+    def fake_runner(cmd, **kwargs):
+        expected_output.write_text("merged dose", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="")
+
+    execution = run_sumtally(
+        workspace_root=relative_workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner,
+    )
+
+    assert Path(generation["outputs"]["sum_input"]).is_absolute()
+    assert execution["stage_status"] == "success"
+    assert execution["command"]["cwd"] == str((workspace / "sumtally").resolve())
+
+
 def test_run_main_returns_nonzero_when_sumtally_summary_failed(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
