@@ -47,6 +47,13 @@ with:
 - passing Git diff and status checks; and
 - a final Codex review of head commit `56bb88f3ec` reporting no major issues.
 
+OpenSpec CLI `1.6.0` strict validation subsequently passed for both current
+specifications and both archived changes, with zero failures. Because the CLI
+does not include archived directories in `validate --all`, each archived change
+was copied to an isolated temporary workspace and validated there as an active
+change. The temporary copies were removed after validation, and the repository
+retains zero active change directories.
+
 An explicitly authorized Windows smoke test with designated non-patient phantom
 data outside the repository completed CT2PHITS and downstream workspace
 preparation. PHITS segment execution started successfully and parsed the

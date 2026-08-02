@@ -60,6 +60,9 @@
   review confirmed seven requirements and thirteen scenarios in both forms.
   The post-merge documentation audit repeated that structural comparison and
   found no active change directory or unpromoted delta.
+  After OpenSpec CLI `1.6.0` was installed, strict validation passed for the
+  current specification and an isolated active-change copy of this archive,
+  with zero failures.
 - [x] 4.4 Create a reviewable pull request without merging it automatically.
   Draft pull request #5 was created through the GitHub connector on 2026-08-02:
   https://github.com/inata169/dicomxphits/pull/5. After final review reported no
