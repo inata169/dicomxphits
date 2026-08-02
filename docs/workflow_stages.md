@@ -5,8 +5,9 @@ until the previous stage gate has passed.
 
 ## Stages
 
-1. Optionally run the independent Windows CT2PHITS frontend for a confirmed
-   non-patient phantom and validate its raw DATfiles handoff.
+1. Run the independent Windows CT2PHITS frontend for a confirmed non-patient
+   phantom, or explicitly select an existing validated handoff, and validate
+   its raw DATfiles handoff.
 2. Prepare a strict 3D-CRT segment manifest and PHITS input workspace.
 3. Run PHITS explicitly.
 4. Generate and run Sumtally explicitly.
@@ -52,6 +53,18 @@ eight downstream raw files plus the copied CT reference to the existing CT
 asset preparation functions. `CTtrans.dat` remains part of the nine-file
 generation inventory; downstream geometry uses the validated `CTtrans.inp`
 created by the existing coordinate-processing path.
+
+The guided desktop GUI invokes this accepted CLI as its first stage. It does
+not reproduce the frontend logic. When the execution summary reports
+completion, the GUI applies the documented frozen handoff paths inside that
+workspace to the next preparation stage. The source RT Plan remains distinct
+from the frozen downstream snapshot.
+
+The GUI may suggest empty case paths from an explicitly selected RT Plan and
+user-configured roots, but it does not scan for DICOM datasets or discover
+external tool installations. Stable tool paths and per-field Browse history
+may be stored only in the ignored local GUI settings file; confirmation and
+overwrite controls are not persisted.
 
 ## Prepare Workspace Adapter
 

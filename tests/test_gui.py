@@ -17,13 +17,21 @@ import dicomxphits.gui as gui_module
 from dicomxphits.gui import (
     GEOMETRY_MODE_RECTANGULAR_3DCRT,
     GuiConfig,
+    StageExecutionGuard,
     GuiValidationError,
+    _browse_directories,
     _default_values,
+    _save_gui_settings,
+    browse_initial_directory,
     build_stage_command,
+    ct2phits_handoff_values,
     gui_defaults_path,
     geometry_mode_guidance,
     run_stage,
     stage_by_key,
+    suggest_case_paths,
+    validate_stage,
+    workspace_path_from_parent,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
 
@@ -492,3 +500,173 @@ def test_launcher_does_not_install_dependencies() -> None:
     assert "-m dicomxphits.gui" in text
     assert "$env:path" in text
     assert ".venv\\scripts" in text
+
+
+def test_ct2phits_is_the_first_guided_gui_stage(tmp_path: Path) -> None:
+    rtphits_root = write_dir(tmp_path / "rtphits")
+    config = replace(
+        base_config(tmp_path),
+        source_rtplan_path=str(write_file(tmp_path / "input" / "source-plan.dcm")),
+        ct_dicom_root=str(write_dir(tmp_path / "input" / "ct")),
+        rtphits_root=str(rtphits_root),
+        ct2phits_workspace_root=str(rtphits_root / "work" / "new-case"),
+        ct_series_instance_uid="1.2.3.4",
+        ct2phits_timeout_seconds=125.0,
+    )
+    spec = stage_by_key("run_ct2phits")
+
+    workspace = validate_stage(config, spec)
+    command = build_stage_command(config, spec)
+
+    assert spec.workspace_field == "ct2phits_workspace_root"
+    assert workspace == (rtphits_root / "work" / "new-case").resolve()
+    assert command[0] == "dicomxphits-run-ct2phits"
+    assert command[command.index("--ct-dicom-root") + 1] == str(
+        Path(config.ct_dicom_root).resolve()
+    )
+    assert command[command.index("--rtplan") + 1] == str(
+        Path(config.source_rtplan_path).resolve()
+    )
+    assert command[command.index("--rtphits-root") + 1] == str(
+        rtphits_root.resolve()
+    )
+    assert command[command.index("--ct-series-instance-uid") + 1] == "1.2.3.4"
+    assert command[command.index("--timeout-seconds") + 1] == "125"
+    assert "--confirm-non-patient-phantom" in command
+
+
+def test_ct2phits_gui_stage_keeps_explicit_confirmation_and_new_workspace_gate(
+    tmp_path: Path,
+) -> None:
+    rtphits_root = write_dir(tmp_path / "rtphits")
+    workspace = write_dir(rtphits_root / "work" / "existing-case")
+    config = replace(
+        base_config(tmp_path),
+        source_rtplan_path=str(write_file(tmp_path / "source-plan.dcm")),
+        ct_dicom_root=str(write_dir(tmp_path / "ct")),
+        rtphits_root=str(rtphits_root),
+        ct2phits_workspace_root=str(workspace),
+        confirmed_non_patient_phantom=False,
+        allow_overwrite=True,
+    )
+    spec = stage_by_key("run_ct2phits")
+
+    with pytest.raises(GuiValidationError, match="non-patient phantom"):
+        validate_stage(config, spec)
+
+    with pytest.raises(GuiValidationError, match="must be new"):
+        validate_stage(
+            replace(config, confirmed_non_patient_phantom=True),
+            spec,
+        )
+
+
+def test_rtplan_path_suggestions_are_visible_derivations_only(tmp_path: Path) -> None:
+    plan = tmp_path / "selected" / "RT PLAN 01.dcm"
+    rtphits_root = tmp_path / "rtphits"
+    public_parent = tmp_path / "deliverables"
+
+    suggestions = suggest_case_paths(
+        plan,
+        rtphits_root=rtphits_root,
+        workspace_parent=public_parent,
+    )
+
+    assert suggestions == {
+        "ct_dicom_root": str(plan.parent),
+        "ct2phits_workspace_root": str(
+            rtphits_root / "work" / "RT-PLAN-01-ct2phits"
+        ),
+        "workspace_root": str(public_parent / "RT-PLAN-01-3dcrt"),
+    }
+    assert workspace_path_from_parent(
+        public_parent,
+        plan,
+        "workspace_root",
+    ) == public_parent / "RT-PLAN-01-3dcrt"
+
+
+def test_completed_ct2phits_handoff_uses_frozen_documented_paths(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "ct2phits-workspace")
+    write_file(workspace / "RTPLAN.dcm")
+    write_file(workspace / "CT" / "CT000001.dcm")
+    write_dir(workspace / "DATfiles")
+
+    handoff = ct2phits_handoff_values(workspace, {"status": "completed"})
+
+    assert handoff == {
+        "rtplan_path": str((workspace / "RTPLAN.dcm").resolve()),
+        "ct_reference_dicom": str(
+            (workspace / "CT" / "CT000001.dcm").resolve()
+        ),
+        "ct_datfiles_root": str((workspace / "DATfiles").resolve()),
+    }
+
+    with pytest.raises(GuiValidationError, match="does not report completion"):
+        ct2phits_handoff_values(workspace, {"status": "failed"})
+
+
+def test_gui_settings_persist_stable_paths_and_independent_browse_history(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    plan_dir = write_dir(tmp_path / "plan-browser")
+    tool_dir = write_dir(tmp_path / "tool-browser")
+    values = {
+        "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
+        "rtphits_root": "remembered-rtphits",
+        "phits_root_folder": "remembered-phits",
+        "phits_executable_path": "remembered-phits.exe",
+        "phits2dicom_executable_path": "remembered-phits2dicom.exe",
+        "rtdose_template_dicom": "remembered-template.dcm",
+        "machine_config_path": "remembered-machine.json",
+        "source_rtplan_path": "must-not-be-persisted.dcm",
+        "confirmed_non_patient_phantom": "true",
+        "allow_overwrite": "true",
+    }
+    history = {
+        "source_rtplan_path": str(plan_dir),
+        "phits_executable_path": str(tool_dir),
+    }
+
+    _save_gui_settings(values, history, defaults_path)
+    saved = json.loads(defaults_path.read_text(encoding="utf-8"))
+
+    assert saved["settings_version"] == 2
+    assert saved["rtphits_root"] == "remembered-rtphits"
+    assert "source_rtplan_path" not in saved
+    assert "confirmed_non_patient_phantom" not in saved
+    assert "allow_overwrite" not in saved
+    assert _browse_directories(defaults_path) == history
+    assert browse_initial_directory(
+        "source_rtplan_path",
+        {},
+        _browse_directories(defaults_path),
+    ) == plan_dir
+    assert browse_initial_directory(
+        "phits_executable_path",
+        {},
+        _browse_directories(defaults_path),
+    ) == tool_dir
+    assert browse_initial_directory(
+        "ct2phits_workspace_root",
+        {"ct2phits_workspace_root": str(tmp_path / "missing" / "new-case")},
+        {},
+    ) == tmp_path
+    assert _default_values(defaults_path)["phits_root_folder"] == "remembered-phits"
+
+
+def test_gui_stage_execution_guard_prevents_overlapping_stages() -> None:
+    guard = StageExecutionGuard()
+
+    guard.begin("run_ct2phits")
+
+    with pytest.raises(GuiValidationError, match="already running"):
+        guard.begin("prepare_workspace")
+
+    assert guard.active_stage == "run_ct2phits"
+    guard.finish()
+    guard.begin("prepare_workspace")
+    assert guard.active_stage == "prepare_workspace"
