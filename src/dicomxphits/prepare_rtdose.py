@@ -871,6 +871,7 @@ def dicom_snapshot(output_dirs: list[Path]) -> dict[str, dict[str, Any]]:
                     "name": path.name,
                     "size": path.stat().st_size,
                     "mtime_ns": path.stat().st_mtime_ns,
+                    "sha256": file_sha256(path),
                 }
     return snapshot
 
@@ -1013,7 +1014,11 @@ def run_rtdose(
         expected_after_conversion = after_conversion.get(expected_key)
         expected_updated = (
             expected_after_conversion is not None
-            and expected_after_conversion != expected_before
+            and (
+                expected_before is None
+                or expected_after_conversion["sha256"]
+                != expected_before["sha256"]
+            )
         )
         absolute_labeling = None
         plan_reference_synchronization = None
@@ -1087,6 +1092,9 @@ def run_rtdose(
             "expected_rtdose_output_size": expected_size,
             "expected_rtdose_output_preexisting": expected_before is not None,
             "expected_rtdose_output_updated_by_run": expected_updated,
+            "expected_rtdose_output_before_run": expected_before,
+            "expected_rtdose_output_after_conversion": expected_after_conversion,
+            "expected_rtdose_output_after_run": expected_after,
             "coordinate_corrected_rtdose_output": str(coordinate_corrected_output),
             "coordinate_corrected_rtdose_output_exists": coordinate_corrected_exists,
             "coordinate_corrected_rtdose_output_size": coordinate_corrected_size,

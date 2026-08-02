@@ -680,7 +680,10 @@ def run_sumtally(
         output_size = output_after["size"] if output_after is not None else None
         output_non_empty = output_size is not None and output_size > 0
         output_sha256 = output_after["sha256"] if output_after is not None else None
-        output_updated = output_after is not None and output_after != output_before
+        output_updated = output_after is not None and (
+            output_before is None
+            or output_after["sha256"] != output_before["sha256"]
+        )
         summary = {
             "schema_version": "dicomxphits_public_sumtally_execution_v1",
             "stage": "run_sumtally",

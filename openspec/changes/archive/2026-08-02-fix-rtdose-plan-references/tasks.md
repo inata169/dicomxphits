@@ -141,3 +141,13 @@
   75 focused tests and the final 506-test public suite passed; compilation,
   public-tree audit, OpenSpec strict validation, and Git diff checks passed.
   Request review on the resulting exact commit after push.
+
+## 13. Content-Update Proof
+
+- [x] 13.1 Require Sumtally Run to prove a new output or a changed output
+  SHA-256; timestamp-only changes do not count.
+- [x] 13.2 Require phits2dicom to produce a new or byte-changed RTDOSE before
+  plan-reference synchronization.
+- [x] 13.3 Add mtime-only regressions and rerun required validation: 77 focused
+  tests and the final 508-test public suite passed; compilation, public-tree
+  audit, OpenSpec strict validation, and Git diff checks passed.

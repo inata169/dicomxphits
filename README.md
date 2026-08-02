@@ -348,7 +348,8 @@ its content has changed. Generate also records every active segment output and
 all recursively resolved `infl` files consumed by the wrapper. Run verifies the
 complete dependency set and every digest before PHITS launch. RTDOSE Prepare
 requires the Generate and Run evidence to match. Sumtally Run also requires the
-expected dose output to be updated by that invocation, records its SHA-256, and
+expected dose output to be newly created or byte-changed by that invocation,
+records its SHA-256, and
 RTDOSE Prepare verifies that digest before applying its documented
 ImagePositionPatient title patch. RTDOSE Run then verifies the prepared dose
 digest. For a workspace created before this evidence was added, rerun Sumtally
@@ -360,7 +361,9 @@ slash-normalized paths and records its SHA-256 during RTDOSE Prepare. RTDOSE Run
 rejects the file if it changed before converter launch. Prepare also records
 the SHA-256 of every file named by that input: the workspace template, CT
 reference, prepared Sumtally dose, and companion `phits.out`. Run revalidates
-all four files immediately before conversion. The approved
+all four files immediately before conversion. The converter output must also
+be new or have a changed SHA-256; a timestamp-only change fails before plan
+reference synchronization. The approved
 public-model `totfact_per_MU` has already
 been applied in each PHITS input, so PHITS2DICOM uses Factor `1.0` and the
 generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its summaries record

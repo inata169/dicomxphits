@@ -20,8 +20,10 @@ Sumtally Generate SHALL record the path and SHA-256 of every active segment
 output and every recursively resolved `infl` file consumed by that wrapper.
 Sumtally Run SHALL fail before external execution when that dependency set or
 any recorded dependency digest changed.
-Sumtally Run SHALL accept success only when that invocation updates the expected
-dose output and SHALL record its SHA-256. RTDOSE Prepare SHALL verify that
+Sumtally Run SHALL accept success only when that invocation creates the expected
+dose output or changes its SHA-256, and SHALL record the resulting SHA-256.
+Timestamp or metadata-only changes SHALL NOT count as an output update. RTDOSE
+Prepare SHALL verify that
 digest before modifying the output for conversion, and RTDOSE Run SHALL verify
 the post-Prepare digest before conversion.
 Referenced beams whose delivery type is not treatment-eligible SHALL be
@@ -40,6 +42,9 @@ record the generated `phits2dicom.inp` SHA-256, and RTDOSE Run SHALL verify it
 before launching the converter. RTDOSE Prepare SHALL record the path and
 SHA-256 of every file referenced by that converter input, and RTDOSE Run SHALL
 revalidate every recorded file immediately before launching the converter.
+RTDOSE Run SHALL synchronize plan references only when the converter creates
+the expected RTDOSE or changes its SHA-256; timestamp-only changes to a stale
+output SHALL fail before synchronization.
 
 #### Scenario: Complete accepted plan delivery
 
@@ -99,8 +104,9 @@ revalidate every recorded file immediately before launching the converter.
 
 #### Scenario: Sumtally output is stale or replaced
 
-- **WHEN** Sumtally Run does not update the expected output, or its recorded
-  output is replaced before RTDOSE Prepare or after preparation
+- **WHEN** Sumtally Run leaves the expected output bytes unchanged, including
+  merely changing its timestamp, or its recorded output is replaced before
+  RTDOSE Prepare or after preparation
 - **THEN** the current stage fails before accepting or converting that output
   as PLAN-dose provenance
 
@@ -145,6 +151,13 @@ partial delivery.
 - **WHEN** the workspace template, CT reference, prepared Sumtally dose, or
   companion `phits.out` no longer matches its RTDOSE Prepare SHA-256
 - **THEN** RTDOSE Run fails before launching `phits2dicom`
+
+#### Scenario: Converter merely touches a stale RTDOSE
+
+- **WHEN** `phits2dicom` returns success but the expected RTDOSE SHA-256 is
+  unchanged from its pre-execution value
+- **THEN** RTDOSE Run fails before plan-reference synchronization and does not
+  accept the stale file
 
 ### Requirement: Final RT Dose Semantic Validation
 

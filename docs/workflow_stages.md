@@ -147,14 +147,18 @@ input changed. Generate also records every active segment output and every
 recursively resolved `infl` file consumed by the wrapper; Run revalidates the
 dependency set and digests before PHITS execution. Missing or mismatched
 evidence fails before RTDOSE conversion. The expected Sumtally dose output must
-be updated by the recorded Run; its SHA-256 is verified by RTDOSE Prepare before
-the IPP title patch, and the post-patch SHA-256 is verified by RTDOSE Run.
+be newly created or have a changed SHA-256 from the recorded Run; timestamp-only
+updates are rejected. Its SHA-256 is verified by RTDOSE Prepare before the IPP
+title patch, and the post-patch SHA-256 is verified by RTDOSE Run.
 Legacy workspaces regenerate and rerun Sumtally using their existing unchanged
 segment PHITS outputs before RTDOSE preparation.
 RTDOSE Prepare also records the generated `phits2dicom.inp` SHA-256; RTDOSE Run
 verifies it immediately before launching the converter. The workspace template,
 CT reference, prepared Sumtally dose, and companion `phits.out` referenced by
 that input are also hashed during Prepare and revalidated before launch.
+The produced RTDOSE must likewise be new or have a different SHA-256 from any
+preexisting expected output. A timestamp-only change fails before plan-reference
+synchronization.
 
 The template DICOM must be a phits2dicom-compatible RTDOSE base template with
 the overwrite tags required by phits2dicom already present. The public tree

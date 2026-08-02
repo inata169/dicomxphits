@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -1691,6 +1692,51 @@ def test_run_rejects_stale_preexisting_rtdose_output(tmp_path):
     assert summary["expected_rtdose_output_preexisting"] is True
     assert summary["expected_rtdose_output_updated_by_run"] is False
     assert summary["new_dicom_outputs"] == []
+
+
+def test_run_rejects_mtime_only_preexisting_rtdose_update(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    stale_output = files["sumtally_output"].with_suffix(".dcm")
+    stale_output.write_text("stale dose dicom", encoding="utf-8")
+    stale_mtime_ns = stale_output.stat().st_mtime_ns
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            changed_mtime_ns = stale_mtime_ns + 1_000_000_000
+            os.utime(stale_output, ns=(changed_mtime_ns, changed_mtime_ns))
+            return "touched only", None
+
+    summary = run_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        command_argv=["run"],
+        runner=lambda cmd, **kwargs: FakeProc(),
+    )
+
+    assert summary["stage_status"] == "failed"
+    assert summary["expected_rtdose_output_updated_by_run"] is False
+    before = summary["expected_rtdose_output_before_run"]
+    after_conversion = summary["expected_rtdose_output_after_conversion"]
+    assert after_conversion["mtime_ns"] != before["mtime_ns"]
+    assert after_conversion["sha256"] == before["sha256"]
+    assert summary["plan_reference_synchronization"] is None
 
 
 def test_run_missing_executable_writes_failure_summary(tmp_path):

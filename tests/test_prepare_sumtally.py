@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -576,6 +577,41 @@ def test_run_sumtally_rejects_unchanged_preexisting_output(tmp_path):
     assert summary["stage_status"] == "failed"
     assert summary["expected_sumtally_output_updated_by_run"] is False
     assert summary["expected_sumtally_output_sha256"]
+
+
+def test_run_sumtally_rejects_mtime_only_preexisting_output_update(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    for segment in manifest["segments"]:
+        output = workspace / segment["expected_output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("segment dose", encoding="utf-8")
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+    expected_output.write_text("stale merged dose", encoding="utf-8")
+    stale_mtime_ns = expected_output.stat().st_mtime_ns
+
+    def touch_only(cmd, **kwargs):
+        changed_mtime_ns = stale_mtime_ns + 1_000_000_000
+        os.utime(expected_output, ns=(changed_mtime_ns, changed_mtime_ns))
+        return subprocess.CompletedProcess(cmd, 0, stdout="touched only", stderr="")
+
+    summary = run_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=touch_only,
+    )
+
+    assert summary["stage_status"] == "failed"
+    assert summary["expected_sumtally_output_updated_by_run"] is False
+    before = summary["expected_sumtally_output_before_run"]
+    after = summary["expected_sumtally_output_after_run"]
+    assert after["mtime_ns"] != before["mtime_ns"]
+    assert after["sha256"] == before["sha256"]
 
 
 def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):

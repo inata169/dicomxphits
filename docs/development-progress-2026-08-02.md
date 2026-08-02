@@ -99,6 +99,9 @@ fail-closed corrections:
 - the coordinate-corrected DICOM is reopened and its PLAN reference, Frame of
   Reference, absolute dose units, and stored-value preservation are validated
   before success is reported.
+- Sumtally and phits2dicom output-update gates require a new file or changed
+  SHA-256; an unchanged stale output with only a new timestamp is rejected
+  before downstream acceptance or plan-reference synchronization.
 
 These guards change provenance validation and failure behavior only. They do
 not change PHITS physics, calculated dose values, MU values, normalization,
@@ -125,8 +128,8 @@ Sumtally dependency binding were corrected, the latest development checks for
 the active RTDOSE branch were:
 
 ```text
-Focused Sumtally/RTDOSE dependency tests: 75 passed
-Full synthetic/mock public suite: 506 passed
+Focused Sumtally/RTDOSE dependency tests: 77 passed
+Full synthetic/mock public suite: 508 passed
 Python compileall: passed
 Public-tree audit: 98 tracked files passed
 OpenSpec strict validation: 3 passed, 0 failed
