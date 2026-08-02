@@ -20,6 +20,7 @@ if str(PUBLIC_SRC) not in sys.path:
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.prepare_rtdose import PHITS2DICOM_REQUIRED_TEMPLATE_TAGS, prepare_rtdose, run_rtdose
 from dicomxphits.prepare_sumtally import generate_sumtally, run_sumtally
+from dicomxphits.sumtally_inputs import file_sha256
 
 
 SMOKE_PLAN_UID = "1.2.826.0.1.3680043.10.54321.9101"
@@ -225,7 +226,20 @@ def write_manual_smoke_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    write_synthetic_rtplan(workspace / "RTPLAN.dcm")
+    rtplan_path = workspace / "RTPLAN.dcm"
+    write_synthetic_rtplan(rtplan_path)
+    (workspace / "ct2phits_workspace_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "rtplan": {
+                    "snapshot_path": rtplan_path.name,
+                    "sha256": file_sha256(rtplan_path),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     for segment in manifest["segments"]:
         phits_path = workspace / str(segment["phits_input_path"])
         phits_path.parent.mkdir(parents=True, exist_ok=True)

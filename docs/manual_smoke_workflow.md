@@ -163,6 +163,9 @@ both Sumtally stages using the existing segment outputs first.
 Referenced non-treatment beams are accepted only as skipped, zero-segment-MU
 manifest entries; active coverage remains limited to treatment-eligible beams,
 while the existing full referenced-beam normalization MU is preserved.
+The frozen RT Plan is bound by the completed CT2PHITS manifest SHA-256, with
+exact segment-geometry reconstruction as the legacy fallback. The generated
+`phits2dicom.inp` digest is also checked between RTDOSE Prepare and Run.
 
 Optionally execute the external GPR comparison:
 

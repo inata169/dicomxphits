@@ -25,6 +25,12 @@ excluded from active treatment coverage only when the manifest represents each
 one as skipped with zero segment MU and a matching beam meterset. The adapter
 SHALL keep the manifest plan, included, and normalization MU totals bound to the
 complete fraction-group referenced beam total.
+The adapter SHALL bind the frozen RT Plan by its full-file SHA-256 recorded in
+the adjacent completed CT2PHITS workspace manifest. When that legacy evidence
+is absent, it SHALL reconstruct segments from the RT Plan and recorded sampling
+contract and require exact segment-geometry equality. RTDOSE Prepare SHALL also
+record the generated `phits2dicom.inp` SHA-256, and RTDOSE Run SHALL verify it
+before launching the converter.
 
 #### Scenario: Complete accepted plan delivery
 
@@ -97,6 +103,19 @@ partial delivery.
 - **WHEN** the explicit frozen RT Plan is absent, is not an RT Plan DICOM, or
   does not match the prepared manifest
 - **THEN** RTDOSE preparation fails before external conversion starts
+
+#### Scenario: Frozen plan content changed without changing identity
+
+- **WHEN** RT Plan content no longer matches its CT2PHITS SHA-256, or its
+  reconstructed segment geometry differs despite retaining the same UIDs and
+  metersets
+- **THEN** RTDOSE preparation fails before PLAN provenance is accepted
+
+#### Scenario: Converter input changed after preparation
+
+- **WHEN** the generated `phits2dicom.inp` no longer matches the SHA-256
+  recorded by RTDOSE Prepare
+- **THEN** RTDOSE Run fails before launching `phits2dicom`
 
 ### Requirement: Final RT Dose Semantic Validation
 

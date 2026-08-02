@@ -700,6 +700,7 @@ def prepare_rtdose(
             factor=factor,
         )
         write_text_lf(phits2dicom_inp, stdin_content)
+        phits2dicom_input_sha256 = file_sha256(phits2dicom_inp)
         summary = {
             "schema_version": "dicomxphits_public_rtdose_prepare_v1",
             "stage": "prepare_rtdose",
@@ -732,6 +733,7 @@ def prepare_rtdose(
             "image_position_patient_patch": ipp_patch_summary,
             "dat_dir": str(dat_dir),
             "phits2dicom_input_path": str(phits2dicom_inp),
+            "phits2dicom_input_sha256": phits2dicom_input_sha256,
             "phits2dicom_stdin_content": stdin_content,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,
@@ -861,6 +863,19 @@ def run_rtdose(
             )
         phits2dicom_inp = Path(str(prepare_summary.get("phits2dicom_input_path") or ""))
         require_existing_file(phits2dicom_inp, label="phits2dicom input")
+        prepared_phits2dicom_input_sha256 = str(
+            prepare_summary.get("phits2dicom_input_sha256") or ""
+        )
+        if not prepared_phits2dicom_input_sha256:
+            raise ValueError(
+                "RTDOSE prepare summary is missing phits2dicom input digest; "
+                "rerun RTDOSE Prepare"
+            )
+        if file_sha256(phits2dicom_inp) != prepared_phits2dicom_input_sha256:
+            raise ValueError(
+                "phits2dicom input changed after RTDOSE Prepare; "
+                "rerun RTDOSE Prepare"
+            )
         dat_dir = Path(str(prepare_summary.get("dat_dir") or phits2dicom_inp.parent))
         phits_dose_value = str(prepare_summary.get("phits_dose") or "")
         if not phits_dose_value:

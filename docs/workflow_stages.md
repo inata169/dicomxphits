@@ -129,6 +129,10 @@ workflow priority. User-provided DICOM files are copied into the workspace
 before use; source files are not modified in place. The RT Plan SOP Instance
 UID, Frame of Reference, workflow mode, treatment-beam coverage, and MU totals
 must match the accepted segment manifest before conversion can proceed.
+The supplied frozen RT Plan must match the full-file SHA-256 recorded in the
+adjacent completed CT2PHITS workspace manifest. For a legacy handoff without
+that record, rebuilding the segment geometry with the manifest's sampling
+policy must reproduce the stored segments exactly.
 Fraction-group referenced non-treatment beams such as `SETUP` are excluded from
 active treatment coverage only when the manifest preserves them as skipped,
 zero-segment-MU entries. The manifest's plan, included, and normalization MU
@@ -144,6 +148,8 @@ SHA-256 is verified by RTDOSE Prepare before the IPP title patch, and the
 post-patch SHA-256 is verified by RTDOSE Run. Legacy workspaces regenerate and
 rerun Sumtally using their existing segment PHITS outputs before RTDOSE
 preparation.
+RTDOSE Prepare also records the generated `phits2dicom.inp` SHA-256; RTDOSE Run
+verifies it immediately before launching the converter.
 
 The template DICOM must be a phits2dicom-compatible RTDOSE base template with
 the overwrite tags required by phits2dicom already present. The public tree

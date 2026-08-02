@@ -329,6 +329,10 @@ Official PHITS or RTphits sample files are not bundled in this repository.
 `--rtplan` must identify the same frozen RT Plan used to prepare the 3D-CRT
 workspace. The adapter verifies its SOP Instance UID, Frame of Reference, and
 complete treatment-beam coverage against `segments/segment_manifest.json`.
+It also verifies the complete frozen RT Plan file against the SHA-256 recorded
+by the adjacent completed CT2PHITS workspace manifest. A legacy handoff without
+that digest must reproduce the same segment geometry when rebuilt from the RT
+Plan and the recorded sampling policy.
 Referenced non-treatment beams such as `SETUP` are allowed only when the
 manifest retains them as skipped, zero-segment-MU evidence; they are excluded
 from active treatment coverage. The existing full-plan total and normalization
@@ -348,7 +352,9 @@ evidence was added, rerun Sumtally Generate and Sumtally Run before rerunning
 RTDOSE Prepare and RTDOSE Run. Existing segment PHITS outputs remain reusable.
 
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
-slash-normalized paths. The approved public-model `totfact_per_MU` has already
+slash-normalized paths and records its SHA-256 during RTDOSE Prepare. RTDOSE Run
+rejects the file if it changed before converter launch. The approved
+public-model `totfact_per_MU` has already
 been applied in each PHITS input, so PHITS2DICOM uses Factor `1.0` and the
 generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its summaries record
 `approved_public_model_totfact_per_mu_applied_in_phits` and the exact factor.

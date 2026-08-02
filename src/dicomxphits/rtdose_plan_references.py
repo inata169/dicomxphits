@@ -11,12 +11,14 @@ from pydicom.sequence import Sequence
 from pydicom.uid import RTPlanStorage
 
 from dicomxphits.prepare_sumtally import load_json_object
-from dicomxphits.sumtally_inputs import manifest_sha256
+from dicomxphits.rtplan_manifest_construction import build_manifest
+from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
 
 PLAN_SUMMATION_TYPE = "PLAN"
 MANIFEST_SCHEMA_VERSION = "segment_manifest_v2"
 MU_TOLERANCE = 1.0e-6
+CT2PHITS_MANIFEST_NAME = "ct2phits_workspace_manifest.json"
 
 
 def _required_text(dataset: Dataset, name: str, *, label: str) -> str:
@@ -130,6 +132,123 @@ def _referenced_plan_beams(
     return treatment_metersets, non_treatment_metersets, fraction_group_numbers
 
 
+def _reconstructed_geometry_binding(
+    *,
+    rtplan: Dataset,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    segments = manifest.get("segments")
+    sampling_policy = manifest.get("rtplan_sampling")
+    tolerances = manifest.get("tolerances")
+    if not isinstance(segments, list) or not isinstance(sampling_policy, dict):
+        raise ValueError(
+            "Frozen RT Plan SHA-256 evidence is missing and the segment manifest "
+            "cannot reconstruct RT Plan geometry; rerun CT2PHITS and workspace "
+            "preparation"
+        )
+    if not isinstance(tolerances, dict):
+        raise ValueError(
+            "Frozen RT Plan SHA-256 evidence is missing and manifest tolerances "
+            "are unavailable; rerun CT2PHITS and workspace preparation"
+        )
+    output_names = {
+        Path(str(segment.get("expected_output_path") or "").replace("\\", "/")).name
+        for segment in segments
+        if isinstance(segment, dict) and segment.get("expected_output_path")
+    }
+    if len(output_names) != 1:
+        raise ValueError(
+            "Frozen RT Plan SHA-256 evidence is missing and the segment output "
+            "contract is ambiguous; rerun CT2PHITS and workspace preparation"
+        )
+    try:
+        reconstructed, _beam_rows, _cp_rows = build_manifest(
+            rtplan,
+            case_id=str(manifest.get("case_id") or ""),
+            workflow_mode=str(manifest.get("workflow_mode") or ""),
+            include_beams=None,
+            dose_normalization_mu=_finite_positive(
+                manifest.get("dose_normalization_mu"),
+                label="Segment manifest dose_normalization_mu",
+            ),
+            output_name=next(iter(output_names)),
+            sampling_policy=sampling_policy,
+            tolerances=tolerances,
+            sampling_config_path=(
+                str(manifest.get("sampling_config_path"))
+                if manifest.get("sampling_config_path") is not None
+                else None
+            ),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Frozen RT Plan geometry could not be reconstructed from the "
+            "segment manifest"
+        ) from exc
+    reconstructed_segments = reconstructed.get("segments")
+    if not isinstance(reconstructed_segments, list):
+        raise ValueError("Reconstructed RT Plan manifest is missing segments")
+    recorded_geometry = [
+        {key: value for key, value in segment.items() if key != "phits_input_path"}
+        for segment in segments
+        if isinstance(segment, dict)
+    ]
+    reconstructed_geometry = [
+        {key: value for key, value in segment.items() if key != "phits_input_path"}
+        for segment in reconstructed_segments
+        if isinstance(segment, dict)
+    ]
+    if len(recorded_geometry) != len(segments) or len(reconstructed_geometry) != len(
+        reconstructed_segments
+    ):
+        raise ValueError("RT Plan segment geometry contains an invalid segment record")
+    if reconstructed_geometry != recorded_geometry:
+        raise ValueError(
+            "Frozen RT Plan segment geometry does not match the prepared manifest"
+        )
+    segment_geometry_sha256 = manifest_sha256({"segments": recorded_geometry})
+    return {
+        "mode": "reconstructed_segment_geometry",
+        "segment_geometry_sha256": segment_geometry_sha256,
+        "validated": True,
+    }
+
+
+def validate_frozen_rtplan_binding(
+    *,
+    rtplan_path: Path,
+    rtplan: Dataset,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    ct2phits_manifest_path = rtplan_path.resolve().parent / CT2PHITS_MANIFEST_NAME
+    if not ct2phits_manifest_path.is_file():
+        return _reconstructed_geometry_binding(rtplan=rtplan, manifest=manifest)
+    ct2phits_manifest = load_json_object(ct2phits_manifest_path)
+    if ct2phits_manifest.get("status") != "completed":
+        raise ValueError("CT2PHITS frozen RT Plan manifest is not completed")
+    rtplan_record = ct2phits_manifest.get("rtplan")
+    if not isinstance(rtplan_record, dict):
+        raise ValueError("CT2PHITS manifest is missing frozen RT Plan evidence")
+    snapshot_value = str(rtplan_record.get("snapshot_path") or "")
+    expected_sha256 = str(rtplan_record.get("sha256") or "")
+    if not snapshot_value or not expected_sha256:
+        raise ValueError("CT2PHITS manifest is missing frozen RT Plan SHA-256 evidence")
+    recorded_snapshot = (ct2phits_manifest_path.parent / snapshot_value).resolve()
+    if recorded_snapshot != rtplan_path.resolve():
+        raise ValueError("RTDOSE RT Plan is not the CT2PHITS frozen snapshot")
+    current_sha256 = file_sha256(rtplan_path)
+    if current_sha256 != expected_sha256:
+        raise ValueError(
+            "Frozen RT Plan content does not match CT2PHITS SHA-256 evidence"
+        )
+    return {
+        "mode": "ct2phits_snapshot_sha256",
+        "ct2phits_manifest_path": str(ct2phits_manifest_path),
+        "rtplan_sha256": current_sha256,
+        "validated": True,
+    }
+
+
 def validate_full_plan_context(
     *,
     rtplan_path: Path,
@@ -176,6 +295,11 @@ def validate_full_plan_context(
         raise ValueError("RTDOSE PLAN output requires workflow_mode full_plan")
     if str(manifest.get("plan_uid") or "") != sop_instance_uid:
         raise ValueError("Frozen RT Plan SOPInstanceUID does not match segment manifest plan_uid")
+    rtplan_binding = validate_frozen_rtplan_binding(
+        rtplan_path=rtplan_path,
+        rtplan=rtplan,
+        manifest=manifest,
+    )
 
     (
         expected_metersets,
@@ -302,6 +426,7 @@ def validate_full_plan_context(
         "treatment_total_mu": treatment_total_mu,
         "plan_total_mu": referenced_plan_total_mu,
         "dose_normalization_mu": referenced_plan_total_mu,
+        "rtplan_binding": rtplan_binding,
         "manifest_path": str(manifest_path),
         "manifest_sha256": manifest_sha256(manifest),
         "workflow_mode": "full_plan",

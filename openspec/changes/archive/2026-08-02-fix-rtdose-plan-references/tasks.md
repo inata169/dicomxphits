@@ -97,3 +97,14 @@
   Focused workspace/Sumtally/RTDOSE tests passed (107), the full public suite
   passed (487), compilation succeeded, the public-tree audit passed (97 tracked
   files), and strict OpenSpec validation passed (3 specifications).
+
+## 9. Approved Final Input-Provenance Correction
+
+- [x] 9.1 Bind the frozen RT Plan to completed CT2PHITS SHA-256 evidence, with
+  exact reconstructed segment geometry as the legacy fallback.
+- [x] 9.2 Hash `phits2dicom.inp` at RTDOSE Prepare and verify it before converter
+  launch in RTDOSE Run.
+- [x] 9.3 Add same-identity plan and converter-input mutation regressions and
+  rerun required validation. Focused tests passed (49), the full public suite
+  passed (491), compilation succeeded, the public-tree audit passed (97 tracked
+  files), and strict OpenSpec validation passed (3 specifications).

@@ -83,6 +83,14 @@ beam metersets. Plan, included, and normalization MU totals remain bound to all
 referenced beams, preserving the existing Sumtally normalization and dose
 values.
 
+The adapter prefers the full RT Plan SHA-256 already recorded beside the
+CT2PHITS frozen snapshot. Legacy handoffs without that record rebuild segments
+from the supplied RT Plan using the manifest sampling and tolerance contract,
+then require exact stored-segment equality. Prepare hashes the generated
+`phits2dicom.inp`, and Run verifies that digest before converter launch so its
+template, CT, dose, output directory, normalization mode, and factor cannot be
+changed after review.
+
 When that gate passes, the all-active-segments result represents the entire RT
 Plan delivery and will use `DoseSummationType = PLAN`. This change does not add
 support for generating a BEAM or FRACTION dose.

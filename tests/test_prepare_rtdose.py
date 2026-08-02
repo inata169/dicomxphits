@@ -123,6 +123,18 @@ def write_rtplan(
     return path
 
 
+def write_rtplan_snapshot_evidence(rtplan_path: Path) -> None:
+    manifest_path = rtplan_path.parent / "ct2phits_workspace_manifest.json"
+    manifest = {
+        "status": "completed",
+        "rtplan": {
+            "snapshot_path": rtplan_path.name,
+            "sha256": file_sha256(rtplan_path),
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def write_coordinate_rtdose(path: Path) -> None:
     write_dicom(path, modality="RTDOSE")
     ds = pydicom.dcmread(str(path))
@@ -169,6 +181,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     analysis.mkdir(parents=True)
     plan_uid = "1.2.826.0.1.3680043.10.54321.9001"
     rtplan = write_rtplan(workspace / "RTPLAN.dcm", sop_instance_uid=plan_uid)
+    write_rtplan_snapshot_evidence(rtplan)
     manifest = {
         "schema_version": "segment_manifest_v2",
         "case_id": "synthetic",
@@ -279,6 +292,7 @@ def add_non_treatment_setup_beam(
     setup_reference.BeamMeterset = setup_mu
     plan.FractionGroupSequence[0].ReferencedBeamSequence.append(setup_reference)
     plan.save_as(str(rtplan_path))
+    write_rtplan_snapshot_evidence(rtplan_path)
 
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -341,6 +355,7 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert summary["phits_dose"] == str(files["sumtally_output"])
     assert summary["phits_out"] == str(files["phits_out"])
     assert summary["phits2dicom_input_path"].endswith("phits2dicom.inp")
+    assert len(summary["phits2dicom_input_sha256"]) == 64
     assert summary["dat_dir"].endswith("DATfiles")
     assert summary["path_config"]["phits2dicom_executable_path"] is None
     assert summary["image_position_patient_patch"]["image_position_patient"] == [1.0, 2.0, 3.0]
@@ -848,6 +863,7 @@ def test_ct_reference_priority_and_sync_uses_workspace_copy(tmp_path):
     plan = pydicom.dcmread(str(files["rtplan"]))
     plan.FrameOfReferenceUID = "9.9.9"
     plan.save_as(str(files["rtplan"]))
+    write_rtplan_snapshot_evidence(files["rtplan"])
 
     selected, source = select_ct_reference(
         workspace_root=workspace,
@@ -1044,6 +1060,44 @@ def test_run_rejects_phits_dose_changed_after_prepare(tmp_path):
     assert calls == []
 
 
+def test_run_rejects_phits2dicom_input_changed_after_prepare(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    phits2dicom_input = Path(prepare["phits2dicom_input_path"])
+    phits2dicom_input.write_text(
+        phits2dicom_input.read_text(encoding="utf-8") + "\nchanged\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    with pytest.raises(
+        ValueError,
+        match="phits2dicom input changed after RTDOSE Prepare",
+    ):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: calls.append(cmd),
+        )
+
+    assert calls == []
+
+
 def test_prepare_rejects_frozen_plan_uid_mismatch(tmp_path):
     workspace, files = write_workspace(tmp_path)
     template = tmp_path / "template.dcm"
@@ -1053,6 +1107,7 @@ def test_prepare_rejects_frozen_plan_uid_mismatch(tmp_path):
     plan = pydicom.dcmread(str(files["rtplan"]))
     plan.SOPInstanceUID = "1.2.826.0.1.3680043.10.54321.9002"
     plan.save_as(str(files["rtplan"]))
+    write_rtplan_snapshot_evidence(files["rtplan"])
 
     with pytest.raises(ValueError, match="does not match segment manifest plan_uid"):
         prepare_rtdose(
@@ -1072,6 +1127,82 @@ def test_prepare_rejects_frozen_plan_uid_mismatch(tmp_path):
     )
     assert failure["stage_status"] == "gate_failed"
     assert failure["phits2dicom_execution_started"] is False
+
+
+def test_prepare_rejects_frozen_plan_content_changed_with_same_identity(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    plan = pydicom.dcmread(str(files["rtplan"]))
+    plan.BeamSequence[0].BeamName = "CHANGED_AFTER_WORKSPACE_PREPARE"
+    plan.save_as(str(files["rtplan"]))
+
+    with pytest.raises(
+        ValueError,
+        match="does not match CT2PHITS SHA-256 evidence",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+
+def test_prepare_legacy_plan_binding_reconstructs_segment_geometry(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, files = write_workspace(tmp_path)
+    (workspace / "ct2phits_workspace_manifest.json").unlink()
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["rtplan_sampling"] = {}
+    manifest["tolerances"] = {}
+    manifest["segments"][0]["expected_output_path"] = (
+        "segments/seg_b0001_s0000/deposit-target-3D.out"
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rewrite_sumtally_manifest_digests(workspace, manifest)
+    monkeypatch.setattr(
+        "dicomxphits.rtdose_plan_references.build_manifest",
+        lambda *args, **kwargs: (
+            {
+                "segments": [
+                    {
+                        **segment,
+                        "phits_input_path": "phits_inputs/beam_0001_segment_0000.inp",
+                    }
+                    for segment in manifest["segments"]
+                ]
+            },
+            [],
+            [],
+        ),
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    assert summary["full_plan_evidence"]["rtplan_binding"]["mode"] == (
+        "reconstructed_segment_geometry"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1171,6 +1302,7 @@ def test_prepare_accepts_existing_supported_treatment_delivery_types(
         files["rtplan"],
         treatment_delivery_type=delivery_type,
     )
+    write_rtplan_snapshot_evidence(files["rtplan"])
     template = tmp_path / "template.dcm"
     ct = tmp_path / "ct_reference.dcm"
     write_dicom(template, modality="RTDOSE")
