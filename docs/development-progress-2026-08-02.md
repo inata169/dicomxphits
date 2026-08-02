@@ -88,6 +88,8 @@ fail-closed corrections:
   canonical segment-manifest digest;
 - the generated Sumtally wrapper, `sumtally.inp`, and produced dose output are
   bound to the recorded execution evidence;
+- every active segment output and recursively included Sumtally wrapper file is
+  hashed at Generate and revalidated before Sumtally external execution;
 - the frozen RT Plan is bound by the full-file SHA-256 from the completed
   CT2PHITS workspace manifest, with reconstructed segment geometry as the
   legacy fallback;
@@ -118,12 +120,13 @@ The latest strict validation reported:
 
 ## Validation evidence for the active branch
 
-After the final review findings and upstream zero-MU gate inconsistency were
-corrected, the latest development checks for the active RTDOSE branch were:
+After the final review findings, upstream zero-MU gate inconsistency, and
+Sumtally dependency binding were corrected, the latest development checks for
+the active RTDOSE branch were:
 
 ```text
-Focused Workspace/Sumtally/RTDOSE tests: 115 passed
-Full synthetic/mock public suite: 502 passed
+Focused Sumtally/RTDOSE dependency tests: 75 passed
+Full synthetic/mock public suite: 506 passed
 Python compileall: passed
 Public-tree audit: 98 tracked files passed
 OpenSpec strict validation: 3 passed, 0 failed

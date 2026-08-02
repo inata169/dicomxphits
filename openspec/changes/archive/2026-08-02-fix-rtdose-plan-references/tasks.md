@@ -130,3 +130,14 @@
   validation: 115 focused tests and the final 502-test public suite passed;
   compilation, public-tree audit, OpenSpec strict validation, and Git diff
   checks passed. Request review on the resulting exact commit after push.
+
+## 12. Sumtally Dependency Provenance
+
+- [x] 12.1 Record and revalidate active segment-output and recursive wrapper
+  include SHA-256 evidence before Sumtally external execution.
+- [x] 12.2 Carry the validated evidence into Sumtally Run and require exact
+  Generate/Run agreement during RTDOSE preparation.
+- [x] 12.3 Add dependency-mutation regressions and rerun required validation:
+  75 focused tests and the final 506-test public suite passed; compilation,
+  public-tree audit, OpenSpec strict validation, and Git diff checks passed.
+  Request review on the resulting exact commit after push.

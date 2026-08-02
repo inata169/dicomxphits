@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -39,6 +40,10 @@ RT_DOSE_CONVERSION_HINT = {
     "sumtally_normalization": SUMTALLY_NORMALIZATION,
     "is_beam_mu_output": False,
 }
+PHITS_INCLUDE_PATTERN = re.compile(
+    r"^\s*infl:\s*\{\s*([^}]+?)\s*\}",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -222,6 +227,106 @@ def validate_manifest_for_sumtally(manifest: dict[str, Any]) -> dict[str, Any]:
     return gate
 
 
+def resolve_phits_include_path(path_value: str, *, execution_cwd: Path) -> Path:
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = execution_cwd / path
+    return path.resolve()
+
+
+def transitive_phits_include_paths(
+    root_input: Path,
+    *,
+    execution_cwd: Path,
+) -> list[Path]:
+    root = root_input.resolve()
+    pending = [root]
+    visited = {root}
+    dependencies: set[Path] = set()
+    while pending:
+        source = pending.pop()
+        if not source.is_file():
+            raise FileNotFoundError(f"PHITS input dependency not found: {source}")
+        for line in source.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = PHITS_INCLUDE_PATTERN.match(line)
+            if not match:
+                continue
+            dependency = resolve_phits_include_path(
+                match.group(1),
+                execution_cwd=execution_cwd,
+            )
+            if not dependency.is_file():
+                raise FileNotFoundError(
+                    f"PHITS include dependency not found: {dependency}"
+                )
+            dependencies.add(dependency)
+            if dependency not in visited:
+                visited.add(dependency)
+                pending.append(dependency)
+    return sorted(dependencies, key=lambda path: str(path).casefold())
+
+
+def file_digest_evidence(paths: list[Path]) -> list[dict[str, str]]:
+    evidence: list[dict[str, str]] = []
+    resolved_paths = {item.resolve() for item in paths}
+    for path in sorted(resolved_paths, key=lambda item: str(item).casefold()):
+        if not path.is_file():
+            raise FileNotFoundError(f"Sumtally input dependency not found: {path}")
+        evidence.append({"path": str(path), "sha256": file_sha256(path)})
+    return evidence
+
+
+def validate_file_digest_evidence(
+    recorded: Any,
+    *,
+    current_paths: list[Path],
+    label: str,
+) -> list[dict[str, str]]:
+    if not isinstance(recorded, list):
+        raise ValueError(
+            f"Sumtally generation summary is missing {label} digest evidence; "
+            "rerun Sumtally Generate"
+        )
+    recorded_by_path: dict[Path, str] = {}
+    for item in recorded:
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"Sumtally generation summary has invalid {label} digest evidence; "
+                "rerun Sumtally Generate"
+            )
+        path_value = str(item.get("path") or "")
+        sha256 = str(item.get("sha256") or "")
+        if not path_value or not sha256:
+            raise ValueError(
+                f"Sumtally generation summary has incomplete {label} digest evidence; "
+                "rerun Sumtally Generate"
+            )
+        path = Path(path_value).resolve()
+        if path in recorded_by_path:
+            raise ValueError(
+                f"Sumtally generation summary has duplicate {label} digest evidence; "
+                "rerun Sumtally Generate"
+            )
+        recorded_by_path[path] = sha256
+
+    current = file_digest_evidence(current_paths)
+    current_by_path = {
+        Path(item["path"]).resolve(): item["sha256"] for item in current
+    }
+    if set(recorded_by_path) != set(current_by_path):
+        raise ValueError(
+            f"Sumtally {label} dependency set changed after Sumtally Generate; "
+            "rerun Sumtally Generate"
+        )
+    for path, sha256 in current_by_path.items():
+        if recorded_by_path[path] != sha256:
+            raise ValueError(
+                f"Sumtally {label} changed after Sumtally Generate: {path}; "
+                "rerun Sumtally Generate"
+            )
+    return current
+
+
 def derive_tally_patterns_from_manifest(manifest: dict[str, Any], default_patterns: list[str]) -> list[str]:
     patterns: list[str] = []
     for segment in active_segments(manifest):
@@ -282,6 +387,7 @@ def generate_sumtally(
         manifest, manifest_path = load_manifest(workspace_root)
         bound_manifest_sha256 = manifest_sha256(manifest)
         strict_gate = validate_manifest_for_sumtally(manifest)
+        validate_segment_outputs_exist(workspace_root, manifest)
         tally_patterns = derive_tally_patterns_from_manifest(manifest, list(TARGET_TALLY_PATTERNS))
         selection = select_sumtally_base_input(
             workspace_root=workspace_root,
@@ -325,6 +431,15 @@ def generate_sumtally(
         )
         sum_input_sha256 = file_sha256(sum_input_path)
         sumtally_input_sha256 = file_sha256(sumtally_path)
+        segment_output_evidence = file_digest_evidence(
+            expected_segment_outputs(workspace_root, manifest)
+        )
+        wrapper_include_evidence = file_digest_evidence(
+            transitive_phits_include_paths(
+                sum_input_path,
+                execution_cwd=sum_input_path.parent,
+            )
+        )
 
         summary = {
             "schema_version": "dicomxphits_public_sumtally_generation_v1",
@@ -344,6 +459,8 @@ def generate_sumtally(
             "manifest_sha256": bound_manifest_sha256,
             "sum_input_sha256": sum_input_sha256,
             "sumtally_input_sha256": sumtally_input_sha256,
+            "segment_output_evidence": segment_output_evidence,
+            "wrapper_include_evidence": wrapper_include_evidence,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,
                 "phits_executable_path": paths.phits_executable_path,
@@ -529,6 +646,19 @@ def run_sumtally(
                 "Generated sumtally.inp changed after Sumtally Generate; "
                 "rerun Sumtally Generate"
             )
+        current_segment_output_evidence = validate_file_digest_evidence(
+            generation_summary.get("segment_output_evidence"),
+            current_paths=expected_segment_outputs(workspace_root, manifest),
+            label="segment output",
+        )
+        current_wrapper_include_evidence = validate_file_digest_evidence(
+            generation_summary.get("wrapper_include_evidence"),
+            current_paths=transitive_phits_include_paths(
+                selected_sum_input,
+                execution_cwd=selected_sum_input.parent,
+            ),
+            label="wrapper include",
+        )
         expected_output = resolve_workspace_path(
             workspace_root,
             str(outputs["sumtally_output"]),
@@ -587,6 +717,8 @@ def run_sumtally(
             "manifest_sha256": current_manifest_sha256,
             "sum_input_sha256": current_sum_input_sha256,
             "sumtally_input_sha256": current_sumtally_input_sha256,
+            "segment_output_evidence": current_segment_output_evidence,
+            "wrapper_include_evidence": current_wrapper_include_evidence,
         }
         write_json(execution_summary_path, summary)
         return summary

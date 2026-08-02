@@ -236,6 +236,24 @@ def validate_sumtally_manifest_binding(
                 "rerun Sumtally Run"
             )
         input_digests[field] = generation_input_sha256
+    dependency_evidence: dict[str, list[dict[str, str]]] = {}
+    for field in ("segment_output_evidence", "wrapper_include_evidence"):
+        generation_evidence = generation.get(field)
+        execution_evidence = execution.get(field)
+        if not isinstance(generation_evidence, list) or not isinstance(
+            execution_evidence,
+            list,
+        ):
+            raise ValueError(
+                "Sumtally dependency digest evidence is missing; rerun "
+                "Sumtally Generate and Sumtally Run"
+            )
+        if execution_evidence != generation_evidence:
+            raise ValueError(
+                "Sumtally Run dependency evidence does not match Sumtally "
+                "Generate; rerun Sumtally Run"
+            )
+        dependency_evidence[field] = generation_evidence
     generation_outputs = generation.get("outputs")
     if not isinstance(generation_outputs, dict):
         raise ValueError("Sumtally Generate evidence is missing outputs")
@@ -288,6 +306,7 @@ def validate_sumtally_manifest_binding(
         "generation_manifest_sha256": generation_sha256,
         "execution_manifest_sha256": execution_sha256,
         **input_digests,
+        **dependency_evidence,
         "sumtally_output_path": str(generation_output),
         "sumtally_output_sha256": execution_output_sha256,
         "validated": True,

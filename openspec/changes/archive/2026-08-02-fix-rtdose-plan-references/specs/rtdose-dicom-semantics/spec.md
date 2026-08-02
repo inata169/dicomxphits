@@ -13,6 +13,10 @@ SHA-256 values of the generated Sumtally wrapper and `sumtally.inp` recorded by
 Sumtally Generate and Sumtally Run to match before it accepts PLAN semantics.
 Sumtally Run SHALL execute only the wrapper path recorded by Sumtally Generate
 and SHALL fail before external execution when either generated input changed.
+Sumtally Generate SHALL record the path and SHA-256 of every active segment
+output and every recursively resolved `infl` file consumed by that wrapper.
+Sumtally Run SHALL fail before external execution when that dependency set or
+any recorded dependency digest changed.
 Sumtally Run SHALL accept success only when that invocation updates the expected
 dose output and SHALL record its SHA-256. RTDOSE Prepare SHALL verify that
 digest before modifying the output for conversion, and RTDOSE Run SHALL verify
@@ -82,6 +86,13 @@ revalidate every recorded file immediately before launching the converter.
   generated SHA-256
 - **THEN** Sumtally Run fails before external execution and no execution digest
   is accepted as PLAN-dose provenance
+
+#### Scenario: Sumtally execution dependency changed or replaced
+
+- **WHEN** an active segment output or a direct or transitive wrapper `infl`
+  dependency no longer matches its Sumtally Generate SHA-256
+- **THEN** Sumtally Run fails before external execution and records no accepted
+  PLAN-dose provenance
 
 #### Scenario: Sumtally output is stale or replaced
 

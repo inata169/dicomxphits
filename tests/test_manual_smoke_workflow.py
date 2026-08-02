@@ -273,12 +273,12 @@ def create_segment_outputs(workspace: Path, manifest: dict[str, Any]) -> None:
 
 def create_successful_sumtally_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, Path]]:
     workspace, manifest = write_manual_smoke_workspace(tmp_path)
+    create_segment_outputs(workspace, manifest)
     generation = generate_sumtally(
         workspace_root=workspace,
         paths=tool_paths(tmp_path),
         command_argv=["manual-smoke", "generate-sumtally"],
     )
-    create_segment_outputs(workspace, manifest)
     sumtally_output = Path(generation["outputs"]["sumtally_output"])
     phits_out = workspace / "sumtally" / "phits.out"
 
@@ -359,12 +359,15 @@ def test_manual_smoke_happy_path_uses_tmp_path_only(tmp_path):
 
 
 def test_manual_smoke_gate_failure_missing_segment_output_before_sumtally_run(tmp_path):
-    workspace, _manifest = write_manual_smoke_workspace(tmp_path)
+    workspace, manifest = write_manual_smoke_workspace(tmp_path)
+    create_segment_outputs(workspace, manifest)
     generate_sumtally(
         workspace_root=workspace,
         paths=tool_paths(tmp_path),
         command_argv=["manual-smoke", "generate-sumtally"],
     )
+    missing = workspace / str(manifest["segments"][0]["expected_output_path"])
+    missing.unlink()
 
     with pytest.raises(FileNotFoundError, match="Expected segment PHITS output"):
         run_sumtally(

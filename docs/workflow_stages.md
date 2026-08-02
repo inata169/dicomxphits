@@ -143,12 +143,14 @@ Sumtally Generate and Sumtally Run must also contain the same canonical
 segment-manifest SHA-256 as the current workspace and matching SHA-256 values
 for the generated PHITS wrapper and `sumtally.inp`. Sumtally Run executes only
 the recorded wrapper path and fails before PHITS execution if either generated
-input changed. Missing or mismatched evidence fails before RTDOSE conversion.
-The expected Sumtally dose output must be updated by the recorded Run; its
-SHA-256 is verified by RTDOSE Prepare before the IPP title patch, and the
-post-patch SHA-256 is verified by RTDOSE Run. Legacy workspaces regenerate and
-rerun Sumtally using their existing segment PHITS outputs before RTDOSE
-preparation.
+input changed. Generate also records every active segment output and every
+recursively resolved `infl` file consumed by the wrapper; Run revalidates the
+dependency set and digests before PHITS execution. Missing or mismatched
+evidence fails before RTDOSE conversion. The expected Sumtally dose output must
+be updated by the recorded Run; its SHA-256 is verified by RTDOSE Prepare before
+the IPP title patch, and the post-patch SHA-256 is verified by RTDOSE Run.
+Legacy workspaces regenerate and rerun Sumtally using their existing unchanged
+segment PHITS outputs before RTDOSE preparation.
 RTDOSE Prepare also records the generated `phits2dicom.inp` SHA-256; RTDOSE Run
 verifies it immediately before launching the converter. The workspace template,
 CT reference, prepared Sumtally dose, and companion `phits.out` referenced by

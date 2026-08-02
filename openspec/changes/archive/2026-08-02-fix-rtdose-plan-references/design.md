@@ -69,6 +69,13 @@ files immediately before external execution, and carries their digests into
 the execution evidence consumed by RTDOSE. This prevents a custom, copied, or
 edited Sumtally input from inheriting unrelated manifest evidence.
 
+The wrapper is not the complete PHITS execution input by itself. Generate also
+records every active segment output referenced by `sumtally.inp` and recursively
+walks active `infl:{...}` directives from the wrapper, hashing every resolved
+file. Run reconstructs that dependency set and verifies every digest immediately
+before PHITS launch. Its execution summary carries the validated evidence so
+RTDOSE Prepare can require exact Generate/Run agreement.
+
 Run snapshots the expected Sumtally output before and after external execution,
 requires that invocation to update it, and records the resulting SHA-256.
 RTDOSE Prepare verifies the Run digest before applying its required IPP title
