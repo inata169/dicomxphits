@@ -1,8 +1,8 @@
 # Development Progress - 2026-08-02
 
 This dated record summarizes the human-directed work completed or demonstrated
-on 2026-08-02. It distinguishes merged repository baselines, an active pull
-request, and local non-patient workflow evidence. It is not a clinical
+on 2026-08-02. It distinguishes merged repository work from local non-patient
+workflow evidence. It is not a clinical
 validation record, release note, or automatically approved backlog.
 
 ## Repository milestones merged today
@@ -18,7 +18,9 @@ The following public-repository milestones were merged into `main`:
 - pull request [#6](https://github.com/inata169/dicomxphits/pull/6) updated the
   durable project status after the GUI merge; and
 - pull request [#7](https://github.com/inata169/dicomxphits/pull/7) recorded
-  strict validation with the locally installed OpenSpec CLI.
+  strict validation with the locally installed OpenSpec CLI; and
+- pull request [#8](https://github.com/inata169/dicomxphits/pull/8) completed
+  the RTDOSE full-plan provenance and Sumtally handoff corrections.
 
 The guided GUI now presents CT2PHITS, workspace preparation, PHITS segment
 execution, Sumtally, and RTDOSE as separate auditable stages. It suggests case
@@ -50,7 +52,7 @@ recorded in this repository.
 ## Usability and workflow corrections
 
 Hands-on operation exposed several issues that were corrected or incorporated
-into the active work:
+into the merged workflow:
 
 - CT2PHITS launch and long-running state are presented through the GUI instead
   of requiring the user to infer progress from an external directory.
@@ -69,11 +71,12 @@ into the active work:
   `coordinate_corrected_rtdose_output` field instead of leaving the user to
   search the workspace.
 
-## Active RTDOSE provenance correction
+## Merged RTDOSE provenance correction
 
-Pull request [#8](https://github.com/inata169/dicomxphits/pull/8) remains open
-at the time of this record. Its current branch implements the following
-fail-closed corrections:
+Pull request [#8](https://github.com/inata169/dicomxphits/pull/8) passed its
+final Codex review at head `1c6d6ea78c` with no major issues and was squash
+merged into `main` as `854e5e216f501403e725fc39a085abd3ddc2d2e2`. It
+implements the following fail-closed corrections:
 
 - the final dose uses `DoseSummationType = PLAN` and one exact reference to the
   validated frozen RT Plan;
@@ -115,17 +118,21 @@ present under `openspec/specs/`. Their completed change records are under
 `openspec/changes/archive/`; there are no active implementation change
 directories at the time of this record.
 
+Each of the three archived changes was also validated in strict mode through
+an isolated temporary active-change copy. All three passed, and the temporary
+copies were removed after validation.
+
 The latest strict validation reported:
 
 ```text
 3 passed, 0 failed
 ```
 
-## Validation evidence for the active branch
+## Validation evidence for the merged correction
 
 After the final review findings, upstream zero-MU gate inconsistency, and
 Sumtally dependency binding were corrected, the latest development checks for
-the active RTDOSE branch were:
+the merged RTDOSE correction were:
 
 ```text
 Focused Sumtally/RTDOSE dependency tests: 77 passed
@@ -146,14 +153,14 @@ All automated tests used synthetic DICOM and fake or mock external-tool
 runners. They did not rerun the real licensed tools or the human's external
 workflow data.
 
-## Status at handoff
+## End-of-day status
 
-- The merged baseline through pull request #7 is on `main`.
-- Pull request #8 contains the active RTDOSE provenance and Sumtally handoff
-  corrections and still requires a clean final review on its latest commit;
-  merge is authorized only if that exact review reports no new findings.
+- The merged baseline through pull request #8 is on `main` at
+  `854e5e216f501403e725fc39a085abd3ddc2d2e2`.
+- Pull request #8 passed its final exact-head review and is closed as merged.
+- Its remote and local feature branches were deleted after the squash merge.
 - OpenSpec promotion and archive cleanup for the approved RTDOSE contract are
-  complete on the pull-request branch.
+  complete on `main`; no active change directory remains.
 - No release or tag was created; the public tag remains `v1.0.0`.
 - The workplace Dev Container cross-check and optional external GPR comparison
   remain unverified.
