@@ -18,8 +18,10 @@ from dicomxphits.gui import (
     GEOMETRY_MODE_RECTANGULAR_3DCRT,
     GuiConfig,
     StageExecutionGuard,
+    StageResult,
     GuiValidationError,
     _browse_directories,
+    _ct2phits_handoff_from_result,
     _default_values,
     _save_gui_settings,
     browse_initial_directory,
@@ -320,6 +322,33 @@ def test_prepare_stage_allows_new_workspace_and_uses_parent_cwd(tmp_path: Path) 
     assert result.summary == {"stage_status": "success"}
 
 
+def test_ct2phits_stage_uses_existing_rtphits_root_as_cwd(
+    tmp_path: Path,
+) -> None:
+    rtphits_root = write_dir(tmp_path / "rtphits")
+    workspace = rtphits_root / "work" / "new-case"
+    config = replace(
+        base_config(tmp_path),
+        source_rtplan_path=str(write_file(tmp_path / "source-plan.dcm")),
+        ct_dicom_root=str(write_dir(tmp_path / "ct")),
+        rtphits_root=str(rtphits_root),
+        ct2phits_workspace_root=str(workspace),
+    )
+    summary_path = workspace / stage_by_key("run_ct2phits").summary_relative_path
+
+    def fake_runner(cmd, **kwargs):
+        assert cmd[0] == "dicomxphits-run-ct2phits"
+        assert kwargs["cwd"] == rtphits_root.resolve()
+        assert not workspace.parent.exists()
+        workspace.mkdir(parents=True)
+        write_file(summary_path, json.dumps({"status": "completed"}))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    result = run_stage(config, "run_ct2phits", runner=fake_runner)
+
+    assert result.summary == {"status": "completed"}
+
+
 def test_legacy_tool_smoke_mode_fails_before_subprocess(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     config = replace(base_config(tmp_path), geometry_mode="tool_smoke")
@@ -606,6 +635,34 @@ def test_completed_ct2phits_handoff_uses_frozen_documented_paths(
 
     with pytest.raises(GuiValidationError, match="does not report completion"):
         ct2phits_handoff_values(workspace, {"status": "failed"})
+
+
+def test_completed_handoff_is_bound_to_result_summary_workspace(
+    tmp_path: Path,
+) -> None:
+    completed_workspace = write_dir(tmp_path / "completed-workspace")
+    write_file(completed_workspace / "RTPLAN.dcm")
+    write_file(completed_workspace / "CT" / "CT000001.dcm")
+    write_dir(completed_workspace / "DATfiles")
+    result = StageResult(
+        stage_key="run_ct2phits",
+        command=["dicomxphits-run-ct2phits"],
+        return_code=0,
+        summary_path=completed_workspace / "ct2phits_execution_summary.json",
+        summary={"status": "completed"},
+        stdout="",
+        stderr="",
+    )
+
+    handoff = _ct2phits_handoff_from_result(result)
+
+    assert handoff == {
+        "rtplan_path": str((completed_workspace / "RTPLAN.dcm").resolve()),
+        "ct_reference_dicom": str(
+            (completed_workspace / "CT" / "CT000001.dcm").resolve()
+        ),
+        "ct_datfiles_root": str((completed_workspace / "DATfiles").resolve()),
+    }
 
 
 def test_gui_settings_persist_stable_paths_and_independent_browse_history(

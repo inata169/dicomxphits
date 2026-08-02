@@ -461,7 +461,10 @@ def run_stage(
     spec = stage_by_key(stage_key)
     workspace = validate_stage(config, spec, public_tree=public_tree)
     command = build_stage_command(config, spec)
-    cwd = workspace if workspace.exists() else workspace.parent
+    if spec.key == "run_ct2phits":
+        cwd = _resolved_path(config, "rtphits_root")
+    else:
+        cwd = workspace if workspace.exists() else workspace.parent
     result = runner(command, cwd=cwd, capture_output=True, text=True, shell=False)
     summary_path = workspace / spec.summary_relative_path
     return StageResult(
@@ -685,6 +688,10 @@ def ct2phits_handoff_values(
                 "Completed CT2PHITS handoff is missing: " + ", ".join(missing)
             )
     return {key: str(path) for key, path in handoff.items()}
+
+
+def _ct2phits_handoff_from_result(result: StageResult) -> dict[str, str]:
+    return ct2phits_handoff_values(result.summary_path.parent, result.summary)
 
 
 def _stage_status(result: StageResult) -> str:
@@ -1611,10 +1618,7 @@ def _build_gui() -> int:
             return
         if spec.key == "run_ct2phits" and success:
             try:
-                handoff = ct2phits_handoff_values(
-                    Path(values["ct2phits_workspace_root"].get()),
-                    result.summary,
-                )
+                handoff = _ct2phits_handoff_from_result(result)
             except GuiValidationError as exc:
                 finish_stage_error(spec, str(exc), validation=False)
                 return
