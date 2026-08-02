@@ -394,6 +394,37 @@ def test_run_sumtally_rejects_different_sum_input_override(tmp_path):
     assert calls == []
 
 
+def test_run_sumtally_rejects_unchanged_preexisting_output(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    for segment in manifest["segments"]:
+        output = workspace / segment["expected_output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("segment dose", encoding="utf-8")
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+    expected_output.write_text("stale merged dose", encoding="utf-8")
+
+    summary = run_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="no output update",
+            stderr="",
+        ),
+    )
+
+    assert summary["stage_status"] == "failed"
+    assert summary["expected_sumtally_output_updated_by_run"] is False
+    assert summary["expected_sumtally_output_sha256"]
+
+
 def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     workspace, _ = write_workspace(tmp_path)
     generation = generate_sumtally(workspace_root=workspace, paths=paths(), command_argv=["generate"])
@@ -431,6 +462,9 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     assert summary["phits_execution_started"] is True
     assert summary["expected_sumtally_output_exists"] is True
     assert summary["expected_sumtally_output_size"] == len("merged dose")
+    assert summary["expected_sumtally_output_non_empty"] is True
+    assert summary["expected_sumtally_output_updated_by_run"] is True
+    assert len(summary["expected_sumtally_output_sha256"]) == 64
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "sum ok"
     assert Path(summary["stderr_path"]).read_text(encoding="utf-8") == "sum warn"
     assert summary["rt_dose_conversion_hint"]["is_beam_mu_output"] is False

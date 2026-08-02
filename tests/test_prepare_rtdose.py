@@ -223,6 +223,9 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
         "manifest_sha256": bound_manifest_sha256,
         "sum_input_sha256": sum_input_sha256,
         "sumtally_input_sha256": sumtally_input_sha256,
+        "expected_sumtally_output": str(sumtally_output),
+        "expected_sumtally_output_updated_by_run": True,
+        "expected_sumtally_output_sha256": file_sha256(sumtally_output),
         "outputs": {"phits_out": str(phits_out)},
         "input_dose_unit": units,
     }
@@ -233,6 +236,15 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
         "phits_out": phits_out,
         "rtplan": rtplan,
     }
+
+
+def rewrite_sumtally_output_evidence(workspace: Path, output: Path) -> None:
+    execution_path = workspace / "analysis" / "sumtally_execution_summary.json"
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution["expected_sumtally_output"] = str(output)
+    execution["expected_sumtally_output_updated_by_run"] = True
+    execution["expected_sumtally_output_sha256"] = file_sha256(output)
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
 
 
 def rewrite_sumtally_manifest_digests(
@@ -274,6 +286,7 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert summary["input_dose_unit"] == "gy_per_mu"
     assert summary["output_dicom_dose_unit"] == "GY"
     assert summary["factor"] == 1.0
+    assert len(summary["phits_dose_sha256_after_prepare"]) == 64
     assert "Factor 1.0 selected" in summary["factor_selection_reason"]
     assert summary["dose_semantics"]["mode"] == "absolute_public_reference_model"
     assert summary["dose_semantics"]["dicom_dose_units"] == "GY"
@@ -292,6 +305,32 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert summary["path_config"]["phits2dicom_executable_path"] is None
     assert summary["image_position_patient_patch"]["image_position_patient"] == [1.0, 2.0, 3.0]
     assert summary["template_dicom_preflight"]["missing_tag_count"] == 0
+
+
+def test_prepare_rejects_sumtally_output_replaced_after_run(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    files["sumtally_output"].write_text(
+        "unrelated replacement dose",
+        encoding="utf-8",
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="does not match Sumtally Run evidence",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_prepare_rejects_template_missing_phits2dicom_overwrite_tags(tmp_path):
@@ -390,6 +429,7 @@ def test_prepare_patches_workspace_deposit_titles_and_records_file_sizes(tmp_pat
         "  file = dose.out\n",
         encoding="utf-8",
     )
+    rewrite_sumtally_output_evidence(workspace, files["sumtally_output"])
     files["phits_out"].write_text(
         "[ T-Deposit ]\n"
         "  title = Synthetic companion dose\n",
@@ -429,6 +469,7 @@ def test_prepare_rejects_workspace_external_phits_dose_or_out(tmp_path):
     generation = json.loads(generation_path.read_text(encoding="utf-8"))
     generation["outputs"]["sumtally_output"] = str(external_dose)
     generation_path.write_text(json.dumps(generation), encoding="utf-8")
+    rewrite_sumtally_output_evidence(workspace, external_dose)
     template = tmp_path / "template.dcm"
     ct = tmp_path / "ct_reference.dcm"
     write_dicom(template, modality="RTDOSE")
@@ -469,6 +510,7 @@ def test_prepare_patches_only_t_deposit_titles(tmp_path):
         "  title = Dose title changes\n",
         encoding="utf-8",
     )
+    rewrite_sumtally_output_evidence(workspace, files["sumtally_output"])
     files["phits_out"].write_text(
         "[ T-Track ]\n"
         "  title = Companion track title\n",
@@ -505,6 +547,7 @@ def test_prepare_skips_matching_existing_ipp_without_rewrite(tmp_path):
         "  title = (ImagePositionPatient  1.00000  2.00000  3.00000 mm)\n",
         encoding="utf-8",
     )
+    rewrite_sumtally_output_evidence(workspace, files["sumtally_output"])
     files["phits_out"].write_text(
         "[ T-Deposit ]\n"
         "  title = (ImagePositionPatient  1.00000  2.00000  3.00000 mm)\n",
@@ -545,6 +588,7 @@ def test_prepare_accepts_existing_ipp_with_title_precision_rounding(tmp_path):
         "  title = (ImagePositionPatient  1.12346  2.12346  3.12346 mm)\n",
         encoding="utf-8",
     )
+    rewrite_sumtally_output_evidence(workspace, files["sumtally_output"])
     files["phits_out"].write_text(
         "[ T-Deposit ]\n"
         "  title = (ImagePositionPatient  1.12346  2.12346  3.12346 mm)\n",
@@ -582,6 +626,7 @@ def test_prepare_rejects_mismatched_existing_ipp_without_partial_patch(tmp_path)
         "  title = Missing IPP should not be patched if companion fails\n",
         encoding="utf-8",
     )
+    rewrite_sumtally_output_evidence(workspace, files["sumtally_output"])
     files["phits_out"].write_text(
         "[ T-Deposit ]\n"
         "  title = (ImagePositionPatient  9.00000  9.00000  9.00000 mm)\n",
@@ -619,6 +664,7 @@ def test_prepare_rejects_malformed_existing_ipp(tmp_path):
         "  title = (ImagePositionPatient broken mm)\n",
         encoding="utf-8",
     )
+    rewrite_sumtally_output_evidence(workspace, files["sumtally_output"])
     template = tmp_path / "template.dcm"
     ct = tmp_path / "ct_reference.dcm"
     write_dicom(template, modality="RTDOSE")
@@ -919,6 +965,43 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert float(corrected.DoseGridScaling) == 0.125
     assert summary["dose_semantics"]["absolute_calibration_approved"] is True
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
+
+
+def test_run_rejects_phits_dose_changed_after_prepare(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    files["sumtally_output"].write_text(
+        "changed after RTDOSE Prepare",
+        encoding="utf-8",
+    )
+    calls = []
+
+    with pytest.raises(
+        ValueError,
+        match="changed after RTDOSE Prepare",
+    ):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: calls.append(cmd),
+        )
+
+    assert calls == []
 
 
 def test_prepare_rejects_frozen_plan_uid_mismatch(tmp_path):

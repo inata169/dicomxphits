@@ -75,3 +75,14 @@
   Focused Sumtally/RTDOSE tests passed (50), the full public suite passed (482),
   compilation succeeded, the public-tree audit passed (97 tracked files), and
   strict OpenSpec validation passed (3 specifications).
+
+## 7. Approved Sumtally Output Provenance Correction
+
+- [x] 7.1 Require Sumtally Run to update its expected output and record the
+  resulting SHA-256.
+- [x] 7.2 Verify the Run output digest at RTDOSE Prepare and the post-Prepare
+  digest at RTDOSE Run.
+- [x] 7.3 Add stale/replaced-output regressions and rerun required validation.
+  Focused Sumtally/RTDOSE/manual-smoke tests passed (58), the full public suite
+  passed (485), compilation succeeded, the public-tree audit passed (97 tracked
+  files), and strict OpenSpec validation passed (3 specifications).

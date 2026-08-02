@@ -336,9 +336,12 @@ manifest and the SHA-256 values of the generated PHITS wrapper and
 `sumtally.inp`. Sumtally Run rejects a `--sum-input` override unless it resolves
 to the wrapper recorded by Generate, and rejects either generated input when
 its content has changed. RTDOSE Prepare requires the Generate and Run evidence
-to match. For a workspace created before this evidence was added, rerun
-Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and RTDOSE
-Run. Existing segment PHITS outputs remain reusable.
+to match. Sumtally Run also requires the expected dose output to be updated by
+that invocation, records its SHA-256, and RTDOSE Prepare verifies that digest
+before applying its documented ImagePositionPatient title patch. RTDOSE Run
+then verifies the prepared dose digest. For a workspace created before this
+evidence was added, rerun Sumtally Generate and Sumtally Run before rerunning
+RTDOSE Prepare and RTDOSE Run. Existing segment PHITS outputs remain reusable.
 
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
 slash-normalized paths. The approved public-model `totfact_per_MU` has already

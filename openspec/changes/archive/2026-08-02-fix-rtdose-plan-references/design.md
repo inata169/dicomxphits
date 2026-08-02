@@ -69,6 +69,12 @@ files immediately before external execution, and carries their digests into
 the execution evidence consumed by RTDOSE. This prevents a custom, copied, or
 edited Sumtally input from inheriting unrelated manifest evidence.
 
+Run snapshots the expected Sumtally output before and after external execution,
+requires that invocation to update it, and records the resulting SHA-256.
+RTDOSE Prepare verifies the Run digest before applying its required IPP title
+patch, then records the patched digest for RTDOSE Run to verify immediately
+before conversion.
+
 When that gate passes, the all-active-segments result represents the entire RT
 Plan delivery and will use `DoseSummationType = PLAN`. This change does not add
 support for generating a BEAM or FRACTION dose.

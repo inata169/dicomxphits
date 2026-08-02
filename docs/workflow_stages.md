@@ -134,8 +134,11 @@ segment-manifest SHA-256 as the current workspace and matching SHA-256 values
 for the generated PHITS wrapper and `sumtally.inp`. Sumtally Run executes only
 the recorded wrapper path and fails before PHITS execution if either generated
 input changed. Missing or mismatched evidence fails before RTDOSE conversion.
-Legacy workspaces regenerate and rerun Sumtally using their existing segment
-PHITS outputs before RTDOSE preparation.
+The expected Sumtally dose output must be updated by the recorded Run; its
+SHA-256 is verified by RTDOSE Prepare before the IPP title patch, and the
+post-patch SHA-256 is verified by RTDOSE Run. Legacy workspaces regenerate and
+rerun Sumtally using their existing segment PHITS outputs before RTDOSE
+preparation.
 
 The template DICOM must be a phits2dicom-compatible RTDOSE base template with
 the overwrite tags required by phits2dicom already present. The public tree

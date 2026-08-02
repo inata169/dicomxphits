@@ -420,6 +420,17 @@ def run_phits_sumtally(
     return result
 
 
+def sumtally_output_snapshot(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    stat = path.stat()
+    return {
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "sha256": file_sha256(path),
+    }
+
+
 def run_sumtally(
     *,
     workspace_root: Path,
@@ -515,7 +526,11 @@ def run_sumtally(
                 "Generated sumtally.inp changed after Sumtally Generate; "
                 "rerun Sumtally Generate"
             )
-        expected_output = Path(str(outputs["sumtally_output"]))
+        expected_output = resolve_workspace_path(
+            workspace_root,
+            str(outputs["sumtally_output"]),
+        ).resolve()
+        output_before = sumtally_output_snapshot(expected_output)
         stdout_path = workspace_root / "sumtally" / "sumtally_stdout.txt"
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
 
@@ -527,12 +542,20 @@ def run_sumtally(
             stderr_path=stderr_path,
             runner=runner,
         )
-        output_exists = expected_output.is_file()
-        output_size = expected_output.stat().st_size if output_exists else None
+        output_after = sumtally_output_snapshot(expected_output)
+        output_exists = output_after is not None
+        output_size = output_after["size"] if output_after is not None else None
+        output_non_empty = output_size is not None and output_size > 0
+        output_sha256 = output_after["sha256"] if output_after is not None else None
+        output_updated = output_after is not None and output_after != output_before
         summary = {
             "schema_version": "dicomxphits_public_sumtally_execution_v1",
             "stage": "run_sumtally",
-            "stage_status": "success" if result.returncode == 0 and output_exists else "failed",
+            "stage_status": (
+                "success"
+                if result.returncode == 0 and output_updated and output_non_empty
+                else "failed"
+            ),
             "workspace_root": str(workspace_root),
             "command": {
                 "argv": command_argv or sys.argv,
@@ -548,6 +571,11 @@ def run_sumtally(
             "expected_sumtally_output": str(expected_output),
             "expected_sumtally_output_exists": output_exists,
             "expected_sumtally_output_size": output_size,
+            "expected_sumtally_output_non_empty": output_non_empty,
+            "expected_sumtally_output_sha256": output_sha256,
+            "expected_sumtally_output_updated_by_run": output_updated,
+            "expected_sumtally_output_before_run": output_before,
+            "expected_sumtally_output_after_run": output_after,
             "sumtally_scope": generation_summary.get("sumtally_scope"),
             "sumtally_mode": generation_summary.get("sumtally_mode"),
             "weight_field": generation_summary.get("weight_field"),
