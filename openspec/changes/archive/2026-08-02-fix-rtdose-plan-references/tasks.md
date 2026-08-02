@@ -105,6 +105,9 @@
 - [x] 9.2 Hash `phits2dicom.inp` at RTDOSE Prepare and verify it before converter
   launch in RTDOSE Run.
 - [x] 9.3 Add same-identity plan and converter-input mutation regressions and
-  rerun required validation. Focused tests passed (49), the full public suite
-  passed (491), compilation succeeded, the public-tree audit passed (97 tracked
-  files), and strict OpenSpec validation passed (3 specifications).
+  rerun required validation. Focused tests passed (49); the shared-worktree
+  public suite passed (491), compilation succeeded, the public-tree audit
+  passed (97 tracked files), and strict OpenSpec validation passed (3
+  specifications). An additional isolated-commit run collected 490 tests and
+  passed 489; the unchanged Windows child-process timeout test failed twice, so
+  no out-of-scope process-management change was made.
