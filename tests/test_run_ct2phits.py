@@ -523,6 +523,30 @@ def test_default_runner_decodes_process_output_with_replacement(
     assert completed.stderr == "err\ufffd"
 
 
+def test_default_runner_closes_stdin_for_noninteractive_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_popen = subprocess.Popen
+    observed_stdin: list[object] = []
+
+    def recording_popen(*args, **kwargs):
+        observed_stdin.append(kwargs.get("stdin"))
+        return original_popen(*args, **kwargs)
+
+    monkeypatch.setattr(run_ct2phits_module.subprocess, "Popen", recording_popen)
+
+    completed = run_ct2phits_module._default_runner(
+        [sys.executable, "-c", "print('completed')"],
+        tmp_path,
+        5.0,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.splitlines() == ["completed"]
+    assert observed_stdin == [subprocess.DEVNULL]
+
+
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [

@@ -17,13 +17,25 @@ import dicomxphits.gui as gui_module
 from dicomxphits.gui import (
     GEOMETRY_MODE_RECTANGULAR_3DCRT,
     GuiConfig,
+    StageExecutionGuard,
+    StageResult,
     GuiValidationError,
+    _browse_directories,
+    _ct2phits_handoff_from_result,
     _default_values,
+    _read_gui_settings,
+    _save_gui_settings,
+    browse_initial_directory,
     build_stage_command,
+    ct2phits_handoff_values,
     gui_defaults_path,
     geometry_mode_guidance,
     run_stage,
     stage_by_key,
+    suggest_case_paths,
+    validate_prepare_handoff_selection,
+    validate_stage,
+    workspace_path_from_parent,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
 
@@ -312,6 +324,33 @@ def test_prepare_stage_allows_new_workspace_and_uses_parent_cwd(tmp_path: Path) 
     assert result.summary == {"stage_status": "success"}
 
 
+def test_ct2phits_stage_uses_existing_rtphits_root_as_cwd(
+    tmp_path: Path,
+) -> None:
+    rtphits_root = write_dir(tmp_path / "rtphits")
+    workspace = rtphits_root / "work" / "new-case"
+    config = replace(
+        base_config(tmp_path),
+        source_rtplan_path=str(write_file(tmp_path / "source-plan.dcm")),
+        ct_dicom_root=str(write_dir(tmp_path / "ct")),
+        rtphits_root=str(rtphits_root),
+        ct2phits_workspace_root=str(workspace),
+    )
+    summary_path = workspace / stage_by_key("run_ct2phits").summary_relative_path
+
+    def fake_runner(cmd, **kwargs):
+        assert cmd[0] == "dicomxphits-run-ct2phits"
+        assert kwargs["cwd"] == rtphits_root.resolve()
+        assert not workspace.parent.exists()
+        workspace.mkdir(parents=True)
+        write_file(summary_path, json.dumps({"status": "completed"}))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    result = run_stage(config, "run_ct2phits", runner=fake_runner)
+
+    assert result.summary == {"status": "completed"}
+
+
 def test_legacy_tool_smoke_mode_fails_before_subprocess(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     config = replace(base_config(tmp_path), geometry_mode="tool_smoke")
@@ -492,3 +531,270 @@ def test_launcher_does_not_install_dependencies() -> None:
     assert "-m dicomxphits.gui" in text
     assert "$env:path" in text
     assert ".venv\\scripts" in text
+
+
+def test_ct2phits_is_the_first_guided_gui_stage(tmp_path: Path) -> None:
+    rtphits_root = write_dir(tmp_path / "rtphits")
+    config = replace(
+        base_config(tmp_path),
+        source_rtplan_path=str(write_file(tmp_path / "input" / "source-plan.dcm")),
+        ct_dicom_root=str(write_dir(tmp_path / "input" / "ct")),
+        rtphits_root=str(rtphits_root),
+        ct2phits_workspace_root=str(rtphits_root / "work" / "new-case"),
+        ct_series_instance_uid="1.2.3.4",
+        ct2phits_timeout_seconds=125.0,
+    )
+    spec = stage_by_key("run_ct2phits")
+
+    workspace = validate_stage(config, spec)
+    command = build_stage_command(config, spec)
+
+    assert spec.workspace_field == "ct2phits_workspace_root"
+    assert workspace == (rtphits_root / "work" / "new-case").resolve()
+    assert command[0] == "dicomxphits-run-ct2phits"
+    assert command[command.index("--ct-dicom-root") + 1] == str(
+        Path(config.ct_dicom_root).resolve()
+    )
+    assert command[command.index("--rtplan") + 1] == str(
+        Path(config.source_rtplan_path).resolve()
+    )
+    assert command[command.index("--rtphits-root") + 1] == str(
+        rtphits_root.resolve()
+    )
+    assert command[command.index("--ct-series-instance-uid") + 1] == "1.2.3.4"
+    assert command[command.index("--timeout-seconds") + 1] == "125"
+    assert "--confirm-non-patient-phantom" in command
+
+
+def test_ct2phits_gui_stage_keeps_explicit_confirmation_and_new_workspace_gate(
+    tmp_path: Path,
+) -> None:
+    rtphits_root = write_dir(tmp_path / "rtphits")
+    workspace = write_dir(rtphits_root / "work" / "existing-case")
+    config = replace(
+        base_config(tmp_path),
+        source_rtplan_path=str(write_file(tmp_path / "source-plan.dcm")),
+        ct_dicom_root=str(write_dir(tmp_path / "ct")),
+        rtphits_root=str(rtphits_root),
+        ct2phits_workspace_root=str(workspace),
+        confirmed_non_patient_phantom=False,
+        allow_overwrite=True,
+    )
+    spec = stage_by_key("run_ct2phits")
+
+    with pytest.raises(GuiValidationError, match="non-patient phantom"):
+        validate_stage(config, spec)
+
+    with pytest.raises(GuiValidationError, match="must be new"):
+        validate_stage(
+            replace(config, confirmed_non_patient_phantom=True),
+            spec,
+        )
+
+
+def test_rtplan_path_suggestions_are_visible_derivations_only(tmp_path: Path) -> None:
+    plan = tmp_path / "selected" / "RT PLAN 01.dcm"
+    rtphits_root = tmp_path / "rtphits"
+    public_parent = tmp_path / "deliverables"
+
+    suggestions = suggest_case_paths(
+        plan,
+        rtphits_root=rtphits_root,
+        workspace_parent=public_parent,
+    )
+
+    assert suggestions == {
+        "ct_dicom_root": str(plan.parent),
+        "ct2phits_workspace_root": str(
+            rtphits_root / "work" / "RT-PLAN-01-ct2phits"
+        ),
+        "workspace_root": str(public_parent / "RT-PLAN-01-3dcrt"),
+    }
+    assert workspace_path_from_parent(
+        public_parent,
+        plan,
+        "workspace_root",
+    ) == public_parent / "RT-PLAN-01-3dcrt"
+
+
+def test_completed_ct2phits_handoff_uses_frozen_documented_paths(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "ct2phits-workspace")
+    write_file(workspace / "RTPLAN.dcm")
+    write_file(workspace / "CT" / "CT000001.dcm")
+    write_dir(workspace / "DATfiles")
+
+    handoff = ct2phits_handoff_values(workspace, {"status": "completed"})
+
+    assert handoff == {
+        "rtplan_path": str((workspace / "RTPLAN.dcm").resolve()),
+        "ct_reference_dicom": str(
+            (workspace / "CT" / "CT000001.dcm").resolve()
+        ),
+        "ct_datfiles_root": str((workspace / "DATfiles").resolve()),
+    }
+
+    with pytest.raises(GuiValidationError, match="does not report completion"):
+        ct2phits_handoff_values(workspace, {"status": "failed"})
+
+
+def test_completed_handoff_is_bound_to_result_summary_workspace(
+    tmp_path: Path,
+) -> None:
+    completed_workspace = write_dir(tmp_path / "completed-workspace")
+    write_file(completed_workspace / "RTPLAN.dcm")
+    write_file(completed_workspace / "CT" / "CT000001.dcm")
+    write_dir(completed_workspace / "DATfiles")
+    result = StageResult(
+        stage_key="run_ct2phits",
+        command=["dicomxphits-run-ct2phits"],
+        return_code=0,
+        summary_path=completed_workspace / "ct2phits_execution_summary.json",
+        summary={"status": "completed"},
+        stdout="",
+        stderr="",
+    )
+
+    handoff = _ct2phits_handoff_from_result(result)
+
+    assert handoff == {
+        "rtplan_path": str((completed_workspace / "RTPLAN.dcm").resolve()),
+        "ct_reference_dicom": str(
+            (completed_workspace / "CT" / "CT000001.dcm").resolve()
+        ),
+        "ct_datfiles_root": str((completed_workspace / "DATfiles").resolve()),
+    }
+
+
+def test_saved_legacy_handoff_paths_do_not_authorize_prepare(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "rtplan_path": "stale-RTPLAN.dcm",
+                "ct_reference_dicom": "stale-CT000001.dcm",
+                "ct_datfiles_root": "stale-DATfiles",
+            }
+        ),
+        encoding="utf-8",
+    )
+    defaults = _default_values(defaults_path)
+
+    assert defaults["rtplan_path"] == "stale-RTPLAN.dcm"
+    assert defaults["ct_reference_dicom"] == "stale-CT000001.dcm"
+    assert defaults["ct_datfiles_root"] == "stale-DATfiles"
+    with pytest.raises(GuiValidationError, match="Run CT2PHITS successfully"):
+        validate_prepare_handoff_selection(
+            manual_handoff_selected=False,
+            verified_handoff_available=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("manual_handoff_selected", "verified_handoff_available"),
+    [(True, False), (False, True)],
+)
+def test_prepare_accepts_explicit_manual_or_verified_handoff(
+    manual_handoff_selected: bool,
+    verified_handoff_available: bool,
+) -> None:
+    validate_prepare_handoff_selection(
+        manual_handoff_selected=manual_handoff_selected,
+        verified_handoff_available=verified_handoff_available,
+    )
+
+
+def test_gui_settings_persist_stable_paths_and_independent_browse_history(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    plan_dir = write_dir(tmp_path / "plan-browser")
+    tool_dir = write_dir(tmp_path / "tool-browser")
+    values = {
+        "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
+        "rtphits_root": "remembered-rtphits",
+        "phits_root_folder": "remembered-phits",
+        "phits_executable_path": "remembered-phits.exe",
+        "phits2dicom_executable_path": "remembered-phits2dicom.exe",
+        "rtdose_template_dicom": "remembered-template.dcm",
+        "machine_config_path": "remembered-machine.json",
+        "source_rtplan_path": "must-not-be-persisted.dcm",
+        "confirmed_non_patient_phantom": "true",
+        "allow_overwrite": "true",
+    }
+    history = {
+        "source_rtplan_path": str(plan_dir),
+        "phits_executable_path": str(tool_dir),
+    }
+
+    _save_gui_settings(values, history, defaults_path)
+    saved = json.loads(defaults_path.read_text(encoding="utf-8"))
+
+    assert saved["settings_version"] == 2
+    assert saved["rtphits_root"] == "remembered-rtphits"
+    assert "source_rtplan_path" not in saved
+    assert "confirmed_non_patient_phantom" not in saved
+    assert "allow_overwrite" not in saved
+    assert _browse_directories(defaults_path) == history
+    assert browse_initial_directory(
+        "source_rtplan_path",
+        {},
+        _browse_directories(defaults_path),
+    ) == plan_dir
+    assert browse_initial_directory(
+        "phits_executable_path",
+        {},
+        _browse_directories(defaults_path),
+    ) == tool_dir
+    assert browse_initial_directory(
+        "ct2phits_workspace_root",
+        {"ct2phits_workspace_root": str(tmp_path / "missing" / "new-case")},
+        {},
+    ) == tmp_path
+    assert _default_values(defaults_path)["phits_root_folder"] == "remembered-phits"
+
+
+def test_gui_settings_invalid_encoding_falls_back_safely(tmp_path: Path) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_bytes(b"\x80\x81\x82")
+
+    assert _read_gui_settings(defaults_path) == {}
+    assert _default_values(defaults_path) == gui_module._base_default_values()
+
+
+def test_gui_settings_failed_replace_removes_ignored_temporary_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults_path = tmp_path / "config" / "dicomxphits.gui.local.json"
+    temporary_path = defaults_path.with_name(
+        defaults_path.stem + ".tmp.local.json"
+    )
+
+    def fail_replace(_source: Path, _target: Path) -> Path:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="simulated replace failure"):
+        _save_gui_settings({}, {}, defaults_path)
+
+    assert temporary_path.name.endswith(".local.json")
+    assert not temporary_path.exists()
+
+
+def test_gui_stage_execution_guard_prevents_overlapping_stages() -> None:
+    guard = StageExecutionGuard()
+
+    guard.begin("run_ct2phits")
+
+    with pytest.raises(GuiValidationError, match="already running"):
+        guard.begin("prepare_workspace")
+
+    assert guard.active_stage == "run_ct2phits"
+    guard.finish()
+    guard.begin("prepare_workspace")
+    assert guard.active_stage == "prepare_workspace"

@@ -191,6 +191,31 @@ dicomxphits-prepare-3dcrt-workspace `
 Neither adapter runs PHITS, Sumtally, phits2dicom, or GPR as part of this
 frontend stage.
 
+## Guided Desktop GUI
+
+On Windows, launch the guided Tkinter interface from the repository-local
+virtual environment:
+
+```powershell
+.\launchers\run_gui_venv.ps1
+```
+
+The GUI presents CT2PHITS as the first stage, then keeps workspace preparation,
+PHITS, Sumtally, and RTDOSE conversion as separate gated actions. After a
+successful CT2PHITS run, it automatically passes the frozen `RTPLAN.dcm`,
+`CT/CT000001.dcm`, and `DATfiles` paths to workspace preparation. An existing
+validated handoff can still be entered from the advanced workspace controls.
+
+Selecting an RT Plan may suggest its parent as the CT folder and may propose
+new workspace names from roots already selected by the user. These suggestions
+remain editable. The GUI does not recursively scan for DICOM, discover an
+RT-PHITS or PHITS installation, or bypass the explicit non-patient confirmation.
+
+Stable local tool paths and each field's most recent Browse directory are saved
+to the ignored `config/dicomxphits.gui.local.json` file. The non-patient
+confirmation and overwrite permission are never persisted and always start
+cleared. The tracked repository does not contain populated local paths.
+
 ## Directory Layout
 
 ```text
