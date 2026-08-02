@@ -130,9 +130,12 @@ before use; source files are not modified in place. The RT Plan SOP Instance
 UID, Frame of Reference, workflow mode, treatment-beam coverage, and MU totals
 must match the accepted segment manifest before conversion can proceed.
 Sumtally Generate and Sumtally Run must also contain the same canonical
-segment-manifest SHA-256 as the current workspace. A missing or mismatched
-digest fails before RTDOSE conversion. Legacy workspaces regenerate and rerun
-Sumtally using their existing segment PHITS outputs before RTDOSE preparation.
+segment-manifest SHA-256 as the current workspace and matching SHA-256 values
+for the generated PHITS wrapper and `sumtally.inp`. Sumtally Run executes only
+the recorded wrapper path and fails before PHITS execution if either generated
+input changed. Missing or mismatched evidence fails before RTDOSE conversion.
+Legacy workspaces regenerate and rerun Sumtally using their existing segment
+PHITS outputs before RTDOSE preparation.
 
 The template DICOM must be a phits2dicom-compatible RTDOSE base template with
 the overwrite tags required by phits2dicom already present. The public tree

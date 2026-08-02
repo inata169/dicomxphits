@@ -153,9 +153,11 @@ result is the path recorded as `coordinate_corrected_rtdose_output` in
 `analysis/rtdose_conversion_execution_summary.json`, normally the
 `sumtally/*_all_active_segments_totalfield.fixed.dcm` file. RTDOSE Run reports
 failure if this final file is not a PLAN dose referencing that frozen RT Plan.
-RTDOSE preparation also requires matching `manifest_sha256` evidence from
-Sumtally Generate and Sumtally Run. If either summary predates that field, rerun
-both Sumtally stages using the existing segment outputs first.
+RTDOSE preparation also requires matching manifest and generated-input SHA-256
+evidence from Sumtally Generate and Sumtally Run. Sumtally Run accepts only the
+wrapper path recorded by Generate and rejects a changed wrapper or
+`sumtally.inp`. If either summary predates this evidence, rerun both Sumtally
+stages using the existing segment outputs first.
 
 Optionally execute the external GPR comparison:
 

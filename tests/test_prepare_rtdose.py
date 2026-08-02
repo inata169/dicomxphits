@@ -25,7 +25,7 @@ from dicomxphits.prepare_rtdose import (
     run_rtdose,
     select_ct_reference,
 )
-from dicomxphits.sumtally_inputs import manifest_sha256
+from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
 
 def required_tag_value(tag: tuple[int, int], vr: str):
@@ -194,12 +194,24 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     sumtally_output = workspace / "sumtally" / "deposit-target-3D_sum_all_active_segments_totalfield.out"
     sumtally_output.parent.mkdir(parents=True)
     sumtally_output.write_text("merged dose", encoding="utf-8")
+    sum_input = workspace / "sumtally" / "segment_sum.inp"
+    sum_input.write_text("generated wrapper", encoding="utf-8")
+    sumtally_input = workspace / "sumtally" / "sumtally.inp"
+    sumtally_input.write_text("generated aggregation input", encoding="utf-8")
+    sum_input_sha256 = file_sha256(sum_input)
+    sumtally_input_sha256 = file_sha256(sumtally_input)
     phits_out = workspace / "sumtally" / "phits.out"
     phits_out.write_text("phits companion", encoding="utf-8")
     generation = {
         "stage_status": "success",
         "manifest_sha256": bound_manifest_sha256,
-        "outputs": {"sumtally_output": str(sumtally_output)},
+        "sum_input_sha256": sum_input_sha256,
+        "sumtally_input_sha256": sumtally_input_sha256,
+        "outputs": {
+            "sumtally_output": str(sumtally_output),
+            "sum_input": str(sum_input),
+            "sumtally_input": str(sumtally_input),
+        },
         "rt_dose_conversion_hint": {
             "input_dose_state": "sumtally_mu_weighted",
             "sumtally_normalization": "beamMU" if beam_mu else "all_segments_totalfield_segment_mu",
@@ -209,6 +221,8 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     execution = {
         "stage_status": "success",
         "manifest_sha256": bound_manifest_sha256,
+        "sum_input_sha256": sum_input_sha256,
+        "sumtally_input_sha256": sumtally_input_sha256,
         "outputs": {"phits_out": str(phits_out)},
         "input_dose_unit": units,
     }
@@ -986,6 +1000,32 @@ def test_prepare_rejects_manifest_changed_after_sumtally_run(tmp_path):
     with pytest.raises(
         ValueError,
         match="does not match Sumtally Generate evidence",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+
+def test_prepare_rejects_sumtally_run_input_digest_mismatch(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    execution_path = workspace / "analysis" / "sumtally_execution_summary.json"
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution["sum_input_sha256"] = "0" * 64
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="Run input evidence does not match Sumtally Generate",
     ):
         prepare_rtdose(
             workspace_root=workspace,

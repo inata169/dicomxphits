@@ -63,6 +63,12 @@ calculated from one manifest from being relabeled for a later replacement
 manifest. A legacy workspace without this evidence regenerates and reruns only
 Sumtally before RTDOSE conversion; its segment PHITS outputs remain reusable.
 
+Generate also records SHA-256 values for the generated PHITS wrapper and
+`sumtally.inp`. Run accepts only the recorded wrapper path, validates both
+files immediately before external execution, and carries their digests into
+the execution evidence consumed by RTDOSE. This prevents a custom, copied, or
+edited Sumtally input from inheriting unrelated manifest evidence.
+
 When that gate passes, the all-active-segments result represents the entire RT
 Plan delivery and will use `DoseSummationType = PLAN`. This change does not add
 support for generating a BEAM or FRACTION dose.

@@ -332,8 +332,11 @@ complete treatment-beam coverage against `segments/segment_manifest.json`.
 Template plan references are not accepted as provenance.
 
 Sumtally Generate and Sumtally Run record the canonical SHA-256 of that segment
-manifest. RTDOSE Prepare requires both recorded digests to match the current
-manifest. For a workspace created before this evidence was added, rerun
+manifest and the SHA-256 values of the generated PHITS wrapper and
+`sumtally.inp`. Sumtally Run rejects a `--sum-input` override unless it resolves
+to the wrapper recorded by Generate, and rejects either generated input when
+its content has changed. RTDOSE Prepare requires the Generate and Run evidence
+to match. For a workspace created before this evidence was added, rerun
 Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and RTDOSE
 Run. Existing segment PHITS outputs remain reusable.
 

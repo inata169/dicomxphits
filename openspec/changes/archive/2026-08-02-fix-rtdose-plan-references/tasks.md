@@ -64,3 +64,14 @@
 - [x] 5.3 Add focused regression tests and rerun all required validation.
   Focused tests passed (100), the full public suite passed (478), compilation
   succeeded, and strict OpenSpec validation passed (3 specifications).
+
+## 6. Approved Review Blocker Correction
+
+- [x] 6.1 Bind Sumtally execution evidence to the exact generated wrapper path
+  and to SHA-256 values for the wrapper and `sumtally.inp`.
+- [x] 6.2 Reject custom or edited Sumtally inputs before external execution and
+  require matching Generate/Run input evidence during RTDOSE preparation.
+- [x] 6.3 Add focused regressions and rerun all required validation.
+  Focused Sumtally/RTDOSE tests passed (50), the full public suite passed (482),
+  compilation succeeded, the public-tree audit passed (97 tracked files), and
+  strict OpenSpec validation passed (3 specifications).

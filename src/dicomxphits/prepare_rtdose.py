@@ -214,11 +214,27 @@ def validate_sumtally_manifest_binding(
             "Sumtally Run evidence does not match Sumtally Generate; "
             "rerun Sumtally Run"
         )
+    input_digests: dict[str, str] = {}
+    for field in ("sum_input_sha256", "sumtally_input_sha256"):
+        generation_input_sha256 = str(generation.get(field) or "")
+        execution_input_sha256 = str(execution.get(field) or "")
+        if not generation_input_sha256 or not execution_input_sha256:
+            raise ValueError(
+                "Sumtally input digest evidence is missing; rerun Sumtally "
+                "Generate and Sumtally Run"
+            )
+        if execution_input_sha256 != generation_input_sha256:
+            raise ValueError(
+                "Sumtally Run input evidence does not match Sumtally Generate; "
+                "rerun Sumtally Run"
+            )
+        input_digests[field] = generation_input_sha256
     return {
         "manifest_path": str(manifest_path),
         "manifest_sha256": current_sha256,
         "generation_manifest_sha256": generation_sha256,
         "execution_manifest_sha256": execution_sha256,
+        **input_digests,
         "validated": True,
     }
 

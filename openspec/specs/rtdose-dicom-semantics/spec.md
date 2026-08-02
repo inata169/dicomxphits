@@ -11,9 +11,11 @@ Sumtally result covers the complete accepted `full_plan` delivery. The adapter
 MUST fail closed before accepting an RT Dose when the plan identity, workflow
 mode, treatment-beam coverage, or existing strict manifest evidence is missing,
 ambiguous, or inconsistent.
-The adapter SHALL also require the canonical segment-manifest SHA-256 recorded
-by Sumtally Generate and Sumtally Run to match the current manifest before it
-accepts PLAN semantics.
+The adapter SHALL also require the canonical segment-manifest SHA-256 and the
+SHA-256 values of the generated Sumtally wrapper and `sumtally.inp` recorded by
+Sumtally Generate and Sumtally Run to match before it accepts PLAN semantics.
+Sumtally Run SHALL execute only the wrapper path recorded by Sumtally Generate
+and SHALL fail before external execution when either generated input changed.
 
 #### Scenario: Complete accepted plan delivery
 
@@ -34,6 +36,14 @@ accepts PLAN semantics.
   by Sumtally Generate or Sumtally Run
 - **THEN** RTDOSE preparation fails and requires Sumtally inputs and execution
   to be regenerated before PLAN semantics can be accepted
+
+#### Scenario: Generated Sumtally input changed or replaced
+
+- **WHEN** the requested Sumtally wrapper is not the path recorded by Generate,
+  or the recorded wrapper or `sumtally.inp` content no longer matches its
+  generated SHA-256
+- **THEN** Sumtally Run fails before external execution and no execution digest
+  is accepted as PLAN-dose provenance
 
 ### Requirement: Authoritative Frozen RT Plan Reference
 

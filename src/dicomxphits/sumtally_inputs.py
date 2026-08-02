@@ -11,6 +11,16 @@ from typing import Any
 TARGET_TALLY_PATTERNS = ["deposit-target-3D", "deposit_target"]
 
 
+def file_sha256(path: Path) -> str:
+    """Return the SHA-256 digest of one generated Sumtally input file."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def manifest_sha256(manifest: dict[str, Any]) -> str:
     """Return a stable digest that binds Sumtally evidence to one manifest."""
 

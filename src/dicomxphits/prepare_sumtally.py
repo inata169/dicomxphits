@@ -21,6 +21,7 @@ from dicomxphits.prepare_3dcrt_workspace import (
 from dicomxphits.sumtally_inputs import (
     TARGET_TALLY_PATTERNS,
     build_sumtally,
+    file_sha256,
     generate_sum_inp,
     manifest_sha256,
     write_libpath_file,
@@ -320,6 +321,8 @@ def generate_sumtally(
             sum_input_path,
             sumtally_filename=sumtally_path.name,
         )
+        sum_input_sha256 = file_sha256(sum_input_path)
+        sumtally_input_sha256 = file_sha256(sumtally_path)
 
         summary = {
             "schema_version": "dicomxphits_public_sumtally_generation_v1",
@@ -337,6 +340,8 @@ def generate_sumtally(
             "strict_gate": strict_gate,
             "manifest_path": str(manifest_path),
             "manifest_sha256": bound_manifest_sha256,
+            "sum_input_sha256": sum_input_sha256,
+            "sumtally_input_sha256": sumtally_input_sha256,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,
                 "phits_executable_path": paths.phits_executable_path,
@@ -449,14 +454,68 @@ def run_sumtally(
                 "Segment manifest changed after Sumtally Generate; "
                 "rerun Sumtally Generate"
             )
-        selected_sum_input = (
+        outputs = generation_summary.get("outputs")
+        if not isinstance(outputs, dict):
+            raise ValueError(
+                "Sumtally generation summary is missing generated input paths; "
+                "rerun Sumtally Generate"
+            )
+        recorded_sum_input_value = str(outputs.get("sum_input") or "")
+        recorded_sumtally_input_value = str(outputs.get("sumtally_input") or "")
+        if not recorded_sum_input_value or not recorded_sumtally_input_value:
+            raise ValueError(
+                "Sumtally generation summary is missing generated input paths; "
+                "rerun Sumtally Generate"
+            )
+        generated_sum_input = resolve_workspace_path(
+            workspace_root,
+            recorded_sum_input_value,
+        ).resolve()
+        generated_sumtally_input = resolve_workspace_path(
+            workspace_root,
+            recorded_sumtally_input_value,
+        ).resolve()
+        requested_sum_input = (
             resolve_workspace_path(workspace_root, sum_input)
             if sum_input is not None
-            else Path(str(generation_summary["outputs"]["sum_input"]))
+            else generated_sum_input
         )
+        if requested_sum_input.resolve() != generated_sum_input:
+            raise ValueError(
+                "--sum-input must reference the wrapper recorded by Sumtally "
+                "Generate; rerun Sumtally Generate for a different input"
+            )
+        selected_sum_input = generated_sum_input
         if not selected_sum_input.is_file():
             raise FileNotFoundError(f"Sumtally wrapper input not found: {selected_sum_input}")
-        expected_output = Path(str(generation_summary["outputs"]["sumtally_output"]))
+        if not generated_sumtally_input.is_file():
+            raise FileNotFoundError(
+                f"Generated Sumtally input not found: {generated_sumtally_input}"
+            )
+        generation_sum_input_sha256 = str(
+            generation_summary.get("sum_input_sha256") or ""
+        )
+        generation_sumtally_input_sha256 = str(
+            generation_summary.get("sumtally_input_sha256") or ""
+        )
+        if not generation_sum_input_sha256 or not generation_sumtally_input_sha256:
+            raise ValueError(
+                "Sumtally generation summary is missing input digest evidence; "
+                "rerun Sumtally Generate"
+            )
+        current_sum_input_sha256 = file_sha256(selected_sum_input)
+        current_sumtally_input_sha256 = file_sha256(generated_sumtally_input)
+        if current_sum_input_sha256 != generation_sum_input_sha256:
+            raise ValueError(
+                "Generated Sumtally wrapper changed after Sumtally Generate; "
+                "rerun Sumtally Generate"
+            )
+        if current_sumtally_input_sha256 != generation_sumtally_input_sha256:
+            raise ValueError(
+                "Generated sumtally.inp changed after Sumtally Generate; "
+                "rerun Sumtally Generate"
+            )
+        expected_output = Path(str(outputs["sumtally_output"]))
         stdout_path = workspace_root / "sumtally" / "sumtally_stdout.txt"
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
 
@@ -495,6 +554,8 @@ def run_sumtally(
             "sumtally_normalization": generation_summary.get("sumtally_normalization"),
             "rt_dose_conversion_hint": generation_summary.get("rt_dose_conversion_hint"),
             "manifest_sha256": current_manifest_sha256,
+            "sum_input_sha256": current_sum_input_sha256,
+            "sumtally_input_sha256": current_sumtally_input_sha256,
         }
         write_json(execution_summary_path, summary)
         return summary
