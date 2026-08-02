@@ -40,7 +40,9 @@
 - [x] 3.4 Render and inspect the GUI using only synthetic placeholder paths.
 - [x] 3.5 Run `python -m compileall src`. Passed on Windows with the
   repository-local Python 3.12 environment.
-- [x] 3.6 Run `python -m pytest -q -p no:cacheprovider`. `462 passed`.
+- [x] 3.6 Run `python -m pytest -q -p no:cacheprovider`. The final
+  review-corrected branch passed all `470` tests, including `45` focused GUI
+  tests.
 - [x] 3.7 Run `python tools/verify_public_tree.py`. Public tree audit passed
   after staging the promoted and archived specifications, with 91 tracked files
   checked.
@@ -56,6 +58,11 @@
   The accepted specification was promoted and the change was archived on
   2026-08-02; strict CLI validation was unavailable, so a manual structural
   review confirmed seven requirements and thirteen scenarios in both forms.
+  The post-merge documentation audit repeated that structural comparison and
+  found no active change directory or unpromoted delta.
 - [x] 4.4 Create a reviewable pull request without merging it automatically.
   Draft pull request #5 was created through the GitHub connector on 2026-08-02:
-  https://github.com/inata169/dicomxphits/pull/5
+  https://github.com/inata169/dicomxphits/pull/5. After final review reported no
+  major issues and the human explicitly requested the merge, it was squash
+  merged as `bc6296d5f6949f461e7d50b86db6a0b4579e048d`; its local and remote
+  feature branches were then deleted.

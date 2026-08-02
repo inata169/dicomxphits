@@ -44,3 +44,7 @@
   Draft PR 3 was created with the GitHub plugin on 2026-08-01.
 - [x] 4.4 At task completion, promote the accepted delta specification and move
   this change to `openspec/changes/archive/YYYY-MM-DD-add-ct2phits-frontend/`.
+  A post-merge documentation audit found that the archived delta still lacked
+  seven review-accepted scenarios already present in the current specification
+  from the same squash merge. The archive was synchronized without changing the
+  current contract; both forms now contain seven requirements and 25 scenarios.

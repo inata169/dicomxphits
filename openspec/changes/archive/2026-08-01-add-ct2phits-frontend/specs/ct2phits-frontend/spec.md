@@ -31,7 +31,11 @@ The frontend SHALL select exactly one CT DICOM series from the supplied
 directory. It SHALL require explicit Series Instance UID selection when more
 than one series is present and SHALL reject unreadable or inconsistent geometry
 needed by the existing axial HFS coordinate contract. The selected CT series
-and RT Plan MUST share a Frame of Reference UID.
+and RT Plan MUST share a Frame of Reference UID. Adjacent DICOM Z positions
+MUST have uniform spacing using relative tolerance zero and absolute tolerance
+`1.0e-6 mm`. Every slice MUST provide the same two finite, positive
+`PixelSpacing` values. RT Plan `BeamNumber` and `ReferencedBeamNumber` values
+used to select treatment beams MUST be valid integers.
 
 #### Scenario: Single valid CT series
 
@@ -51,6 +55,12 @@ and RT Plan MUST share a Frame of Reference UID.
   metadata violate the supported contract
 - **THEN** the frontend rejects the input before external execution
 
+#### Scenario: Invalid RT Plan beam identifier
+
+- **WHEN** a treatment beam or referenced beam has a non-integer beam number
+- **THEN** the frontend reports a controlled input failure before workspace
+  creation
+
 ### Requirement: Isolated CT2PHITS Workspace and Input
 
 The frontend SHALL create a new workspace below the supplied RT-PHITS root and
@@ -58,7 +68,15 @@ outside the `dicomxphits` repository. It SHALL refuse an existing workspace,
 copy selected CT slices without modifying their sources, write a manifest, and
 generate `ct2phits.inp` using the reviewed CT2PHITS procedure. The input SHALL
 use the selected slice count and Rows and Columns, coarse graining `8 8 2`, and
-DICOM coordinate mode `1`.
+DICOM coordinate mode `1`. The frontend SHALL record the source RT Plan SHA-256,
+copy it into the isolated workspace without modification, verify the snapshot
+hash, and use only that stable snapshot for the downstream handoff. It SHALL
+also verify each CT slice hash before and after copying, record the snapshot
+hashes, re-enumerate the source series membership, recheck every source hash,
+and revalidate the copied CT series before external execution. After external
+execution and again after downstream preparation, it SHALL recheck the RT Plan
+and every CT snapshot hash, the exact CT directory contents, and the DICOM
+geometry of both snapshots before accepting the handoff.
 
 #### Scenario: New workspace preparation
 
@@ -77,12 +95,47 @@ DICOM coordinate mode `1`.
 - **WHEN** the required batch file or HU conversion table is missing
 - **THEN** the frontend rejects execution before workspace creation
 
+#### Scenario: RT Plan snapshot copy failure
+
+- **WHEN** copying or hashing the RT Plan snapshot fails before external execution
+- **THEN** the frontend reports a controlled failure and removes the newly
+  created workspace when cleanup succeeds
+
+#### Scenario: Other workspace preparation failure
+
+- **WHEN** CT snapshot copying, copied-series revalidation, input generation,
+  or initial manifest writing fails before external execution
+- **THEN** the frontend reports a controlled failure and removes the newly
+  created workspace when cleanup succeeds
+
+#### Scenario: Source series changes during snapshot creation
+
+- **WHEN** the selected source series gains, loses, or changes a slice while
+  workspace snapshots are being created
+- **THEN** the frontend rejects the snapshot before external execution and
+  removes the new workspace when cleanup succeeds
+
+#### Scenario: Workspace input changes during external execution
+
+- **WHEN** the RT Plan snapshot, any CT snapshot, or the CT directory contents
+  change while the external batch runs
+- **THEN** the frontend rejects the generated output before downstream handoff
+
+#### Scenario: Unsafe command-processor path
+
+- **WHEN** the workspace-relative input path contains a `cmd.exe` metacharacter
+- **THEN** the frontend rejects execution before workspace creation
+
 ### Requirement: Verified Windows Batch Adapter
 
 The frontend SHALL invoke `RTphits_win.bat` through the Windows command
 processor and MUST NOT invoke `ct2phits_win.exe` directly. It SHALL enforce a
 positive finite timeout and capture return code, stdout, stderr, timing, and a
-failure reason in workspace logs and summary JSON.
+failure reason in workspace logs and summary JSON. Process output SHALL be
+captured as bytes and decoded using the Windows locale encoding with replacement
+for undecodable byte sequences. A process-log write failure SHALL be recorded
+separately in the summary and MUST NOT replace earlier execution-failure
+evidence or prevent the other process log from being written.
 
 #### Scenario: Successful batch execution
 
@@ -99,27 +152,36 @@ failure reason in workspace logs and summary JSON.
 
 - **WHEN** the batch adapter exceeds the configured timeout
 - **THEN** the frontend records available output, marks the execution timed out,
-  and marks the stage failed
+  records any separate process-tree termination failure, and marks the stage failed
+
+#### Scenario: Process-log write failure
+
+- **WHEN** stdout or stderr cannot be written to its workspace log
+- **THEN** the frontend preserves any earlier execution failure, records the
+  log-write error in the summary, attempts the other log, and marks the stage
+  failed
 
 ### Requirement: Nine-File Generated Output Inventory
 
 The frontend SHALL require the nine CT2PHITS-generated files
 `CTusrparam.dat`, `CTcell.dat`, `CTmaterial.dat`, `CTuniverse.dat`,
 `CTsurf.dat`, `CTmatnamecolor.dat`, `CTvoxel.dat`, `phantominfo.dat`, and
-`CTtrans.dat`. Every required file MUST be a fresh, non-empty regular file for
-the current execution, and the inventory SHALL record its size, modification
-time, and SHA-256 digest.
+`CTtrans.dat`. Every required file MUST be absent immediately before execution
+and MUST be a non-empty regular file afterward. The inventory SHALL record each
+file's size, modification time, and SHA-256 digest without relying on filesystem
+timestamp precision to establish freshness. The execution summary SHALL record
+whether the pre-run absence check passed.
 
 #### Scenario: Complete fresh output
 
-- **WHEN** all nine required files were produced after the current execution
-  started and are non-empty regular files
+- **WHEN** all nine required files were absent immediately before execution and
+  are non-empty regular files afterward
 - **THEN** the frontend records all nine files in the generated inventory
 
-#### Scenario: Missing, empty, symbolic, or stale output
+#### Scenario: Pre-existing, missing, empty, or symbolic output
 
-- **WHEN** any required generated file is missing, empty, a symbolic link, or
-  older than the current execution
+- **WHEN** any required generated file exists before execution or is missing,
+  empty, or a symbolic link afterward
 - **THEN** the frontend marks the stage failed and does not accept the handoff
 
 ### Requirement: Existing DATfiles and Coordinate Handoff
