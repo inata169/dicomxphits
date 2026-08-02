@@ -40,8 +40,10 @@ semantic relationship before reporting success.
   focused GUI command tests
 - Affected documentation: RTDOSE adapter inputs, output selection, and semantic
   validation evidence
-- Migration: existing calculated workspaces can be reused; users rerun only
-  RTDOSE Prepare and RTDOSE Run with the original frozen RT Plan
+- Migration: existing segment PHITS outputs remain reusable. Workspaces created
+  before manifest-digest evidence was added rerun Sumtally Generate, Sumtally
+  Run, RTDOSE Prepare, and RTDOSE Run with the original frozen RT Plan; segment
+  PHITS calculations do not need to be repeated
 - Unchanged boundaries: PHITS and Sumtally results, pixel-dose values, DICOM
   geometry and coordinate correction, dose calibration, MU and normalization,
   fixed-field 3D-CRT scope, and non-clinical research status

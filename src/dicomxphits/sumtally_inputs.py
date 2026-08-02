@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -8,6 +9,24 @@ from typing import Any
 
 
 TARGET_TALLY_PATTERNS = ["deposit-target-3D", "deposit_target"]
+
+
+def manifest_sha256(manifest: dict[str, Any]) -> str:
+    """Return a stable digest that binds Sumtally evidence to one manifest."""
+
+    try:
+        canonical = json.dumps(
+            manifest,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Segment manifest must be canonical JSON without non-finite numbers"
+        ) from exc
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def write_text(path: Path, content: str) -> None:

@@ -54,3 +54,13 @@
 - [x] 4.4 Create a reviewable pull request without merging it automatically.
   Draft pull request #8 was created on 2026-08-02:
   https://github.com/inata169/dicomxphits/pull/8
+
+## 5. Final Review Correction
+
+- [x] 5.1 Bind Sumtally Generate, Sumtally Run, and RTDOSE preparation to one
+  canonical segment-manifest SHA-256.
+- [x] 5.2 Align RTDOSE treatment-delivery eligibility with workspace
+  preparation by accepting empty, `TREATMENT`, and `CONTINUATION` values.
+- [x] 5.3 Add focused regression tests and rerun all required validation.
+  Focused tests passed (100), the full public suite passed (478), compilation
+  succeeded, and strict OpenSpec validation passed (3 specifications).

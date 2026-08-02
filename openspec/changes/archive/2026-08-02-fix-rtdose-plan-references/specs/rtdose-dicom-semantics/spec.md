@@ -8,6 +8,9 @@ Sumtally result covers the complete accepted `full_plan` delivery. The adapter
 MUST fail closed before accepting an RT Dose when the plan identity, workflow
 mode, treatment-beam coverage, or existing strict manifest evidence is missing,
 ambiguous, or inconsistent.
+The adapter SHALL also require the canonical segment-manifest SHA-256 recorded
+by Sumtally Generate and Sumtally Run to match the current manifest before it
+accepts PLAN semantics.
 
 #### Scenario: Complete accepted plan delivery
 
@@ -21,6 +24,13 @@ ambiguous, or inconsistent.
 - **WHEN** the manifest is not `full_plan`, identifies another plan, or does not
   prove complete treatment-beam coverage
 - **THEN** the adapter fails without accepting or labeling a plan-level RT Dose
+
+#### Scenario: Manifest changed after Sumtally calculation
+
+- **WHEN** the current segment manifest digest differs from the digest recorded
+  by Sumtally Generate or Sumtally Run
+- **THEN** RTDOSE preparation fails and requires Sumtally inputs and execution
+  to be regenerated before PLAN semantics can be accepted
 
 ### Requirement: Authoritative Frozen RT Plan Reference
 

@@ -331,6 +331,12 @@ workspace. The adapter verifies its SOP Instance UID, Frame of Reference, and
 complete treatment-beam coverage against `segments/segment_manifest.json`.
 Template plan references are not accepted as provenance.
 
+Sumtally Generate and Sumtally Run record the canonical SHA-256 of that segment
+manifest. RTDOSE Prepare requires both recorded digests to match the current
+manifest. For a workspace created before this evidence was added, rerun
+Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and RTDOSE
+Run. Existing segment PHITS outputs remain reusable.
+
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
 slash-normalized paths. The approved public-model `totfact_per_MU` has already
 been applied in each PHITS input, so PHITS2DICOM uses Factor `1.0` and the

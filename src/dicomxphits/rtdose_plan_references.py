@@ -11,6 +11,7 @@ from pydicom.sequence import Sequence
 from pydicom.uid import RTPlanStorage
 
 from dicomxphits.prepare_sumtally import load_json_object
+from dicomxphits.sumtally_inputs import manifest_sha256
 
 
 PLAN_SUMMATION_TYPE = "PLAN"
@@ -107,9 +108,14 @@ def _referenced_treatment_beams(rtplan: Dataset) -> tuple[dict[int, float], list
                 raise ValueError(
                     f"RT Plan fraction group references missing BeamNumber {number}"
                 )
-            if beam_delivery_types[number] != "TREATMENT":
+            if beam_delivery_types[number] not in {
+                "",
+                "TREATMENT",
+                "CONTINUATION",
+            }:
                 raise ValueError(
-                    f"RT Plan fraction group BeamNumber {number} is not a TREATMENT beam"
+                    f"RT Plan fraction group BeamNumber {number} has unsupported "
+                    f"TreatmentDeliveryType {beam_delivery_types[number]}"
                 )
             metersets[number] = _finite_positive(
                 getattr(referenced_beam, "BeamMeterset", None),
@@ -249,6 +255,7 @@ def validate_full_plan_context(
         },
         "plan_total_mu": expected_total_mu,
         "manifest_path": str(manifest_path),
+        "manifest_sha256": manifest_sha256(manifest),
         "workflow_mode": "full_plan",
         "coverage_validated": True,
     }

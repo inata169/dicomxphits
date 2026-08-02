@@ -25,6 +25,7 @@ from dicomxphits.prepare_rtdose import (
     run_rtdose,
     select_ct_reference,
 )
+from dicomxphits.sumtally_inputs import manifest_sha256
 
 
 def required_tag_value(tag: tuple[int, int], vr: str):
@@ -89,6 +90,7 @@ def write_rtplan(
     sop_instance_uid: str = "1.2.826.0.1.3680043.10.54321.9001",
     frame_uid: str = "1.2.3",
     beam_metersets: dict[int, float] | None = None,
+    treatment_delivery_type: str | None = "TREATMENT",
 ) -> Path:
     metersets = beam_metersets or {1: 100.0}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +108,8 @@ def write_rtplan(
     for number, meterset in metersets.items():
         beam = Dataset()
         beam.BeamNumber = number
-        beam.TreatmentDeliveryType = "TREATMENT"
+        if treatment_delivery_type is not None:
+            beam.TreatmentDeliveryType = treatment_delivery_type
         ds.BeamSequence.append(beam)
         reference = Dataset()
         reference.ReferencedBeamNumber = number
@@ -187,6 +190,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    bound_manifest_sha256 = manifest_sha256(manifest)
     sumtally_output = workspace / "sumtally" / "deposit-target-3D_sum_all_active_segments_totalfield.out"
     sumtally_output.parent.mkdir(parents=True)
     sumtally_output.write_text("merged dose", encoding="utf-8")
@@ -194,6 +198,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     phits_out.write_text("phits companion", encoding="utf-8")
     generation = {
         "stage_status": "success",
+        "manifest_sha256": bound_manifest_sha256,
         "outputs": {"sumtally_output": str(sumtally_output)},
         "rt_dose_conversion_hint": {
             "input_dose_state": "sumtally_mu_weighted",
@@ -203,6 +208,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     }
     execution = {
         "stage_status": "success",
+        "manifest_sha256": bound_manifest_sha256,
         "outputs": {"phits_out": str(phits_out)},
         "input_dose_unit": units,
     }
@@ -213,6 +219,21 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
         "phits_out": phits_out,
         "rtplan": rtplan,
     }
+
+
+def rewrite_sumtally_manifest_digests(
+    workspace: Path,
+    manifest: dict,
+) -> None:
+    digest = manifest_sha256(manifest)
+    for name in (
+        "sumtally_generation_summary.json",
+        "sumtally_execution_summary.json",
+    ):
+        path = workspace / "analysis" / name
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        summary["manifest_sha256"] = digest
+        path.write_text(json.dumps(summary), encoding="utf-8")
 
 
 def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
@@ -933,6 +954,7 @@ def test_prepare_rejects_incomplete_full_plan_evidence(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest.update(manifest_update)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rewrite_sumtally_manifest_digests(workspace, manifest)
     template = tmp_path / "template.dcm"
     ct = tmp_path / "ct_reference.dcm"
     write_dicom(template, modality="RTDOSE")
@@ -948,6 +970,61 @@ def test_prepare_rejects_incomplete_full_plan_evidence(
             phits_out=files["phits_out"],
             command_argv=["prepare"],
         )
+
+
+def test_prepare_rejects_manifest_changed_after_sumtally_run(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["case_id"] = "internally-consistent-but-not-calculated"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="does not match Sumtally Generate evidence",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+
+@pytest.mark.parametrize("delivery_type", [None, "CONTINUATION"])
+def test_prepare_accepts_existing_supported_treatment_delivery_types(
+    tmp_path,
+    delivery_type,
+):
+    workspace, files = write_workspace(tmp_path)
+    write_rtplan(
+        files["rtplan"],
+        treatment_delivery_type=delivery_type,
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    assert summary["stage_status"] == "success"
+    assert summary["sumtally_manifest_binding"]["validated"] is True
 
 
 def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkeypatch, tmp_path):

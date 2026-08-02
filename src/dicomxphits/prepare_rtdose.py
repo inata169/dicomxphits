@@ -35,6 +35,7 @@ from dicomxphits.rtdose_plan_references import (
     validate_full_plan_context,
     validate_plan_rtdose,
 )
+from dicomxphits.sumtally_inputs import manifest_sha256
 
 
 INPUT_DOSE_STATE = "sumtally_mu_weighted"
@@ -185,6 +186,41 @@ def load_sumtally_summaries(workspace_root: Path) -> tuple[dict[str, Any], dict[
     if execution.get("stage_status") != "success":
         raise ValueError("Sumtally execution summary is not successful")
     return generation, execution
+
+
+def validate_sumtally_manifest_binding(
+    *,
+    workspace_root: Path,
+    generation: dict[str, Any],
+    execution: dict[str, Any],
+) -> dict[str, Any]:
+    manifest_path = workspace_root / "segments" / "segment_manifest.json"
+    manifest = load_json_object(manifest_path)
+    current_sha256 = manifest_sha256(manifest)
+    generation_sha256 = str(generation.get("manifest_sha256") or "")
+    execution_sha256 = str(execution.get("manifest_sha256") or "")
+    if not generation_sha256 or not execution_sha256:
+        raise ValueError(
+            "Sumtally manifest digest evidence is missing; rerun Sumtally "
+            "Generate and Sumtally Run"
+        )
+    if generation_sha256 != current_sha256:
+        raise ValueError(
+            "Segment manifest does not match Sumtally Generate evidence; "
+            "rerun Sumtally Generate and Sumtally Run"
+        )
+    if execution_sha256 != generation_sha256:
+        raise ValueError(
+            "Sumtally Run evidence does not match Sumtally Generate; "
+            "rerun Sumtally Run"
+        )
+    return {
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": current_sha256,
+        "generation_manifest_sha256": generation_sha256,
+        "execution_manifest_sha256": execution_sha256,
+        "validated": True,
+    }
 
 
 def validate_sumtally_contract(
@@ -542,6 +578,11 @@ def prepare_rtdose(
     summary_path = prepare_summary_path(workspace_root)
     try:
         generation, execution = load_sumtally_summaries(workspace_root)
+        sumtally_manifest_binding = validate_sumtally_manifest_binding(
+            workspace_root=workspace_root,
+            generation=generation,
+            execution=execution,
+        )
         factor, factor_reason = validate_sumtally_contract(
             generation,
             input_dose_unit=input_dose_unit,
@@ -609,6 +650,7 @@ def prepare_rtdose(
             "factor": factor,
             "factor_selection_reason": factor_reason,
             "dose_semantics": public_absolute_dose_semantics(),
+            "sumtally_manifest_binding": sumtally_manifest_binding,
             "full_plan_evidence": full_plan_evidence,
             "phits_dose": str(phits_dose),
             "phits_out": str(selected_phits_out),
@@ -714,6 +756,19 @@ def run_rtdose(
         prepare_summary = load_json_object(prepare_summary_path(workspace_root))
         if prepare_summary.get("stage_status") != "success":
             raise ValueError("RTDOSE prepare summary is not successful")
+        generation, execution = load_sumtally_summaries(workspace_root)
+        current_sumtally_binding = validate_sumtally_manifest_binding(
+            workspace_root=workspace_root,
+            generation=generation,
+            execution=execution,
+        )
+        if current_sumtally_binding != prepare_summary.get(
+            "sumtally_manifest_binding"
+        ):
+            raise ValueError(
+                "Sumtally manifest binding changed after RTDOSE Prepare; "
+                "rerun RTDOSE Prepare"
+            )
         recorded_plan_evidence = prepare_summary.get("full_plan_evidence")
         if not isinstance(recorded_plan_evidence, dict):
             raise ValueError(

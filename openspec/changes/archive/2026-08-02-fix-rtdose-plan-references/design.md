@@ -23,7 +23,8 @@ inputs for a fail-closed semantic check; the template is not.
 - Describe the all-active-segments result as a plan-level dose only when the
   adapter can prove complete plan coverage.
 - Reject stale or partial template references before reporting RTDOSE success.
-- Allow an existing PHITS/Sumtally workspace to be reused without recalculation.
+- Allow existing segment PHITS outputs to be reused without segment
+  recalculation.
 - Preserve dose values, dose units, geometry, coordinates, and normalization.
 
 ### Non-Goals
@@ -54,6 +55,13 @@ The adapter will require `workflow_mode = full_plan` and compare the active
 manifest delivery against the treatment beams referenced by the frozen RT
 Plan's fraction groups. Missing, extra, skipped, or ambiguous plan delivery will
 fail before conversion. Existing strict manifest and MU checks remain in force.
+
+Sumtally Generate records a canonical SHA-256 of the complete segment manifest.
+Sumtally Run validates and carries the same digest, and RTDOSE Prepare requires
+the Generate, Run, and current-manifest values to match. This prevents a dose
+calculated from one manifest from being relabeled for a later replacement
+manifest. A legacy workspace without this evidence regenerates and reruns only
+Sumtally before RTDOSE conversion; its segment PHITS outputs remain reusable.
 
 When that gate passes, the all-active-segments result represents the entire RT
 Plan delivery and will use `DoseSummationType = PLAN`. This change does not add
@@ -112,6 +120,7 @@ around the metadata update.
 ## Migration Plan
 
 The RTDOSE Prepare CLI gains a required frozen RT Plan input, and the guided GUI
-supplies its existing frozen RT Plan field. For a completed calculation, users
-rerun RTDOSE Prepare and RTDOSE Run only. No PHITS or Sumtally recalculation is
-required when the existing manifest provides complete accepted coverage.
+supplies its existing frozen RT Plan field. A workspace with manifest-digest
+evidence reruns RTDOSE Prepare and RTDOSE Run only. A legacy workspace first
+reruns Sumtally Generate and Sumtally Run. In both cases the expensive segment
+PHITS calculations remain reusable.

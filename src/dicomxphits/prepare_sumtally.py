@@ -22,6 +22,7 @@ from dicomxphits.sumtally_inputs import (
     TARGET_TALLY_PATTERNS,
     build_sumtally,
     generate_sum_inp,
+    manifest_sha256,
     write_libpath_file,
     write_text,
 )
@@ -277,6 +278,7 @@ def generate_sumtally(
         require_generation_paths(paths)
 
         manifest, manifest_path = load_manifest(workspace_root)
+        bound_manifest_sha256 = manifest_sha256(manifest)
         strict_gate = validate_manifest_for_sumtally(manifest)
         tally_patterns = derive_tally_patterns_from_manifest(manifest, list(TARGET_TALLY_PATTERNS))
         selection = select_sumtally_base_input(
@@ -334,6 +336,7 @@ def generate_sumtally(
             "rt_dose_conversion_hint": dict(RT_DOSE_CONVERSION_HINT),
             "strict_gate": strict_gate,
             "manifest_path": str(manifest_path),
+            "manifest_sha256": bound_manifest_sha256,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,
                 "phits_executable_path": paths.phits_executable_path,
@@ -430,6 +433,22 @@ def run_sumtally(
 
         generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
         generation_summary = load_json_object(generation_summary_path)
+        if generation_summary.get("stage_status") != "success":
+            raise ValueError("Sumtally generation summary is not successful")
+        current_manifest_sha256 = manifest_sha256(manifest)
+        generation_manifest_sha256 = str(
+            generation_summary.get("manifest_sha256") or ""
+        )
+        if not generation_manifest_sha256:
+            raise ValueError(
+                "Sumtally generation summary is missing manifest_sha256; "
+                "rerun Sumtally Generate"
+            )
+        if generation_manifest_sha256 != current_manifest_sha256:
+            raise ValueError(
+                "Segment manifest changed after Sumtally Generate; "
+                "rerun Sumtally Generate"
+            )
         selected_sum_input = (
             resolve_workspace_path(workspace_root, sum_input)
             if sum_input is not None
@@ -475,6 +494,7 @@ def run_sumtally(
             "weight_field": generation_summary.get("weight_field"),
             "sumtally_normalization": generation_summary.get("sumtally_normalization"),
             "rt_dose_conversion_hint": generation_summary.get("rt_dose_conversion_hint"),
+            "manifest_sha256": current_manifest_sha256,
         }
         write_json(execution_summary_path, summary)
         return summary

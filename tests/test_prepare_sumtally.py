@@ -91,6 +91,7 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert summary["sumtally_mode"] == "totalfield"
     assert summary["weight_field"] == "segment_mu"
     assert summary["sumtally_normalization"] == "all_segments_totalfield_segment_mu"
+    assert len(summary["manifest_sha256"]) == 64
     assert summary["rt_dose_conversion_hint"] == {
         "input_dose_state": "sumtally_mu_weighted",
         "sumtally_normalization": "all_segments_totalfield_segment_mu",
@@ -287,6 +288,42 @@ def test_run_sumtally_rejects_missing_segment_outputs(tmp_path):
     assert summary["phits_execution_started"] is False
 
 
+def test_run_sumtally_rejects_manifest_changed_after_generation(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    for segment in manifest["segments"]:
+        output = workspace / segment["expected_output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("segment dose", encoding="utf-8")
+    manifest["case_id"] = "changed-after-generation"
+    (workspace / "segments" / "segment_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    calls = []
+
+    with pytest.raises(ValueError, match="changed after Sumtally Generate"):
+        run_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: calls.append(cmd),
+        )
+
+    assert calls == []
+    summary = json.loads(
+        (workspace / "analysis" / "sumtally_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["stage_status"] == "gate_failed"
+    assert summary["phits_execution_started"] is False
+
+
 def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     workspace, _ = write_workspace(tmp_path)
     generation = generate_sumtally(workspace_root=workspace, paths=paths(), command_argv=["generate"])
@@ -326,6 +363,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "sum ok"
     assert Path(summary["stderr_path"]).read_text(encoding="utf-8") == "sum warn"
     assert summary["rt_dose_conversion_hint"]["is_beam_mu_output"] is False
+    assert summary["manifest_sha256"] == generation["manifest_sha256"]
 
 
 def test_run_main_returns_nonzero_when_sumtally_summary_failed(monkeypatch, tmp_path):
