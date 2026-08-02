@@ -320,6 +320,7 @@ def generate_sumtally(
             tally_patterns,
             sum_input_path,
             sumtally_filename=sumtally_path.name,
+            include_base_dir=workspace_root,
         )
         sum_input_sha256 = file_sha256(sum_input_path)
         sumtally_input_sha256 = file_sha256(sumtally_path)

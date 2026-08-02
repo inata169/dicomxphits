@@ -334,11 +334,17 @@ def generate_sum_inp(
     tally_patterns: list[str],
     output_path: Path,
     sumtally_filename: str = "sumtally.inp",
+    include_base_dir: Path | None = None,
 ) -> Path:
     del out_files, sfile, sumfactor, mode
     content = base_inp_path.read_text(encoding="utf-8", errors="replace")
 
     base_dir = Path(base_inp_path).resolve().parent
+    include_dir = (
+        Path(include_base_dir).resolve()
+        if include_base_dir is not None
+        else base_dir
+    )
     output_dir = Path(output_path).resolve().parent
     lines = content.splitlines(keepends=True)
     new_lines: list[str] = []
@@ -401,7 +407,10 @@ def generate_sum_inp(
                     continue
                 if include_path.lower() not in {sumtally_filename.lower(), "sumtally.inp"}:
                     eol = "\r\n" if "\r\n" in line else "\n"
-                    resolved_include = resolve_include_path_for_sumtally(include_path, base_dir)
+                    resolved_include = resolve_include_path_for_sumtally(
+                        include_path,
+                        include_dir,
+                    )
                     new_lines.append(
                         f"{infl_match.group(1)}{resolved_include}{infl_match.group(3)}{infl_match.group(4)}{eol}"
                     )

@@ -138,6 +138,38 @@ def test_generate_sumtally_paths_are_readable_from_sumtally_cwd(tmp_path):
         assert (sumtally_dir / written).resolve().parent.name in {"seg_001", "seg_002"}
 
 
+def test_generate_sumtally_resolves_workspace_relative_includes_from_runtime_cwd(
+    tmp_path,
+):
+    workspace, _ = write_workspace(tmp_path)
+    include_name = "CTusrparam.dat"
+    include_path = workspace / include_name
+    include_path.write_text("ct parameters", encoding="utf-8")
+    base_input = workspace / "segments" / "seg_001" / "phits.inp"
+    base_input.write_text(
+        "[ Parameters ]\n"
+        "  icntl = 0\n"
+        f"  infl:{{{include_name}}}\n"
+        "[ T-Deposit ]\n"
+        "  title = Segment dose placeholder\n"
+        "  file = deposit-target-3D.out\n"
+        "[ E N D ]\n",
+        encoding="utf-8",
+    )
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    wrapper_content = Path(summary["outputs"]["sum_input"]).read_text(
+        encoding="utf-8"
+    )
+    assert f"infl:{{{include_path.resolve().as_posix()}}}" in wrapper_content
+    assert not (base_input.parent / include_name).exists()
+
+
 def test_generate_sumtally_external_segment_output_uses_absolute_fallback(tmp_path):
     external_output = tmp_path / "external" / "dose.out"
     segment = active_segment(0, expected_output_path=str(external_output))
