@@ -309,6 +309,7 @@ totalfield Sumtally output:
 ```bash
 dicomxphits-prepare-rtdose \
   --workspace-root work/synthetic_case \
+  --rtplan frozen_ct2phits/RTPLAN.dcm \
   --template-dicom user_template.dcm \
   --ct-reference-dicom user_ct_reference.dcm \
   --phits-out work/synthetic_case/sumtally/phits.out
@@ -325,16 +326,28 @@ RTDOSE template with dummy identity values and zeroed PixelData. Clinical RTDOSE
 files that are missing required overwrite tags are rejected during prepare.
 Official PHITS or RTphits sample files are not bundled in this repository.
 
+`--rtplan` must identify the same frozen RT Plan used to prepare the 3D-CRT
+workspace. The adapter verifies its SOP Instance UID, Frame of Reference, and
+complete treatment-beam coverage against `segments/segment_manifest.json`.
+Template plan references are not accepted as provenance.
+
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
 slash-normalized paths. The approved public-model `totfact_per_MU` has already
 been applied in each PHITS input, so PHITS2DICOM uses Factor `1.0` and the
 generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its summaries record
 `approved_public_model_totfact_per_mu_applied_in_phits` and the exact factor.
-After conversion, `dicomxphits-run-rtdose` also creates a `.fixed.dcm` output.
-This output maps the supported PHITS2DICOM `[frames, rows, columns]` voxel
+After conversion, `dicomxphits-run-rtdose` synchronizes the output to
+`DoseSummationType = PLAN` with exactly one reference to the validated frozen
+RT Plan, then creates the accepted `.fixed.dcm` output next to the Sumtally
+`.out` file. For the default workflow its path is
+`<workspace>/sumtally/deposit-target-3D_sum_all_active_segments_totalfield.fixed.dcm`.
+The execution summary records the exact path in
+`coordinate_corrected_rtdose_output`. This final output maps the supported
+PHITS2DICOM `[frames, rows, columns]` voxel
 layout to the DICOM patient grid, updates spacing and position consistently,
 and preserves stored dose values, `DoseGridScaling`, and the physical volume
-center. Unsupported or ambiguous input geometry fails closed.
+center. The run fails instead of accepting an output whose PLAN reference is
+missing or stale. Unsupported or ambiguous input geometry also fails closed.
 
 This output is absolute dose only for the defined public education and research
 reference model. It does not claim clinical commissioning, universal machine

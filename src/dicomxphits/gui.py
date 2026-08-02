@@ -183,6 +183,7 @@ def stage_specs() -> tuple[StageSpec, ...]:
             command=("dicomxphits-prepare-rtdose",),
             required_paths=(
                 *workspace_only,
+                ("rtplan_path", "Frozen RT Plan", False),
                 ("rtdose_template_dicom", "RTDOSE template DICOM", False),
                 ("ct_reference_dicom", "CT reference DICOM", False),
             ),
@@ -437,6 +438,8 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
     elif spec.key == "prepare_rtdose":
         command.extend(
             [
+                "--rtplan",
+                str(_resolved_path(config, "rtplan_path")),
                 "--template-dicom",
                 str(_resolved_path(config, "rtdose_template_dicom")),
                 "--ct-reference-dicom",

@@ -30,6 +30,11 @@ from dicomxphits.prepare_3dcrt_workspace import (
     write_json,
 )
 from dicomxphits.prepare_sumtally import load_json_object, resolve_workspace_path
+from dicomxphits.rtdose_plan_references import (
+    synchronize_plan_rtdose,
+    validate_full_plan_context,
+    validate_plan_rtdose,
+)
 
 
 INPUT_DOSE_STATE = "sumtally_mu_weighted"
@@ -152,11 +157,12 @@ def write_failure_summary(
     reason: str,
     command_argv: list[str] | None = None,
     extra: dict[str, Any] | None = None,
+    stage_status: str = "gate_failed",
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "schema_version": "dicomxphits_public_rtdose_stage_v1",
         "stage": stage,
-        "stage_status": "gate_failed",
+        "stage_status": stage_status,
         "workspace_root": str(workspace_root),
         "failure_reason": reason,
         "command": {"argv": command_argv or sys.argv},
@@ -523,6 +529,7 @@ def prepare_rtdose(
     paths: ExternalToolPaths,
     paths_config: dict[str, Any],
     template_dicom: Path,
+    rtplan_path: Path | None = None,
     ct_reference_dicom: Path | None = None,
     generated_ct_reference_dicom: Path | None = None,
     smoke_dummy_ct_reference: Path | None = None,
@@ -564,6 +571,11 @@ def prepare_rtdose(
             selection_source=ct_selection_source,
             reference_dicom_for_identity=reference_dicom_for_identity,
         )
+        full_plan_evidence = validate_full_plan_context(
+            rtplan_path=rtplan_path or (workspace_root / "RTPLAN.dcm"),
+            workspace_root=workspace_root,
+            ct_reference_path=ct_selection.workspace_path,
+        )
         ipp_patch_summary = patch_rtdose_inputs_for_ipp(
             workspace_root=workspace_root,
             phits_dose=phits_dose,
@@ -597,6 +609,7 @@ def prepare_rtdose(
             "factor": factor,
             "factor_selection_reason": factor_reason,
             "dose_semantics": public_absolute_dose_semantics(),
+            "full_plan_evidence": full_plan_evidence,
             "phits_dose": str(phits_dose),
             "phits_out": str(selected_phits_out),
             "phits_out_selection_source": phits_out_source,
@@ -701,6 +714,28 @@ def run_rtdose(
         prepare_summary = load_json_object(prepare_summary_path(workspace_root))
         if prepare_summary.get("stage_status") != "success":
             raise ValueError("RTDOSE prepare summary is not successful")
+        recorded_plan_evidence = prepare_summary.get("full_plan_evidence")
+        if not isinstance(recorded_plan_evidence, dict):
+            raise ValueError(
+                "RTDOSE prepare summary is missing full_plan_evidence; rerun RTDOSE Prepare"
+            )
+        recorded_rtplan_path = str(recorded_plan_evidence.get("rtplan_path") or "")
+        recorded_ct_path = str(
+            prepare_summary.get("ct_reference_workspace_copy_path") or ""
+        )
+        if not recorded_rtplan_path or not recorded_ct_path:
+            raise ValueError(
+                "RTDOSE prepare summary is missing frozen plan or CT reference evidence"
+            )
+        plan_evidence = validate_full_plan_context(
+            rtplan_path=Path(recorded_rtplan_path),
+            workspace_root=workspace_root,
+            ct_reference_path=Path(recorded_ct_path),
+        )
+        if plan_evidence != recorded_plan_evidence:
+            raise ValueError(
+                "Frozen RT Plan or full-plan workspace evidence changed after RTDOSE Prepare"
+            )
         phits2dicom_inp = Path(str(prepare_summary.get("phits2dicom_input_path") or ""))
         require_existing_file(phits2dicom_inp, label="phits2dicom input")
         dat_dir = Path(str(prepare_summary.get("dat_dir") or phits2dicom_inp.parent))
@@ -732,14 +767,24 @@ def run_rtdose(
             and expected_after_conversion != expected_before
         )
         absolute_labeling = None
+        plan_reference_synchronization = None
         coordinate_correction = None
+        final_semantic_validation = None
         coordinate_corrected_output = corrected_rtdose_path(expected_rtdose_output)
         if returncode == 0 and expected_updated:
             absolute_labeling = mark_rtdose_absolute(expected_rtdose_output)
+            plan_reference_synchronization = synchronize_plan_rtdose(
+                expected_rtdose_output,
+                plan_evidence=plan_evidence,
+            )
             coordinate_correction = fix_coordinates(
                 expected_rtdose_output,
                 coordinate_corrected_output,
                 summary_path=coordinate_summary_path(coordinate_corrected_output),
+            )
+            final_semantic_validation = validate_plan_rtdose(
+                coordinate_corrected_output,
+                plan_evidence=plan_evidence,
             )
         after = dicom_snapshot(output_dirs)
         new_paths = sorted(set(after) - set(before))
@@ -758,6 +803,7 @@ def run_rtdose(
             if returncode == 0
             and expected_updated
             and coordinate_corrected_exists
+            and bool(final_semantic_validation and final_semantic_validation["validated"])
             and bool(
                 coordinate_correction
                 and coordinate_correction["invariants"][
@@ -805,6 +851,8 @@ def run_rtdose(
             "factor": prepare_summary.get("factor"),
             "dose_semantics": prepare_summary.get("dose_semantics"),
             "absolute_dose_labeling": absolute_labeling,
+            "plan_reference_synchronization": plan_reference_synchronization,
+            "final_semantic_validation": final_semantic_validation,
         }
         write_json(summary_path, summary)
         return summary
@@ -816,6 +864,7 @@ def run_rtdose(
             reason=str(exc),
             command_argv=command_argv,
             extra={"phits2dicom_execution_started": execution_started},
+            stage_status="failed" if execution_started else "gate_failed",
         )
         raise
 
@@ -840,6 +889,7 @@ def build_prepare_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phits-root-folder", default=None)
     parser.add_argument("--phits-executable-path", default=None)
     parser.add_argument("--phits2dicom-executable-path", default=None)
+    parser.add_argument("--rtplan", required=True)
     parser.add_argument("--template-dicom", required=True)
     parser.add_argument("--ct-reference-dicom", default=None)
     parser.add_argument("--generated-ct-reference-dicom", default=None)
@@ -869,6 +919,7 @@ def prepare_main(argv: list[str] | None = None) -> int:
             workspace_root=Path(args.workspace_root),
             paths=paths,
             paths_config=raw_config,
+            rtplan_path=Path(args.rtplan),
             template_dicom=Path(args.template_dicom),
             ct_reference_dicom=Path(args.ct_reference_dicom) if args.ct_reference_dicom else None,
             generated_ct_reference_dicom=Path(args.generated_ct_reference_dicom)

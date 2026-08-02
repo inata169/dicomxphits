@@ -16,6 +16,7 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 PUBLIC_ROOT = Path(__file__).resolve().parents[1]
 
+import dicomxphits.prepare_rtdose as prepare_rtdose_module
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.dose_semantics import require_relative_rtdose
 from dicomxphits.prepare_rtdose import (
@@ -63,7 +64,11 @@ def add_phits2dicom_template_tags(ds: FileDataset) -> None:
 def write_dicom(path: Path, *, modality: str = "CT", frame_uid: str = "1.2.3", study_uid: str = "1.2.4") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     file_meta = Dataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+    sop_classes = {
+        "CT": pydicom.uid.CTImageStorage,
+        "RTDOSE": pydicom.uid.RTDoseStorage,
+    }
+    file_meta.MediaStorageSOPClassUID = sop_classes[modality]
     file_meta.MediaStorageSOPInstanceUID = f"{study_uid}.1"
     file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
     ds = FileDataset(str(path), {}, file_meta=file_meta, preamble=b"\0" * 128)
@@ -76,6 +81,43 @@ def write_dicom(path: Path, *, modality: str = "CT", frame_uid: str = "1.2.3", s
     if modality == "RTDOSE":
         add_phits2dicom_template_tags(ds)
     ds.save_as(str(path))
+
+
+def write_rtplan(
+    path: Path,
+    *,
+    sop_instance_uid: str = "1.2.826.0.1.3680043.10.54321.9001",
+    frame_uid: str = "1.2.3",
+    beam_metersets: dict[int, float] | None = None,
+) -> Path:
+    metersets = beam_metersets or {1: 100.0}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_meta = Dataset()
+    file_meta.MediaStorageSOPClassUID = pydicom.uid.RTPlanStorage
+    file_meta.MediaStorageSOPInstanceUID = sop_instance_uid
+    file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+    ds = FileDataset(str(path), {}, file_meta=file_meta, preamble=b"\0" * 128)
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
+    ds.SOPInstanceUID = sop_instance_uid
+    ds.Modality = "RTPLAN"
+    ds.FrameOfReferenceUID = frame_uid
+    ds.BeamSequence = []
+    referenced_beams = []
+    for number, meterset in metersets.items():
+        beam = Dataset()
+        beam.BeamNumber = number
+        beam.TreatmentDeliveryType = "TREATMENT"
+        ds.BeamSequence.append(beam)
+        reference = Dataset()
+        reference.ReferencedBeamNumber = number
+        reference.BeamMeterset = meterset
+        referenced_beams.append(reference)
+    fraction_group = Dataset()
+    fraction_group.FractionGroupNumber = 1
+    fraction_group.ReferencedBeamSequence = referenced_beams
+    ds.FractionGroupSequence = [fraction_group]
+    ds.save_as(str(path))
+    return path
 
 
 def write_coordinate_rtdose(path: Path) -> None:
@@ -96,6 +138,17 @@ def write_coordinate_rtdose(path: Path) -> None:
     ds.PixelRepresentation = 0
     ds.DoseGridScaling = 0.125
     ds.PixelData = np.arange(24, dtype=np.uint16).reshape(3, 2, 4).tobytes()
+    ds.DoseSummationType = "BEAM"
+    stale_plan = Dataset()
+    stale_plan.ReferencedSOPClassUID = pydicom.uid.RTPlanStorage
+    stale_plan.ReferencedSOPInstanceUID = "1.2.826.0.1.3680043.10.54321.9999"
+    stale_group = Dataset()
+    stale_group.ReferencedFractionGroupNumber = 99
+    stale_beam = Dataset()
+    stale_beam.ReferencedBeamNumber = 99
+    stale_group.ReferencedBeamSequence = [stale_beam]
+    stale_plan.ReferencedFractionGroupSequence = [stale_group]
+    ds.ReferencedRTPlanSequence = [stale_plan]
     ds.save_as(str(path))
 
 
@@ -111,6 +164,29 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     workspace = tmp_path / "workspace"
     analysis = workspace / "analysis"
     analysis.mkdir(parents=True)
+    plan_uid = "1.2.826.0.1.3680043.10.54321.9001"
+    rtplan = write_rtplan(workspace / "RTPLAN.dcm", sop_instance_uid=plan_uid)
+    manifest = {
+        "schema_version": "segment_manifest_v2",
+        "case_id": "synthetic",
+        "plan_uid": plan_uid,
+        "workflow_mode": "full_plan",
+        "plan_total_mu": 100.0,
+        "included_total_mu": 100.0,
+        "dose_normalization_mu": 100.0,
+        "segments": [
+            {
+                "segment_id": "seg_b0001_s0000",
+                "beam_number": 1,
+                "beam_meterset_mu": 100.0,
+                "segment_mu": 100.0,
+                "skip_reason": None,
+            }
+        ],
+    }
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     sumtally_output = workspace / "sumtally" / "deposit-target-3D_sum_all_active_segments_totalfield.out"
     sumtally_output.parent.mkdir(parents=True)
     sumtally_output.write_text("merged dose", encoding="utf-8")
@@ -132,7 +208,11 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     }
     (analysis / "sumtally_generation_summary.json").write_text(json.dumps(generation), encoding="utf-8")
     (analysis / "sumtally_execution_summary.json").write_text(json.dumps(execution), encoding="utf-8")
-    return workspace, {"sumtally_output": sumtally_output, "phits_out": phits_out}
+    return workspace, {
+        "sumtally_output": sumtally_output,
+        "phits_out": phits_out,
+        "rtplan": rtplan,
+    }
 
 
 def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
@@ -644,6 +724,9 @@ def test_ct_reference_priority_and_sync_uses_workspace_copy(tmp_path):
     write_dicom(config_ct, modality="CT", frame_uid="2.1.1", study_uid="2.1.2")
     write_dicom(generated_ct, modality="CT", frame_uid="3.1.1", study_uid="3.1.2")
     write_dicom(reference, modality="RTDOSE", frame_uid="9.9.9", study_uid="8.8.8")
+    plan = pydicom.dcmread(str(files["rtplan"]))
+    plan.FrameOfReferenceUID = "9.9.9"
+    plan.save_as(str(files["rtplan"]))
 
     selected, source = select_ct_reference(
         workspace_root=workspace,
@@ -774,10 +857,97 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     output = Path(summary["expected_rtdose_output"])
     ds = pydicom.dcmread(str(output), stop_before_pixels=True)
     assert ds.DoseUnits == "GY"
+    assert ds.DoseSummationType == "PLAN"
+    assert len(ds.ReferencedRTPlanSequence) == 1
+    assert ds.ReferencedRTPlanSequence[0].ReferencedSOPInstanceUID == (
+        "1.2.826.0.1.3680043.10.54321.9001"
+    )
+    assert not hasattr(
+        ds.ReferencedRTPlanSequence[0], "ReferencedFractionGroupSequence"
+    )
     assert "totfact_per_MU=8.7608E+11 source/MU" in ds.DoseComment
     assert summary["absolute_dose_labeling"]["dose_units"] == "GY"
+    assert summary["plan_reference_synchronization"][
+        "previous_dose_summation_type"
+    ] == "BEAM"
+    assert summary["plan_reference_synchronization"]["invariants"] == {
+        "pixel_data_preserved": True,
+        "dose_and_geometry_fields_preserved": True,
+    }
+    assert summary["final_semantic_validation"]["validated"] is True
+    corrected = pydicom.dcmread(summary["coordinate_corrected_rtdose_output"])
+    assert corrected.DoseSummationType == "PLAN"
+    assert corrected.ReferencedRTPlanSequence[0].ReferencedSOPInstanceUID == (
+        "1.2.826.0.1.3680043.10.54321.9001"
+    )
+    assert sorted(corrected.pixel_array.ravel().tolist()) == list(range(24))
+    assert float(corrected.DoseGridScaling) == 0.125
     assert summary["dose_semantics"]["absolute_calibration_approved"] is True
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
+
+
+def test_prepare_rejects_frozen_plan_uid_mismatch(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    plan = pydicom.dcmread(str(files["rtplan"]))
+    plan.SOPInstanceUID = "1.2.826.0.1.3680043.10.54321.9002"
+    plan.save_as(str(files["rtplan"]))
+
+    with pytest.raises(ValueError, match="does not match segment manifest plan_uid"):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+    failure = json.loads(
+        (workspace / "analysis" / "rtdose_conversion_prepare_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "gate_failed"
+    assert failure["phits2dicom_execution_started"] is False
+
+
+@pytest.mark.parametrize(
+    ("manifest_update", "error"),
+    [
+        ({"workflow_mode": "selected_beam"}, "requires workflow_mode full_plan"),
+        ({"included_total_mu": 90.0}, "included_total_mu does not match"),
+    ],
+)
+def test_prepare_rejects_incomplete_full_plan_evidence(
+    tmp_path,
+    manifest_update,
+    error,
+):
+    workspace, files = write_workspace(tmp_path)
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(manifest_update)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(ValueError, match=error):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkeypatch, tmp_path):
@@ -823,6 +993,68 @@ def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkey
     assert calls["cmd"] == [str(exe.resolve())]
     assert calls["cwd"] == str(Path(summary["dat_dir"]).absolute())
     assert summary["stage_status"] == "success"
+
+
+def test_run_fails_when_final_plan_reference_is_corrupted(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            write_coordinate_rtdose(files["sumtally_output"].with_suffix(".dcm"))
+            return "ok", None
+
+    original_fix_coordinates = prepare_rtdose_module.fix_coordinates
+
+    def corrupting_fix_coordinates(input_path, output_path, **kwargs):
+        summary = original_fix_coordinates(input_path, output_path, **kwargs)
+        output = pydicom.dcmread(str(output_path))
+        output.ReferencedRTPlanSequence[0].ReferencedSOPInstanceUID = (
+            "1.2.826.0.1.3680043.10.54321.9998"
+        )
+        output.save_as(str(output_path))
+        return summary
+
+    monkeypatch.setattr(
+        prepare_rtdose_module,
+        "fix_coordinates",
+        corrupting_fix_coordinates,
+    )
+
+    with pytest.raises(ValueError, match="wrong RT Plan SOP Instance UID"):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: FakeProc(),
+        )
+
+    failure = json.loads(
+        (workspace / "analysis" / "rtdose_conversion_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "failed"
+    assert failure["phits2dicom_execution_started"] is True
 
 
 def test_relative_comparison_contract_requires_both_operands_relative(tmp_path):

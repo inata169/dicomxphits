@@ -46,6 +46,7 @@ PHITS_EXE=/path/to/phits/bin/phits
 PHITS2DICOM_EXE=/path/to/phits2dicom
 WORKSPACE=/outside/repo/dicomxphits-smoke-workspace
 CT_DATFILES_ROOT=/outside/repo/non-patient-ct2phits/DATfiles
+FROZEN_RTPLAN=/outside/repo/non-patient-ct2phits/RTPLAN.dcm
 TEMPLATE_DICOM=/outside/repo/template_rtdose.dcm
 CT_REFERENCE_DICOM=/outside/repo/reference_ct.dcm
 REFERENCE_RTDOSE=/outside/repo/reference_rtdose.dcm
@@ -65,7 +66,8 @@ Run `ct2phits.exe` for the confirmed non-patient phantom first.
 directory. It must contain the ordinary CT2PHITS outputs such as
 `CTusrparam.dat`, `CTcell.dat`, `CTmaterial.dat`, `CTuniverse.dat`,
 `CTsurf.dat`, `CTmatnamecolor.dat`, `CTvoxel.dat`, and `phantominfo.dat`.
-Select one CT slice from the same series as `CT_REFERENCE_DICOM`.
+Use that same frozen plan as `FROZEN_RTPLAN` and select one CT slice from the
+same series as `CT_REFERENCE_DICOM`.
 dicomxphits performs the `.dat` to runtime-include preparation and coordinate
 translation itself. Do not select `CT_repaired`, a generated field directory,
 or a directory where files were manually renamed to `.inp`.
@@ -132,6 +134,7 @@ Prepare RTDOSE conversion:
 ```bash
 dicomxphits-prepare-rtdose \
   --workspace-root "$WORKSPACE" \
+  --rtplan "$FROZEN_RTPLAN" \
   --template-dicom "$TEMPLATE_DICOM" \
   --ct-reference-dicom "$CT_REFERENCE_DICOM" \
   --phits-out "$WORKSPACE/sumtally/phits.out"
@@ -144,6 +147,12 @@ dicomxphits-run-rtdose \
   --workspace-root "$WORKSPACE" \
   --phits2dicom-executable-path "$PHITS2DICOM_EXE"
 ```
+
+Use the same frozen RT Plan that produced the workspace manifest. The accepted
+result is the path recorded as `coordinate_corrected_rtdose_output` in
+`analysis/rtdose_conversion_execution_summary.json`, normally the
+`sumtally/*_all_active_segments_totalfield.fixed.dcm` file. RTDOSE Run reports
+failure if this final file is not a PLAN dose referencing that frozen RT Plan.
 
 Optionally execute the external GPR comparison:
 
