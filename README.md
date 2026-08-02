@@ -329,7 +329,11 @@ Official PHITS or RTphits sample files are not bundled in this repository.
 `--rtplan` must identify the same frozen RT Plan used to prepare the 3D-CRT
 workspace. The adapter verifies its SOP Instance UID, Frame of Reference, and
 complete treatment-beam coverage against `segments/segment_manifest.json`.
-Template plan references are not accepted as provenance.
+Referenced non-treatment beams such as `SETUP` are allowed only when the
+manifest retains them as skipped, zero-segment-MU evidence; they are excluded
+from active treatment coverage. The existing full-plan total and normalization
+MU values continue to include every fraction-group referenced beam. Template
+plan references are not accepted as provenance.
 
 Sumtally Generate and Sumtally Run record the canonical SHA-256 of that segment
 manifest and the SHA-256 values of the generated PHITS wrapper and

@@ -17,6 +17,11 @@ Sumtally Run SHALL accept success only when that invocation updates the expected
 dose output and SHALL record its SHA-256. RTDOSE Prepare SHALL verify that
 digest before modifying the output for conversion, and RTDOSE Run SHALL verify
 the post-Prepare digest before conversion.
+Referenced beams whose delivery type is not treatment-eligible SHALL be
+excluded from active treatment coverage only when the manifest represents each
+one as skipped with zero segment MU and a matching beam meterset. The adapter
+SHALL keep the manifest plan, included, and normalization MU totals bound to the
+complete fraction-group referenced beam total.
 
 #### Scenario: Complete accepted plan delivery
 
@@ -24,6 +29,20 @@ the post-Prepare digest before conversion.
   referenced by its fraction groups is covered by the accepted full-plan
   manifest
 - **THEN** the converted RT Dose is labeled `DoseSummationType = PLAN`
+
+#### Scenario: Referenced setup beam is skipped
+
+- **WHEN** a fraction group references a `SETUP` or other non-treatment beam
+  that the manifest retains only as skipped zero-segment-MU evidence, while all
+  treatment-eligible beams have complete active coverage
+- **THEN** the non-treatment beam is excluded from treatment coverage without
+  changing the manifest's full referenced-beam normalization MU
+
+#### Scenario: Non-treatment beam is active or missing skip evidence
+
+- **WHEN** a referenced non-treatment beam is active, has positive segment MU,
+  has a mismatched beam meterset, or lacks its skipped manifest evidence
+- **THEN** the adapter fails before accepting PLAN-dose provenance
 
 #### Scenario: Incomplete or inconsistent delivery
 

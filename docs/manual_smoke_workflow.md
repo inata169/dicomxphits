@@ -160,6 +160,9 @@ wrapper path recorded by Generate and rejects a changed wrapper or
 SHA-256; RTDOSE Prepare verifies it before the IPP title patch, and RTDOSE Run
 verifies the prepared digest. If either summary predates this evidence, rerun
 both Sumtally stages using the existing segment outputs first.
+Referenced non-treatment beams are accepted only as skipped, zero-segment-MU
+manifest entries; active coverage remains limited to treatment-eligible beams,
+while the existing full referenced-beam normalization MU is preserved.
 
 Optionally execute the external GPR comparison:
 

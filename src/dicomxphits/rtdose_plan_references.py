@@ -62,7 +62,9 @@ def _close_mu(actual: float, expected: float) -> bool:
     return math.isclose(actual, expected, rel_tol=0.0, abs_tol=MU_TOLERANCE)
 
 
-def _referenced_treatment_beams(rtplan: Dataset) -> tuple[dict[int, float], list[int]]:
+def _referenced_plan_beams(
+    rtplan: Dataset,
+) -> tuple[dict[int, float], dict[int, float], list[int]]:
     beam_delivery_types: dict[int, str] = {}
     for index, beam in enumerate(getattr(rtplan, "BeamSequence", []) or [], start=1):
         number = _positive_int(
@@ -79,7 +81,9 @@ def _referenced_treatment_beams(rtplan: Dataset) -> tuple[dict[int, float], list
     if not fraction_groups:
         raise ValueError("RT Plan has no FractionGroupSequence")
 
-    metersets: dict[int, float] = {}
+    treatment_metersets: dict[int, float] = {}
+    non_treatment_metersets: dict[int, float] = {}
+    referenced_numbers: set[int] = set()
     fraction_group_numbers: list[int] = []
     for group_index, group in enumerate(fraction_groups, start=1):
         group_number = _positive_int(
@@ -100,7 +104,7 @@ def _referenced_treatment_beams(rtplan: Dataset) -> tuple[dict[int, float], list
                     f"item {item_index} number"
                 ),
             )
-            if number in metersets:
+            if number in referenced_numbers:
                 raise ValueError(
                     f"RT Plan references BeamNumber {number} in more than one fraction group"
                 )
@@ -108,20 +112,22 @@ def _referenced_treatment_beams(rtplan: Dataset) -> tuple[dict[int, float], list
                 raise ValueError(
                     f"RT Plan fraction group references missing BeamNumber {number}"
                 )
-            if beam_delivery_types[number] not in {
+            meterset = _finite_positive(
+                getattr(referenced_beam, "BeamMeterset", None),
+                label=f"RT Plan BeamNumber {number} BeamMeterset",
+            )
+            referenced_numbers.add(number)
+            if beam_delivery_types[number] in {
                 "",
                 "TREATMENT",
                 "CONTINUATION",
             }:
-                raise ValueError(
-                    f"RT Plan fraction group BeamNumber {number} has unsupported "
-                    f"TreatmentDeliveryType {beam_delivery_types[number]}"
-                )
-            metersets[number] = _finite_positive(
-                getattr(referenced_beam, "BeamMeterset", None),
-                label=f"RT Plan BeamNumber {number} BeamMeterset",
-            )
-    return metersets, fraction_group_numbers
+                treatment_metersets[number] = meterset
+            else:
+                non_treatment_metersets[number] = meterset
+    if not treatment_metersets:
+        raise ValueError("RT Plan has no treatment-eligible referenced beams")
+    return treatment_metersets, non_treatment_metersets, fraction_group_numbers
 
 
 def validate_full_plan_context(
@@ -171,7 +177,15 @@ def validate_full_plan_context(
     if str(manifest.get("plan_uid") or "") != sop_instance_uid:
         raise ValueError("Frozen RT Plan SOPInstanceUID does not match segment manifest plan_uid")
 
-    expected_metersets, fraction_group_numbers = _referenced_treatment_beams(rtplan)
+    (
+        expected_metersets,
+        non_treatment_metersets,
+        fraction_group_numbers,
+    ) = _referenced_plan_beams(rtplan)
+    all_referenced_metersets = {
+        **expected_metersets,
+        **non_treatment_metersets,
+    }
     segments = manifest.get("segments")
     if not isinstance(segments, list) or not segments:
         raise ValueError("Full-plan segment manifest has no segments")
@@ -179,6 +193,7 @@ def validate_full_plan_context(
     active_mu: dict[int, float] = {}
     active_segment_counts: dict[int, int] = {}
     skipped_positive_mu: list[str] = []
+    skipped_non_treatment_beams: set[int] = set()
     for index, segment in enumerate(segments, start=1):
         if not isinstance(segment, dict):
             raise ValueError(f"Segment manifest item {index} must be an object")
@@ -190,9 +205,28 @@ def validate_full_plan_context(
             segment.get("segment_mu"),
             label=f"Segment manifest item {index} segment_mu",
         )
+        if number not in all_referenced_metersets:
+            raise ValueError(
+                f"Segment manifest item {index} references BeamNumber {number} "
+                "outside the RT Plan fraction groups"
+            )
         if segment.get("skip_reason"):
             if segment_mu > MU_TOLERANCE:
                 skipped_positive_mu.append(str(segment.get("segment_id") or index))
+            if number in non_treatment_metersets:
+                declared_beam_mu = _finite_positive(
+                    segment.get("beam_meterset_mu"),
+                    label=f"Segment manifest item {index} beam_meterset_mu",
+                )
+                if not _close_mu(
+                    declared_beam_mu,
+                    non_treatment_metersets[number],
+                ):
+                    raise ValueError(
+                        f"Skipped non-treatment BeamNumber {number} meterset "
+                        "does not match the frozen RT Plan"
+                    )
+                skipped_non_treatment_beams.add(number)
             continue
         if segment_mu <= 0.0:
             raise ValueError(
@@ -205,7 +239,7 @@ def validate_full_plan_context(
         expected_beam_mu = expected_metersets.get(number)
         if expected_beam_mu is None:
             raise ValueError(
-                f"Active segment references BeamNumber {number} outside the RT Plan delivery"
+                f"Active segment references non-treatment BeamNumber {number}"
             )
         if not _close_mu(declared_beam_mu, expected_beam_mu):
             raise ValueError(
@@ -219,6 +253,11 @@ def validate_full_plan_context(
             "Full-plan manifest contains skipped positive-MU segments: "
             + ", ".join(skipped_positive_mu)
         )
+    if skipped_non_treatment_beams != set(non_treatment_metersets):
+        raise ValueError(
+            "Non-treatment RT Plan beams must be represented only by skipped "
+            "zero-MU manifest segments"
+        )
     if set(active_mu) != set(expected_metersets):
         raise ValueError(
             "Active segment beam coverage does not match the frozen RT Plan treatment beams"
@@ -229,12 +268,14 @@ def validate_full_plan_context(
                 f"Active segment MU for BeamNumber {number} does not match the frozen RT Plan"
             )
 
-    expected_total_mu = sum(expected_metersets.values())
-    for key in ("plan_total_mu", "included_total_mu"):
+    treatment_total_mu = sum(expected_metersets.values())
+    referenced_plan_total_mu = sum(all_referenced_metersets.values())
+    for key in ("plan_total_mu", "included_total_mu", "dose_normalization_mu"):
         value = _finite_positive(manifest.get(key), label=f"Segment manifest {key}")
-        if not _close_mu(value, expected_total_mu):
+        if not _close_mu(value, referenced_plan_total_mu):
             raise ValueError(
-                f"Segment manifest {key} does not match frozen RT Plan total meterset"
+                f"Segment manifest {key} does not match frozen RT Plan referenced "
+                "beam total meterset"
             )
 
     return {
@@ -249,11 +290,18 @@ def validate_full_plan_context(
             str(number): expected_metersets[number]
             for number in sorted(expected_metersets)
         },
+        "skipped_non_treatment_beam_numbers": sorted(non_treatment_metersets),
+        "skipped_non_treatment_beam_metersets": {
+            str(number): non_treatment_metersets[number]
+            for number in sorted(non_treatment_metersets)
+        },
         "active_segment_counts": {
             str(number): active_segment_counts[number]
             for number in sorted(active_segment_counts)
         },
-        "plan_total_mu": expected_total_mu,
+        "treatment_total_mu": treatment_total_mu,
+        "plan_total_mu": referenced_plan_total_mu,
+        "dose_normalization_mu": referenced_plan_total_mu,
         "manifest_path": str(manifest_path),
         "manifest_sha256": manifest_sha256(manifest),
         "workflow_mode": "full_plan",

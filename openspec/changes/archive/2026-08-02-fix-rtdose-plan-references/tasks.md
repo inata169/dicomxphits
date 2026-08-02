@@ -86,3 +86,14 @@
   Focused Sumtally/RTDOSE/manual-smoke tests passed (58), the full public suite
   passed (485), compilation succeeded, the public-tree audit passed (97 tracked
   files), and strict OpenSpec validation passed (3 specifications).
+
+## 8. Approved Non-Treatment Beam Validation Correction
+
+- [x] 8.1 Derive active coverage from treatment-eligible referenced beams and
+  permit other delivery types only as skipped zero-segment-MU evidence.
+- [x] 8.2 Preserve and validate existing all-referenced-beam plan, included,
+  and normalization MU totals without changing dose calculation.
+- [x] 8.3 Add treatment-plus-SETUP regressions and rerun required validation.
+  Focused workspace/Sumtally/RTDOSE tests passed (107), the full public suite
+  passed (487), compilation succeeded, the public-tree audit passed (97 tracked
+  files), and strict OpenSpec validation passed (3 specifications).

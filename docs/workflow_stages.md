@@ -129,6 +129,11 @@ workflow priority. User-provided DICOM files are copied into the workspace
 before use; source files are not modified in place. The RT Plan SOP Instance
 UID, Frame of Reference, workflow mode, treatment-beam coverage, and MU totals
 must match the accepted segment manifest before conversion can proceed.
+Fraction-group referenced non-treatment beams such as `SETUP` are excluded from
+active treatment coverage only when the manifest preserves them as skipped,
+zero-segment-MU entries. The manifest's plan, included, and normalization MU
+totals remain the full referenced-beam totals, so this validation does not
+alter the existing Sumtally normalization.
 Sumtally Generate and Sumtally Run must also contain the same canonical
 segment-manifest SHA-256 as the current workspace and matching SHA-256 values
 for the generated PHITS wrapper and `sumtally.inp`. Sumtally Run executes only

@@ -75,6 +75,14 @@ RTDOSE Prepare verifies the Run digest before applying its required IPP title
 patch, then records the patched digest for RTDOSE Run to verify immediately
 before conversion.
 
+Fraction-group referenced beams are partitioned by the same treatment
+eligibility rule used during workspace construction. Treatment-eligible beams
+must have complete active coverage. Other delivery types, including `SETUP`,
+must appear only as skipped zero-segment-MU manifest evidence with matching
+beam metersets. Plan, included, and normalization MU totals remain bound to all
+referenced beams, preserving the existing Sumtally normalization and dose
+values.
+
 When that gate passes, the all-active-segments result represents the entire RT
 Plan delivery and will use `DoseSummationType = PLAN`. This change does not add
 support for generating a BEAM or FRACTION dose.

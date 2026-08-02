@@ -262,6 +262,46 @@ def rewrite_sumtally_manifest_digests(
         path.write_text(json.dumps(summary), encoding="utf-8")
 
 
+def add_non_treatment_setup_beam(
+    workspace: Path,
+    rtplan_path: Path,
+    *,
+    active: bool = False,
+) -> None:
+    setup_mu = 10.0
+    plan = pydicom.dcmread(str(rtplan_path))
+    setup_beam = Dataset()
+    setup_beam.BeamNumber = 2
+    setup_beam.TreatmentDeliveryType = "SETUP"
+    plan.BeamSequence.append(setup_beam)
+    setup_reference = Dataset()
+    setup_reference.ReferencedBeamNumber = 2
+    setup_reference.BeamMeterset = setup_mu
+    plan.FractionGroupSequence[0].ReferencedBeamSequence.append(setup_reference)
+    plan.save_as(str(rtplan_path))
+
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["plan_total_mu"] = 110.0
+    manifest["included_total_mu"] = 110.0
+    manifest["dose_normalization_mu"] = 110.0
+    manifest["segments"].append(
+        {
+            "segment_id": "seg_b0002_s0000",
+            "beam_number": 2,
+            "beam_meterset_mu": setup_mu,
+            "segment_mu": setup_mu if active else 0.0,
+            "skip_reason": (
+                None
+                if active
+                else "delivery_type unsupported is not generation-capable"
+            ),
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rewrite_sumtally_manifest_digests(workspace, manifest)
+
+
 def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     workspace, files = write_workspace(tmp_path)
     template = tmp_path / "template.dcm"
@@ -1148,6 +1188,59 @@ def test_prepare_accepts_existing_supported_treatment_delivery_types(
 
     assert summary["stage_status"] == "success"
     assert summary["sumtally_manifest_binding"]["validated"] is True
+
+
+def test_prepare_accepts_skipped_non_treatment_setup_beam(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(workspace, files["rtplan"])
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    evidence = summary["full_plan_evidence"]
+    assert evidence["referenced_beam_numbers"] == [1]
+    assert evidence["skipped_non_treatment_beam_numbers"] == [2]
+    assert evidence["treatment_total_mu"] == 100.0
+    assert evidence["plan_total_mu"] == 110.0
+    assert evidence["dose_normalization_mu"] == 110.0
+
+
+def test_prepare_rejects_active_non_treatment_setup_beam(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(
+        workspace,
+        files["rtplan"],
+        active=True,
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="Active segment references non-treatment BeamNumber 2",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkeypatch, tmp_path):
