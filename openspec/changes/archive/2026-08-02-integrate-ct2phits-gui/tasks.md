@@ -42,7 +42,8 @@
   repository-local Python 3.12 environment.
 - [x] 3.6 Run `python -m pytest -q -p no:cacheprovider`. `462 passed`.
 - [x] 3.7 Run `python tools/verify_public_tree.py`. Public tree audit passed
-  with 86 tracked files checked.
+  after staging the promoted and archived specifications, with 91 tracked files
+  checked.
 - [x] 3.8 Run `git diff --check`, `git diff --stat`, and `git status --short`.
   All checks completed; only the approved GUI change is present.
 
@@ -55,8 +56,6 @@
   The accepted specification was promoted and the change was archived on
   2026-08-02; strict CLI validation was unavailable, so a manual structural
   review confirmed seven requirements and thirteen scenarios in both forms.
-- [ ] 4.4 Create a reviewable pull request without merging it automatically.
-  Publication is currently deferred and blocked because the required GitHub
-  CLI (`gh`) is not installed in this environment. The implementation,
-  acceptance checks, specification promotion, and archive are complete; no
-  commit, push, or pull request has been created yet.
+- [x] 4.4 Create a reviewable pull request without merging it automatically.
+  Draft pull request #5 was created through the GitHub connector on 2026-08-02:
+  https://github.com/inata169/dicomxphits/pull/5
