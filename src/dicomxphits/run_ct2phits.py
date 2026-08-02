@@ -548,6 +548,9 @@ def _default_runner(
         process = subprocess.Popen(
             command_list,
             cwd=str(cwd),
+            # RTphits_win.bat ends with `pause`; its CT2PHITS command redirects
+            # stdin from the generated input file, so close inherited stdin.
+            stdin=subprocess.DEVNULL,
             stdout=stdout,
             stderr=stderr,
         )
