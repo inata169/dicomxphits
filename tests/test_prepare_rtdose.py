@@ -280,8 +280,8 @@ def add_non_treatment_setup_beam(
     rtplan_path: Path,
     *,
     active: bool = False,
+    setup_mu: float = 10.0,
 ) -> None:
-    setup_mu = 10.0
     plan = pydicom.dcmread(str(rtplan_path))
     setup_beam = Dataset()
     setup_beam.BeamNumber = 2
@@ -296,9 +296,10 @@ def add_non_treatment_setup_beam(
 
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["plan_total_mu"] = 110.0
-    manifest["included_total_mu"] = 110.0
-    manifest["dose_normalization_mu"] = 110.0
+    referenced_total_mu = 100.0 + setup_mu
+    manifest["plan_total_mu"] = referenced_total_mu
+    manifest["included_total_mu"] = referenced_total_mu
+    manifest["dose_normalization_mu"] = referenced_total_mu
     manifest["segments"].append(
         {
             "segment_id": "seg_b0002_s0000",
@@ -356,6 +357,14 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert summary["phits_out"] == str(files["phits_out"])
     assert summary["phits2dicom_input_path"].endswith("phits2dicom.inp")
     assert len(summary["phits2dicom_input_sha256"]) == 64
+    referenced_inputs = summary["phits2dicom_referenced_input_evidence"]
+    assert set(referenced_inputs) == {
+        "template_dicom",
+        "ct_reference",
+        "phits_dose",
+        "phits_out",
+    }
+    assert all(len(record["sha256"]) == 64 for record in referenced_inputs.values())
     assert summary["dat_dir"].endswith("DATfiles")
     assert summary["path_config"]["phits2dicom_executable_path"] is None
     assert summary["image_position_patient_patch"]["image_position_patient"] == [1.0, 2.0, 3.0]
@@ -1098,6 +1107,53 @@ def test_run_rejects_phits2dicom_input_changed_after_prepare(tmp_path):
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("role", "summary_field"),
+    [
+        ("template_dicom", "template_dicom_workspace_copy_path"),
+        ("ct_reference", "ct_reference_workspace_copy_path"),
+        ("phits_out", "phits_out"),
+    ],
+)
+def test_run_rejects_converter_referenced_input_changed_after_prepare(
+    tmp_path,
+    role,
+    summary_field,
+):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    referenced_input = Path(prepare[summary_field])
+    referenced_input.write_bytes(referenced_input.read_bytes() + b"changed")
+    calls = []
+
+    with pytest.raises(
+        ValueError,
+        match=f"referenced input {role} changed after RTDOSE Prepare",
+    ):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: calls.append(cmd),
+        )
+
+    assert calls == []
+
+
 def test_prepare_rejects_frozen_plan_uid_mismatch(tmp_path):
     workspace, files = write_workspace(tmp_path)
     template = tmp_path / "template.dcm"
@@ -1346,6 +1402,58 @@ def test_prepare_accepts_skipped_non_treatment_setup_beam(tmp_path):
     assert evidence["treatment_total_mu"] == 100.0
     assert evidence["plan_total_mu"] == 110.0
     assert evidence["dose_normalization_mu"] == 110.0
+
+
+def test_prepare_accepts_zero_mu_skipped_non_treatment_setup_beam(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(
+        workspace,
+        files["rtplan"],
+        setup_mu=0.0,
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    evidence = summary["full_plan_evidence"]
+    assert evidence["skipped_non_treatment_beam_metersets"] == {"2": 0.0}
+    assert evidence["treatment_total_mu"] == 100.0
+    assert evidence["plan_total_mu"] == 100.0
+
+
+def test_prepare_rejects_negative_mu_skipped_non_treatment_setup_beam(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(
+        workspace,
+        files["rtplan"],
+        setup_mu=-1.0,
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(ValueError, match="finite nonnegative number"):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_prepare_rejects_active_non_treatment_setup_beam(tmp_path):

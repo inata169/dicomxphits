@@ -114,12 +114,18 @@ def _referenced_plan_beams(
                 raise ValueError(
                     f"RT Plan fraction group references missing BeamNumber {number}"
                 )
-            meterset = _finite_positive(
+            delivery_type = beam_delivery_types[number]
+            meterset_parser = (
+                _finite_positive
+                if delivery_type in {"", "TREATMENT", "CONTINUATION"}
+                else _finite_nonnegative
+            )
+            meterset = meterset_parser(
                 getattr(referenced_beam, "BeamMeterset", None),
                 label=f"RT Plan BeamNumber {number} BeamMeterset",
             )
             referenced_numbers.add(number)
-            if beam_delivery_types[number] in {
+            if delivery_type in {
                 "",
                 "TREATMENT",
                 "CONTINUATION",
@@ -338,7 +344,7 @@ def validate_full_plan_context(
             if segment_mu > MU_TOLERANCE:
                 skipped_positive_mu.append(str(segment.get("segment_id") or index))
             if number in non_treatment_metersets:
-                declared_beam_mu = _finite_positive(
+                declared_beam_mu = _finite_nonnegative(
                     segment.get("beam_meterset_mu"),
                     label=f"Segment manifest item {index} beam_meterset_mu",
                 )

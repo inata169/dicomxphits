@@ -135,7 +135,8 @@ that record, rebuilding the segment geometry with the manifest's sampling
 policy must reproduce the stored segments exactly.
 Fraction-group referenced non-treatment beams such as `SETUP` are excluded from
 active treatment coverage only when the manifest preserves them as skipped,
-zero-segment-MU entries. The manifest's plan, included, and normalization MU
+zero-segment-MU entries. Their referenced beam meterset may be zero but must be
+finite and nonnegative. The manifest's plan, included, and normalization MU
 totals remain the full referenced-beam totals, so this validation does not
 alter the existing Sumtally normalization.
 Sumtally Generate and Sumtally Run must also contain the same canonical
@@ -149,7 +150,9 @@ post-patch SHA-256 is verified by RTDOSE Run. Legacy workspaces regenerate and
 rerun Sumtally using their existing segment PHITS outputs before RTDOSE
 preparation.
 RTDOSE Prepare also records the generated `phits2dicom.inp` SHA-256; RTDOSE Run
-verifies it immediately before launching the converter.
+verifies it immediately before launching the converter. The workspace template,
+CT reference, prepared Sumtally dose, and companion `phits.out` referenced by
+that input are also hashed during Prepare and revalidated before launch.
 
 The template DICOM must be a phits2dicom-compatible RTDOSE base template with
 the overwrite tags required by phits2dicom already present. The public tree

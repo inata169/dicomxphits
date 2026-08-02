@@ -5,6 +5,11 @@ public repository. It is not an automatically expanding backlog. Update it only
 when a human approves a new goal or when a completed pull request materially
 changes the status described here.
 
+For the detailed same-day record covering the merged CT2PHITS GUI baseline,
+the demonstrated non-patient Windows workflow, and the PR #8 RTDOSE provenance
+review cycle, see
+[`development-progress-2026-08-02.md`](development-progress-2026-08-02.md).
+
 ## Current baseline
 
 - Public release: `v1.0.0`

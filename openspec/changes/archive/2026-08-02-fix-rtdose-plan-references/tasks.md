@@ -111,3 +111,13 @@
   specifications). An additional isolated-commit run collected 490 tests and
   passed 489; the unchanged Windows child-process timeout test failed twice, so
   no out-of-scope process-management change was made.
+
+## 10. Human-Approved Final Review Findings
+
+- [x] 10.1 Record and revalidate SHA-256 evidence for every file referenced by
+  `phits2dicom.inp` before converter launch.
+- [x] 10.2 Accept finite zero meterset for skipped non-treatment beams while
+  preserving the positive-MU requirement for treatment-eligible beams.
+- [x] 10.3 Add mutation and zero-MU regressions and rerun required validation:
+  54 focused tests and the final 497-test public suite passed; compilation,
+  public-tree audit, OpenSpec strict validation, and Git diff checks passed.

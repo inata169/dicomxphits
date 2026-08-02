@@ -44,6 +44,12 @@ IS_BEAM_MU_OUTPUT = False
 DEFAULT_INPUT_DOSE_UNIT = "gy_per_mu"
 DEFAULT_OUTPUT_DICOM_DOSE_UNIT = "GY"
 NORM_MODE_FACTOR = "2"
+PHITS2DICOM_REFERENCED_INPUT_FIELDS = {
+    "template_dicom": "template_dicom_workspace_copy_path",
+    "ct_reference": "ct_reference_workspace_copy_path",
+    "phits_dose": "phits_dose",
+    "phits_out": "phits_out",
+}
 IPP_PATTERN = re.compile(
     r"ImagePositionPatient\s+([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
     r"([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
@@ -624,6 +630,66 @@ def write_text_lf(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
 
 
+def phits2dicom_referenced_input_evidence(
+    *,
+    template_dicom: Path,
+    ct_reference: Path,
+    phits_dose: Path,
+    phits_out: Path,
+) -> dict[str, dict[str, str]]:
+    inputs = {
+        "template_dicom": template_dicom,
+        "ct_reference": ct_reference,
+        "phits_dose": phits_dose,
+        "phits_out": phits_out,
+    }
+    return {
+        role: {
+            "path": str(path.resolve()),
+            "sha256": file_sha256(path),
+        }
+        for role, path in inputs.items()
+    }
+
+
+def validate_phits2dicom_referenced_input_evidence(
+    prepare_summary: dict[str, Any],
+) -> None:
+    evidence = prepare_summary.get("phits2dicom_referenced_input_evidence")
+    if not isinstance(evidence, dict):
+        raise ValueError(
+            "RTDOSE prepare summary is missing phits2dicom referenced input "
+            "evidence; rerun RTDOSE Prepare"
+        )
+    for role, summary_field in PHITS2DICOM_REFERENCED_INPUT_FIELDS.items():
+        record = evidence.get(role)
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"RTDOSE prepare summary is missing {role} digest evidence; "
+                "rerun RTDOSE Prepare"
+            )
+        recorded_path_value = str(record.get("path") or "")
+        expected_path_value = str(prepare_summary.get(summary_field) or "")
+        recorded_sha256 = str(record.get("sha256") or "")
+        if not recorded_path_value or not expected_path_value or not recorded_sha256:
+            raise ValueError(
+                f"RTDOSE prepare summary has incomplete {role} digest evidence; "
+                "rerun RTDOSE Prepare"
+            )
+        recorded_path = Path(recorded_path_value)
+        if recorded_path.resolve() != Path(expected_path_value).resolve():
+            raise ValueError(
+                f"phits2dicom referenced input {role} path changed after "
+                "RTDOSE Prepare; rerun RTDOSE Prepare"
+            )
+        require_existing_file(recorded_path, label=f"phits2dicom {role}")
+        if file_sha256(recorded_path) != recorded_sha256:
+            raise ValueError(
+                f"phits2dicom referenced input {role} changed after RTDOSE "
+                "Prepare; rerun RTDOSE Prepare"
+            )
+
+
 def prepare_rtdose(
     *,
     workspace_root: Path,
@@ -701,6 +767,12 @@ def prepare_rtdose(
         )
         write_text_lf(phits2dicom_inp, stdin_content)
         phits2dicom_input_sha256 = file_sha256(phits2dicom_inp)
+        phits2dicom_referenced_inputs = phits2dicom_referenced_input_evidence(
+            template_dicom=template_copy,
+            ct_reference=ct_selection.workspace_path,
+            phits_dose=phits_dose,
+            phits_out=selected_phits_out,
+        )
         summary = {
             "schema_version": "dicomxphits_public_rtdose_prepare_v1",
             "stage": "prepare_rtdose",
@@ -734,6 +806,7 @@ def prepare_rtdose(
             "dat_dir": str(dat_dir),
             "phits2dicom_input_path": str(phits2dicom_inp),
             "phits2dicom_input_sha256": phits2dicom_input_sha256,
+            "phits2dicom_referenced_input_evidence": phits2dicom_referenced_inputs,
             "phits2dicom_stdin_content": stdin_content,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,
@@ -825,6 +898,7 @@ def run_rtdose(
         prepare_summary = load_json_object(prepare_summary_path(workspace_root))
         if prepare_summary.get("stage_status") != "success":
             raise ValueError("RTDOSE prepare summary is not successful")
+        validate_phits2dicom_referenced_input_evidence(prepare_summary)
         generation, execution = load_sumtally_summaries(workspace_root)
         current_sumtally_binding = validate_sumtally_manifest_binding(
             workspace_root=workspace_root,

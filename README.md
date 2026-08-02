@@ -336,8 +336,9 @@ Plan and the recorded sampling policy.
 Referenced non-treatment beams such as `SETUP` are allowed only when the
 manifest retains them as skipped, zero-segment-MU evidence; they are excluded
 from active treatment coverage. The existing full-plan total and normalization
-MU values continue to include every fraction-group referenced beam. Template
-plan references are not accepted as provenance.
+MU values continue to include every fraction-group referenced beam. Their
+referenced beam meterset may be zero, but must be finite and nonnegative.
+Template plan references are not accepted as provenance.
 
 Sumtally Generate and Sumtally Run record the canonical SHA-256 of that segment
 manifest and the SHA-256 values of the generated PHITS wrapper and
@@ -353,7 +354,10 @@ RTDOSE Prepare and RTDOSE Run. Existing segment PHITS outputs remain reusable.
 
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
 slash-normalized paths and records its SHA-256 during RTDOSE Prepare. RTDOSE Run
-rejects the file if it changed before converter launch. The approved
+rejects the file if it changed before converter launch. Prepare also records
+the SHA-256 of every file named by that input: the workspace template, CT
+reference, prepared Sumtally dose, and companion `phits.out`. Run revalidates
+all four files immediately before conversion. The approved
 public-model `totfact_per_MU` has already
 been applied in each PHITS input, so PHITS2DICOM uses Factor `1.0` and the
 generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its summaries record

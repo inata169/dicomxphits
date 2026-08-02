@@ -89,7 +89,15 @@ from the supplied RT Plan using the manifest sampling and tolerance contract,
 then require exact stored-segment equality. Prepare hashes the generated
 `phits2dicom.inp`, and Run verifies that digest before converter launch so its
 template, CT, dose, output directory, normalization mode, and factor cannot be
-changed after review.
+changed after review. Prepare also hashes the workspace template, CT reference,
+prepared Sumtally dose, and companion `phits.out` named by the input. Run
+revalidates those files before converter launch, because an unchanged input
+line does not prove that its referenced file content stayed unchanged.
+
+Treatment-eligible referenced beams retain the positive-MU requirement.
+Skipped non-treatment beams use a finite nonnegative meterset contract, so a
+zero-MU `SETUP` beam remains valid evidence without becoming active treatment
+coverage or changing normalization.
 
 When that gate passes, the all-active-segments result represents the entire RT
 Plan delivery and will use `DoseSummationType = PLAN`. This change does not add

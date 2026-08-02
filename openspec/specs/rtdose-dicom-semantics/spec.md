@@ -22,15 +22,17 @@ digest before modifying the output for conversion, and RTDOSE Run SHALL verify
 the post-Prepare digest before conversion.
 Referenced beams whose delivery type is not treatment-eligible SHALL be
 excluded from active treatment coverage only when the manifest represents each
-one as skipped with zero segment MU and a matching beam meterset. The adapter
-SHALL keep the manifest plan, included, and normalization MU totals bound to the
-complete fraction-group referenced beam total.
+one as skipped with zero segment MU and a matching finite nonnegative beam
+meterset. The adapter SHALL keep the manifest plan, included, and normalization
+MU totals bound to the complete fraction-group referenced beam total.
 The adapter SHALL bind the frozen RT Plan by its full-file SHA-256 recorded in
 the adjacent completed CT2PHITS workspace manifest. When that legacy evidence
 is absent, it SHALL reconstruct segments from the RT Plan and recorded sampling
 contract and require exact segment-geometry equality. RTDOSE Prepare SHALL also
 record the generated `phits2dicom.inp` SHA-256, and RTDOSE Run SHALL verify it
-before launching the converter.
+before launching the converter. RTDOSE Prepare SHALL record the path and
+SHA-256 of every file referenced by that converter input, and RTDOSE Run SHALL
+revalidate every recorded file immediately before launching the converter.
 
 #### Scenario: Complete accepted plan delivery
 
@@ -46,6 +48,13 @@ before launching the converter.
   treatment-eligible beams have complete active coverage
 - **THEN** the non-treatment beam is excluded from treatment coverage without
   changing the manifest's full referenced-beam normalization MU
+
+#### Scenario: Referenced setup beam has zero meterset
+
+- **WHEN** a referenced non-treatment beam has finite zero beam meterset and is
+  retained only as skipped zero-segment-MU evidence
+- **THEN** the adapter accepts that non-treatment evidence while continuing to
+  require positive meterset for every treatment-eligible beam
 
 #### Scenario: Non-treatment beam is active or missing skip evidence
 
@@ -115,6 +124,12 @@ partial delivery.
 
 - **WHEN** the generated `phits2dicom.inp` no longer matches the SHA-256
   recorded by RTDOSE Prepare
+- **THEN** RTDOSE Run fails before launching `phits2dicom`
+
+#### Scenario: File referenced by converter input changed after preparation
+
+- **WHEN** the workspace template, CT reference, prepared Sumtally dose, or
+  companion `phits.out` no longer matches its RTDOSE Prepare SHA-256
 - **THEN** RTDOSE Run fails before launching `phits2dicom`
 
 ### Requirement: Final RT Dose Semantic Validation
