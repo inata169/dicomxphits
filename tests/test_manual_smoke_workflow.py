@@ -20,6 +20,11 @@ if str(PUBLIC_SRC) not in sys.path:
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.prepare_rtdose import PHITS2DICOM_REQUIRED_TEMPLATE_TAGS, prepare_rtdose, run_rtdose
 from dicomxphits.prepare_sumtally import generate_sumtally, run_sumtally
+from dicomxphits.sumtally_inputs import file_sha256
+
+
+SMOKE_PLAN_UID = "1.2.826.0.1.3680043.10.54321.9101"
+SMOKE_FRAME_UID = "1.2.826.0.1.3680043.10.54321.9102"
 
 
 def synthetic_uid() -> str:
@@ -62,10 +67,18 @@ def add_phits2dicom_template_tags(ds: FileDataset) -> None:
         ds.add_new(tag, vr, required_tag_value(tag, vr))
 
 
-def write_synthetic_dicom(path: Path, *, modality: str) -> None:
+def write_synthetic_dicom(
+    path: Path,
+    *,
+    modality: str,
+    frame_uid: str | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     file_meta = Dataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+    file_meta.MediaStorageSOPClassUID = {
+        "CT": pydicom.uid.CTImageStorage,
+        "RTDOSE": pydicom.uid.RTDoseStorage,
+    }[modality]
     file_meta.MediaStorageSOPInstanceUID = synthetic_uid()
     file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
     ds = FileDataset(str(path), {}, file_meta=file_meta, preamble=b"\0" * 128)
@@ -76,7 +89,7 @@ def write_synthetic_dicom(path: Path, *, modality: str) -> None:
     setattr(ds, "Patient" + "ID", "SYNTHETIC_PATIENT")
     ds.InstitutionName = "SYNTHETIC_INSTITUTION"
     ds.ManufacturerModelName = "SYNTHETIC_MACHINE"
-    ds.FrameOfReferenceUID = synthetic_uid()
+    ds.FrameOfReferenceUID = frame_uid or synthetic_uid()
     ds.StudyInstanceUID = synthetic_uid()
     ds.SeriesInstanceUID = synthetic_uid()
     ds.ImagePositionPatient = ["1.0", "2.0", "3.0"]
@@ -85,8 +98,37 @@ def write_synthetic_dicom(path: Path, *, modality: str) -> None:
     ds.save_as(str(path))
 
 
+def write_synthetic_rtplan(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_meta = Dataset()
+    file_meta.MediaStorageSOPClassUID = pydicom.uid.RTPlanStorage
+    file_meta.MediaStorageSOPInstanceUID = SMOKE_PLAN_UID
+    file_meta.TransferSyntaxUID = pydicom.uid.ExplicitVRLittleEndian
+    ds = FileDataset(str(path), {}, file_meta=file_meta, preamble=b"\0" * 128)
+    ds.SOPClassUID = file_meta.MediaStorageSOPClassUID
+    ds.SOPInstanceUID = SMOKE_PLAN_UID
+    ds.Modality = "RTPLAN"
+    ds.FrameOfReferenceUID = SMOKE_FRAME_UID
+    ds.BeamSequence = []
+    referenced_beams = []
+    for number, meterset in ((1, 80.0), (2, 120.0)):
+        beam = Dataset()
+        beam.BeamNumber = number
+        beam.TreatmentDeliveryType = "TREATMENT"
+        ds.BeamSequence.append(beam)
+        reference = Dataset()
+        reference.ReferencedBeamNumber = number
+        reference.BeamMeterset = meterset
+        referenced_beams.append(reference)
+    fraction_group = Dataset()
+    fraction_group.FractionGroupNumber = 1
+    fraction_group.ReferencedBeamSequence = referenced_beams
+    ds.FractionGroupSequence = [fraction_group]
+    ds.save_as(str(path))
+
+
 def write_coordinate_rtdose(path: Path) -> None:
-    write_synthetic_dicom(path, modality="RTDOSE")
+    write_synthetic_dicom(path, modality="RTDOSE", frame_uid=SMOKE_FRAME_UID)
     ds = pydicom.dcmread(str(path))
     ds.NumberOfFrames = 3
     ds.Rows = 2
@@ -149,7 +191,10 @@ def write_manual_smoke_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     manifest = {
         "schema_version": "segment_manifest_v2",
         "case_id": "synthetic_smoke",
+        "plan_uid": SMOKE_PLAN_UID,
         "workflow_mode": "full_plan",
+        "plan_total_mu": 200.0,
+        "included_total_mu": 200.0,
         "dose_normalization_mu": 200.0,
         "segments": [
             {
@@ -157,7 +202,7 @@ def write_manual_smoke_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
                 "beam_number": 1,
                 "segment_index": 0,
                 "delivery_type": "3dcrt",
-                "beam_meterset_mu": 100.0,
+                "beam_meterset_mu": 80.0,
                 "segment_mu": 80.0,
                 "mu_weight": 80.0,
                 "mu_weight_unit": "MU",
@@ -169,7 +214,7 @@ def write_manual_smoke_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
                 "beam_number": 2,
                 "segment_index": 1,
                 "delivery_type": "3dcrt",
-                "beam_meterset_mu": 100.0,
+                "beam_meterset_mu": 120.0,
                 "segment_mu": 120.0,
                 "mu_weight": 120.0,
                 "mu_weight_unit": "MU",
@@ -181,6 +226,20 @@ def write_manual_smoke_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rtplan_path = workspace / "RTPLAN.dcm"
+    write_synthetic_rtplan(rtplan_path)
+    (workspace / "ct2phits_workspace_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "rtplan": {
+                    "snapshot_path": rtplan_path.name,
+                    "sha256": file_sha256(rtplan_path),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     for segment in manifest["segments"]:
         phits_path = workspace / str(segment["phits_input_path"])
         phits_path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,12 +273,12 @@ def create_segment_outputs(workspace: Path, manifest: dict[str, Any]) -> None:
 
 def create_successful_sumtally_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, Path]]:
     workspace, manifest = write_manual_smoke_workspace(tmp_path)
+    create_segment_outputs(workspace, manifest)
     generation = generate_sumtally(
         workspace_root=workspace,
         paths=tool_paths(tmp_path),
         command_argv=["manual-smoke", "generate-sumtally"],
     )
-    create_segment_outputs(workspace, manifest)
     sumtally_output = Path(generation["outputs"]["sumtally_output"])
     phits_out = workspace / "sumtally" / "phits.out"
 
@@ -248,7 +307,7 @@ def test_manual_smoke_happy_path_uses_tmp_path_only(tmp_path):
     phits2dicom.parent.mkdir(parents=True)
     phits2dicom.write_text("synthetic executable placeholder", encoding="utf-8")
     write_synthetic_dicom(template, modality="RTDOSE")
-    write_synthetic_dicom(ct, modality="CT")
+    write_synthetic_dicom(ct, modality="CT", frame_uid=SMOKE_FRAME_UID)
 
     prepare = prepare_rtdose(
         workspace_root=workspace,
@@ -300,12 +359,15 @@ def test_manual_smoke_happy_path_uses_tmp_path_only(tmp_path):
 
 
 def test_manual_smoke_gate_failure_missing_segment_output_before_sumtally_run(tmp_path):
-    workspace, _manifest = write_manual_smoke_workspace(tmp_path)
+    workspace, manifest = write_manual_smoke_workspace(tmp_path)
+    create_segment_outputs(workspace, manifest)
     generate_sumtally(
         workspace_root=workspace,
         paths=tool_paths(tmp_path),
         command_argv=["manual-smoke", "generate-sumtally"],
     )
+    missing = workspace / str(manifest["segments"][0]["expected_output_path"])
+    missing.unlink()
 
     with pytest.raises(FileNotFoundError, match="Expected segment PHITS output"):
         run_sumtally(
@@ -325,7 +387,7 @@ def test_manual_smoke_gate_failure_missing_phits_out_before_rtdose_prepare(tmp_p
     template = tmp_path / "synthetic_template_rtdose.dcm"
     ct = tmp_path / "synthetic_ct_reference.dcm"
     write_synthetic_dicom(template, modality="RTDOSE")
-    write_synthetic_dicom(ct, modality="CT")
+    write_synthetic_dicom(ct, modality="CT", frame_uid=SMOKE_FRAME_UID)
 
     with pytest.raises(FileNotFoundError, match="phits_out companion file"):
         prepare_rtdose(
@@ -371,7 +433,7 @@ def test_manual_smoke_gate_failure_missing_phits2dicom_executable_before_rtdose_
     template = tmp_path / "synthetic_template_rtdose.dcm"
     ct = tmp_path / "synthetic_ct_reference.dcm"
     write_synthetic_dicom(template, modality="RTDOSE")
-    write_synthetic_dicom(ct, modality="CT")
+    write_synthetic_dicom(ct, modality="CT", frame_uid=SMOKE_FRAME_UID)
     prepare_rtdose(
         workspace_root=workspace,
         paths=tool_paths(tmp_path, phits2dicom=None),

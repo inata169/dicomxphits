@@ -309,6 +309,7 @@ totalfield Sumtally output:
 ```bash
 dicomxphits-prepare-rtdose \
   --workspace-root work/synthetic_case \
+  --rtplan frozen_ct2phits/RTPLAN.dcm \
   --template-dicom user_template.dcm \
   --ct-reference-dicom user_ct_reference.dcm \
   --phits-out work/synthetic_case/sumtally/phits.out
@@ -325,16 +326,60 @@ RTDOSE template with dummy identity values and zeroed PixelData. Clinical RTDOSE
 files that are missing required overwrite tags are rejected during prepare.
 Official PHITS or RTphits sample files are not bundled in this repository.
 
+`--rtplan` must identify the same frozen RT Plan used to prepare the 3D-CRT
+workspace. The adapter verifies its SOP Instance UID, Frame of Reference, and
+complete treatment-beam coverage against `segments/segment_manifest.json`.
+It also verifies the complete frozen RT Plan file against the SHA-256 recorded
+by the adjacent completed CT2PHITS workspace manifest. A legacy handoff without
+that digest must reproduce the same segment geometry when rebuilt from the RT
+Plan and the recorded sampling policy.
+Referenced non-treatment beams such as `SETUP` are allowed only when the
+manifest retains them as skipped, zero-segment-MU evidence; they are excluded
+from active treatment coverage. The existing full-plan total and normalization
+MU values continue to include every fraction-group referenced beam. Their
+referenced beam meterset may be zero, but must be finite and nonnegative.
+Template plan references are not accepted as provenance.
+
+Sumtally Generate and Sumtally Run record the canonical SHA-256 of that segment
+manifest and the SHA-256 values of the generated PHITS wrapper and
+`sumtally.inp`. Sumtally Run rejects a `--sum-input` override unless it resolves
+to the wrapper recorded by Generate, and rejects either generated input when
+its content has changed. Generate also records every active segment output and
+all recursively resolved `infl` files consumed by the wrapper. Run verifies the
+complete dependency set and every digest before PHITS launch. RTDOSE Prepare
+requires the Generate and Run evidence to match. Sumtally Run also requires the
+expected dose output to be newly created or byte-changed by that invocation,
+records its SHA-256, and
+RTDOSE Prepare verifies that digest before applying its documented
+ImagePositionPatient title patch. RTDOSE Run then verifies the prepared dose
+digest. For a workspace created before this evidence was added, rerun Sumtally
+Generate and Sumtally Run before rerunning RTDOSE Prepare and RTDOSE Run.
+Existing segment PHITS outputs remain reusable when their content is unchanged.
+
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
-slash-normalized paths. The approved public-model `totfact_per_MU` has already
+slash-normalized paths and records its SHA-256 during RTDOSE Prepare. RTDOSE Run
+rejects the file if it changed before converter launch. Prepare also records
+the SHA-256 of every file named by that input: the workspace template, CT
+reference, prepared Sumtally dose, and companion `phits.out`. Run revalidates
+all four files immediately before conversion. The converter output must also
+be new or have a changed SHA-256; a timestamp-only change fails before plan
+reference synchronization. The approved
+public-model `totfact_per_MU` has already
 been applied in each PHITS input, so PHITS2DICOM uses Factor `1.0` and the
 generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its summaries record
 `approved_public_model_totfact_per_mu_applied_in_phits` and the exact factor.
-After conversion, `dicomxphits-run-rtdose` also creates a `.fixed.dcm` output.
-This output maps the supported PHITS2DICOM `[frames, rows, columns]` voxel
+After conversion, `dicomxphits-run-rtdose` synchronizes the output to
+`DoseSummationType = PLAN` with exactly one reference to the validated frozen
+RT Plan, then creates the accepted `.fixed.dcm` output next to the Sumtally
+`.out` file. For the default workflow its path is
+`<workspace>/sumtally/deposit-target-3D_sum_all_active_segments_totalfield.fixed.dcm`.
+The execution summary records the exact path in
+`coordinate_corrected_rtdose_output`. This final output maps the supported
+PHITS2DICOM `[frames, rows, columns]` voxel
 layout to the DICOM patient grid, updates spacing and position consistently,
 and preserves stored dose values, `DoseGridScaling`, and the physical volume
-center. Unsupported or ambiguous input geometry fails closed.
+center. The run fails instead of accepting an output whose PLAN reference is
+missing or stale. Unsupported or ambiguous input geometry also fails closed.
 
 This output is absolute dose only for the defined public education and research
 reference model. It does not claim clinical commissioning, universal machine

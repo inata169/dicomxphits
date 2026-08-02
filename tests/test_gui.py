@@ -297,6 +297,7 @@ def test_prepare_rtdose_stage_passes_default_phits_out(tmp_path: Path) -> None:
 
     def fake_runner(cmd, **kwargs):
         assert cmd[0] == "dicomxphits-prepare-rtdose"
+        assert cmd[cmd.index("--rtplan") + 1] == str(Path(config.rtplan_path).resolve())
         assert "--phits-out" in cmd
         assert cmd[cmd.index("--phits-out") + 1] == str(expected_phits_out)
         write_file(summary_path, json.dumps({"stage_status": "success"}))

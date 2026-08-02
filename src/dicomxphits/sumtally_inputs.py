@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -8,6 +9,34 @@ from typing import Any
 
 
 TARGET_TALLY_PATTERNS = ["deposit-target-3D", "deposit_target"]
+
+
+def file_sha256(path: Path) -> str:
+    """Return the SHA-256 digest of one generated Sumtally input file."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def manifest_sha256(manifest: dict[str, Any]) -> str:
+    """Return a stable digest that binds Sumtally evidence to one manifest."""
+
+    try:
+        canonical = json.dumps(
+            manifest,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Segment manifest must be canonical JSON without non-finite numbers"
+        ) from exc
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def write_text(path: Path, content: str) -> None:
@@ -305,11 +334,17 @@ def generate_sum_inp(
     tally_patterns: list[str],
     output_path: Path,
     sumtally_filename: str = "sumtally.inp",
+    include_base_dir: Path | None = None,
 ) -> Path:
     del out_files, sfile, sumfactor, mode
     content = base_inp_path.read_text(encoding="utf-8", errors="replace")
 
     base_dir = Path(base_inp_path).resolve().parent
+    include_dir = (
+        Path(include_base_dir).resolve()
+        if include_base_dir is not None
+        else base_dir
+    )
     output_dir = Path(output_path).resolve().parent
     lines = content.splitlines(keepends=True)
     new_lines: list[str] = []
@@ -372,7 +407,10 @@ def generate_sum_inp(
                     continue
                 if include_path.lower() not in {sumtally_filename.lower(), "sumtally.inp"}:
                     eol = "\r\n" if "\r\n" in line else "\n"
-                    resolved_include = resolve_include_path_for_sumtally(include_path, base_dir)
+                    resolved_include = resolve_include_path_for_sumtally(
+                        include_path,
+                        include_dir,
+                    )
                     new_lines.append(
                         f"{infl_match.group(1)}{resolved_include}{infl_match.group(3)}{infl_match.group(4)}{eol}"
                     )

@@ -30,6 +30,12 @@ from dicomxphits.prepare_3dcrt_workspace import (
     write_json,
 )
 from dicomxphits.prepare_sumtally import load_json_object, resolve_workspace_path
+from dicomxphits.rtdose_plan_references import (
+    synchronize_plan_rtdose,
+    validate_full_plan_context,
+    validate_plan_rtdose,
+)
+from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
 
 INPUT_DOSE_STATE = "sumtally_mu_weighted"
@@ -38,6 +44,12 @@ IS_BEAM_MU_OUTPUT = False
 DEFAULT_INPUT_DOSE_UNIT = "gy_per_mu"
 DEFAULT_OUTPUT_DICOM_DOSE_UNIT = "GY"
 NORM_MODE_FACTOR = "2"
+PHITS2DICOM_REFERENCED_INPUT_FIELDS = {
+    "template_dicom": "template_dicom_workspace_copy_path",
+    "ct_reference": "ct_reference_workspace_copy_path",
+    "phits_dose": "phits_dose",
+    "phits_out": "phits_out",
+}
 IPP_PATTERN = re.compile(
     r"ImagePositionPatient\s+([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
     r"([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
@@ -152,11 +164,12 @@ def write_failure_summary(
     reason: str,
     command_argv: list[str] | None = None,
     extra: dict[str, Any] | None = None,
+    stage_status: str = "gate_failed",
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "schema_version": "dicomxphits_public_rtdose_stage_v1",
         "stage": stage,
-        "stage_status": "gate_failed",
+        "stage_status": stage_status,
         "workspace_root": str(workspace_root),
         "failure_reason": reason,
         "command": {"argv": command_argv or sys.argv},
@@ -179,6 +192,125 @@ def load_sumtally_summaries(workspace_root: Path) -> tuple[dict[str, Any], dict[
     if execution.get("stage_status") != "success":
         raise ValueError("Sumtally execution summary is not successful")
     return generation, execution
+
+
+def validate_sumtally_manifest_binding(
+    *,
+    workspace_root: Path,
+    generation: dict[str, Any],
+    execution: dict[str, Any],
+    verify_sumtally_output: bool = True,
+) -> dict[str, Any]:
+    manifest_path = workspace_root / "segments" / "segment_manifest.json"
+    manifest = load_json_object(manifest_path)
+    current_sha256 = manifest_sha256(manifest)
+    generation_sha256 = str(generation.get("manifest_sha256") or "")
+    execution_sha256 = str(execution.get("manifest_sha256") or "")
+    if not generation_sha256 or not execution_sha256:
+        raise ValueError(
+            "Sumtally manifest digest evidence is missing; rerun Sumtally "
+            "Generate and Sumtally Run"
+        )
+    if generation_sha256 != current_sha256:
+        raise ValueError(
+            "Segment manifest does not match Sumtally Generate evidence; "
+            "rerun Sumtally Generate and Sumtally Run"
+        )
+    if execution_sha256 != generation_sha256:
+        raise ValueError(
+            "Sumtally Run evidence does not match Sumtally Generate; "
+            "rerun Sumtally Run"
+        )
+    input_digests: dict[str, str] = {}
+    for field in ("sum_input_sha256", "sumtally_input_sha256"):
+        generation_input_sha256 = str(generation.get(field) or "")
+        execution_input_sha256 = str(execution.get(field) or "")
+        if not generation_input_sha256 or not execution_input_sha256:
+            raise ValueError(
+                "Sumtally input digest evidence is missing; rerun Sumtally "
+                "Generate and Sumtally Run"
+            )
+        if execution_input_sha256 != generation_input_sha256:
+            raise ValueError(
+                "Sumtally Run input evidence does not match Sumtally Generate; "
+                "rerun Sumtally Run"
+            )
+        input_digests[field] = generation_input_sha256
+    dependency_evidence: dict[str, list[dict[str, str]]] = {}
+    for field in ("segment_output_evidence", "wrapper_include_evidence"):
+        generation_evidence = generation.get(field)
+        execution_evidence = execution.get(field)
+        if not isinstance(generation_evidence, list) or not isinstance(
+            execution_evidence,
+            list,
+        ):
+            raise ValueError(
+                "Sumtally dependency digest evidence is missing; rerun "
+                "Sumtally Generate and Sumtally Run"
+            )
+        if execution_evidence != generation_evidence:
+            raise ValueError(
+                "Sumtally Run dependency evidence does not match Sumtally "
+                "Generate; rerun Sumtally Run"
+            )
+        dependency_evidence[field] = generation_evidence
+    generation_outputs = generation.get("outputs")
+    if not isinstance(generation_outputs, dict):
+        raise ValueError("Sumtally Generate evidence is missing outputs")
+    generation_output_value = str(generation_outputs.get("sumtally_output") or "")
+    execution_output_value = str(execution.get("expected_sumtally_output") or "")
+    if not generation_output_value or not execution_output_value:
+        raise ValueError(
+            "Sumtally output path evidence is missing; rerun Sumtally Generate "
+            "and Sumtally Run"
+        )
+    generation_output = resolve_workspace_path(
+        workspace_root,
+        generation_output_value,
+    ).resolve()
+    execution_output = resolve_workspace_path(
+        workspace_root,
+        execution_output_value,
+    ).resolve()
+    if execution_output != generation_output:
+        raise ValueError(
+            "Sumtally Run output path does not match Sumtally Generate; "
+            "rerun Sumtally Run"
+        )
+    if execution.get("expected_sumtally_output_updated_by_run") is not True:
+        raise ValueError(
+            "Sumtally Run did not prove that it updated the expected output; "
+            "rerun Sumtally Run"
+        )
+    execution_output_sha256 = str(
+        execution.get("expected_sumtally_output_sha256") or ""
+    )
+    if not execution_output_sha256:
+        raise ValueError(
+            "Sumtally output digest evidence is missing; rerun Sumtally Run"
+        )
+    if verify_sumtally_output:
+        require_existing_file(
+            generation_output,
+            label="Sumtally PHITS dose output",
+            non_empty=True,
+        )
+        if file_sha256(generation_output) != execution_output_sha256:
+            raise ValueError(
+                "Sumtally output content does not match Sumtally Run evidence; "
+                "rerun Sumtally Run"
+            )
+    return {
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": current_sha256,
+        "generation_manifest_sha256": generation_sha256,
+        "execution_manifest_sha256": execution_sha256,
+        **input_digests,
+        **dependency_evidence,
+        "sumtally_output_path": str(generation_output),
+        "sumtally_output_sha256": execution_output_sha256,
+        "validated": True,
+    }
 
 
 def validate_sumtally_contract(
@@ -517,12 +649,73 @@ def write_text_lf(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
 
 
+def phits2dicom_referenced_input_evidence(
+    *,
+    template_dicom: Path,
+    ct_reference: Path,
+    phits_dose: Path,
+    phits_out: Path,
+) -> dict[str, dict[str, str]]:
+    inputs = {
+        "template_dicom": template_dicom,
+        "ct_reference": ct_reference,
+        "phits_dose": phits_dose,
+        "phits_out": phits_out,
+    }
+    return {
+        role: {
+            "path": str(path.resolve()),
+            "sha256": file_sha256(path),
+        }
+        for role, path in inputs.items()
+    }
+
+
+def validate_phits2dicom_referenced_input_evidence(
+    prepare_summary: dict[str, Any],
+) -> None:
+    evidence = prepare_summary.get("phits2dicom_referenced_input_evidence")
+    if not isinstance(evidence, dict):
+        raise ValueError(
+            "RTDOSE prepare summary is missing phits2dicom referenced input "
+            "evidence; rerun RTDOSE Prepare"
+        )
+    for role, summary_field in PHITS2DICOM_REFERENCED_INPUT_FIELDS.items():
+        record = evidence.get(role)
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"RTDOSE prepare summary is missing {role} digest evidence; "
+                "rerun RTDOSE Prepare"
+            )
+        recorded_path_value = str(record.get("path") or "")
+        expected_path_value = str(prepare_summary.get(summary_field) or "")
+        recorded_sha256 = str(record.get("sha256") or "")
+        if not recorded_path_value or not expected_path_value or not recorded_sha256:
+            raise ValueError(
+                f"RTDOSE prepare summary has incomplete {role} digest evidence; "
+                "rerun RTDOSE Prepare"
+            )
+        recorded_path = Path(recorded_path_value)
+        if recorded_path.resolve() != Path(expected_path_value).resolve():
+            raise ValueError(
+                f"phits2dicom referenced input {role} path changed after "
+                "RTDOSE Prepare; rerun RTDOSE Prepare"
+            )
+        require_existing_file(recorded_path, label=f"phits2dicom {role}")
+        if file_sha256(recorded_path) != recorded_sha256:
+            raise ValueError(
+                f"phits2dicom referenced input {role} changed after RTDOSE "
+                "Prepare; rerun RTDOSE Prepare"
+            )
+
+
 def prepare_rtdose(
     *,
     workspace_root: Path,
     paths: ExternalToolPaths,
     paths_config: dict[str, Any],
     template_dicom: Path,
+    rtplan_path: Path | None = None,
     ct_reference_dicom: Path | None = None,
     generated_ct_reference_dicom: Path | None = None,
     smoke_dummy_ct_reference: Path | None = None,
@@ -535,6 +728,11 @@ def prepare_rtdose(
     summary_path = prepare_summary_path(workspace_root)
     try:
         generation, execution = load_sumtally_summaries(workspace_root)
+        sumtally_manifest_binding = validate_sumtally_manifest_binding(
+            workspace_root=workspace_root,
+            generation=generation,
+            execution=execution,
+        )
         factor, factor_reason = validate_sumtally_contract(
             generation,
             input_dose_unit=input_dose_unit,
@@ -564,12 +762,18 @@ def prepare_rtdose(
             selection_source=ct_selection_source,
             reference_dicom_for_identity=reference_dicom_for_identity,
         )
+        full_plan_evidence = validate_full_plan_context(
+            rtplan_path=rtplan_path or (workspace_root / "RTPLAN.dcm"),
+            workspace_root=workspace_root,
+            ct_reference_path=ct_selection.workspace_path,
+        )
         ipp_patch_summary = patch_rtdose_inputs_for_ipp(
             workspace_root=workspace_root,
             phits_dose=phits_dose,
             phits_out=selected_phits_out,
             ct_reference_workspace_copy=ct_selection.workspace_path,
         )
+        phits_dose_sha256_after_prepare = file_sha256(phits_dose)
         dat_dir = workspace_root / "rtdose" / "DATfiles"
         phits2dicom_inp = dat_dir / "phits2dicom.inp"
         stdin_content = phits2dicom_input_content(
@@ -581,6 +785,13 @@ def prepare_rtdose(
             factor=factor,
         )
         write_text_lf(phits2dicom_inp, stdin_content)
+        phits2dicom_input_sha256 = file_sha256(phits2dicom_inp)
+        phits2dicom_referenced_inputs = phits2dicom_referenced_input_evidence(
+            template_dicom=template_copy,
+            ct_reference=ct_selection.workspace_path,
+            phits_dose=phits_dose,
+            phits_out=selected_phits_out,
+        )
         summary = {
             "schema_version": "dicomxphits_public_rtdose_prepare_v1",
             "stage": "prepare_rtdose",
@@ -597,7 +808,10 @@ def prepare_rtdose(
             "factor": factor,
             "factor_selection_reason": factor_reason,
             "dose_semantics": public_absolute_dose_semantics(),
+            "sumtally_manifest_binding": sumtally_manifest_binding,
+            "full_plan_evidence": full_plan_evidence,
             "phits_dose": str(phits_dose),
+            "phits_dose_sha256_after_prepare": phits_dose_sha256_after_prepare,
             "phits_out": str(selected_phits_out),
             "phits_out_selection_source": phits_out_source,
             "template_dicom_original_path": str(template_dicom),
@@ -610,6 +824,8 @@ def prepare_rtdose(
             "image_position_patient_patch": ipp_patch_summary,
             "dat_dir": str(dat_dir),
             "phits2dicom_input_path": str(phits2dicom_inp),
+            "phits2dicom_input_sha256": phits2dicom_input_sha256,
+            "phits2dicom_referenced_input_evidence": phits2dicom_referenced_inputs,
             "phits2dicom_stdin_content": stdin_content,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,
@@ -655,6 +871,7 @@ def dicom_snapshot(output_dirs: list[Path]) -> dict[str, dict[str, Any]]:
                     "name": path.name,
                     "size": path.stat().st_size,
                     "mtime_ns": path.stat().st_mtime_ns,
+                    "sha256": file_sha256(path),
                 }
     return snapshot
 
@@ -701,13 +918,81 @@ def run_rtdose(
         prepare_summary = load_json_object(prepare_summary_path(workspace_root))
         if prepare_summary.get("stage_status") != "success":
             raise ValueError("RTDOSE prepare summary is not successful")
+        validate_phits2dicom_referenced_input_evidence(prepare_summary)
+        generation, execution = load_sumtally_summaries(workspace_root)
+        current_sumtally_binding = validate_sumtally_manifest_binding(
+            workspace_root=workspace_root,
+            generation=generation,
+            execution=execution,
+            verify_sumtally_output=False,
+        )
+        if current_sumtally_binding != prepare_summary.get(
+            "sumtally_manifest_binding"
+        ):
+            raise ValueError(
+                "Sumtally manifest binding changed after RTDOSE Prepare; "
+                "rerun RTDOSE Prepare"
+            )
+        recorded_plan_evidence = prepare_summary.get("full_plan_evidence")
+        if not isinstance(recorded_plan_evidence, dict):
+            raise ValueError(
+                "RTDOSE prepare summary is missing full_plan_evidence; rerun RTDOSE Prepare"
+            )
+        recorded_rtplan_path = str(recorded_plan_evidence.get("rtplan_path") or "")
+        recorded_ct_path = str(
+            prepare_summary.get("ct_reference_workspace_copy_path") or ""
+        )
+        if not recorded_rtplan_path or not recorded_ct_path:
+            raise ValueError(
+                "RTDOSE prepare summary is missing frozen plan or CT reference evidence"
+            )
+        plan_evidence = validate_full_plan_context(
+            rtplan_path=Path(recorded_rtplan_path),
+            workspace_root=workspace_root,
+            ct_reference_path=Path(recorded_ct_path),
+        )
+        if plan_evidence != recorded_plan_evidence:
+            raise ValueError(
+                "Frozen RT Plan or full-plan workspace evidence changed after RTDOSE Prepare"
+            )
         phits2dicom_inp = Path(str(prepare_summary.get("phits2dicom_input_path") or ""))
         require_existing_file(phits2dicom_inp, label="phits2dicom input")
+        prepared_phits2dicom_input_sha256 = str(
+            prepare_summary.get("phits2dicom_input_sha256") or ""
+        )
+        if not prepared_phits2dicom_input_sha256:
+            raise ValueError(
+                "RTDOSE prepare summary is missing phits2dicom input digest; "
+                "rerun RTDOSE Prepare"
+            )
+        if file_sha256(phits2dicom_inp) != prepared_phits2dicom_input_sha256:
+            raise ValueError(
+                "phits2dicom input changed after RTDOSE Prepare; "
+                "rerun RTDOSE Prepare"
+            )
         dat_dir = Path(str(prepare_summary.get("dat_dir") or phits2dicom_inp.parent))
         phits_dose_value = str(prepare_summary.get("phits_dose") or "")
         if not phits_dose_value:
             raise ValueError("RTDOSE prepare summary is missing phits_dose")
         phits_dose = Path(phits_dose_value)
+        require_existing_file(
+            phits_dose,
+            label="Prepared Sumtally PHITS dose output",
+            non_empty=True,
+        )
+        prepared_phits_dose_sha256 = str(
+            prepare_summary.get("phits_dose_sha256_after_prepare") or ""
+        )
+        if not prepared_phits_dose_sha256:
+            raise ValueError(
+                "RTDOSE prepare summary is missing the prepared PHITS dose digest; "
+                "rerun RTDOSE Prepare"
+            )
+        if file_sha256(phits_dose) != prepared_phits_dose_sha256:
+            raise ValueError(
+                "Prepared Sumtally PHITS dose changed after RTDOSE Prepare; "
+                "rerun RTDOSE Prepare"
+            )
         expected_rtdose_output = phits_dose.with_suffix(".dcm")
         output_dirs = unique_output_dirs(dat_dir, phits_dose.parent)
         stdin_content = phits2dicom_inp.read_text(encoding="utf-8")
@@ -729,17 +1014,31 @@ def run_rtdose(
         expected_after_conversion = after_conversion.get(expected_key)
         expected_updated = (
             expected_after_conversion is not None
-            and expected_after_conversion != expected_before
+            and (
+                expected_before is None
+                or expected_after_conversion["sha256"]
+                != expected_before["sha256"]
+            )
         )
         absolute_labeling = None
+        plan_reference_synchronization = None
         coordinate_correction = None
+        final_semantic_validation = None
         coordinate_corrected_output = corrected_rtdose_path(expected_rtdose_output)
         if returncode == 0 and expected_updated:
             absolute_labeling = mark_rtdose_absolute(expected_rtdose_output)
+            plan_reference_synchronization = synchronize_plan_rtdose(
+                expected_rtdose_output,
+                plan_evidence=plan_evidence,
+            )
             coordinate_correction = fix_coordinates(
                 expected_rtdose_output,
                 coordinate_corrected_output,
                 summary_path=coordinate_summary_path(coordinate_corrected_output),
+            )
+            final_semantic_validation = validate_plan_rtdose(
+                coordinate_corrected_output,
+                plan_evidence=plan_evidence,
             )
         after = dicom_snapshot(output_dirs)
         new_paths = sorted(set(after) - set(before))
@@ -758,6 +1057,7 @@ def run_rtdose(
             if returncode == 0
             and expected_updated
             and coordinate_corrected_exists
+            and bool(final_semantic_validation and final_semantic_validation["validated"])
             and bool(
                 coordinate_correction
                 and coordinate_correction["invariants"][
@@ -792,6 +1092,9 @@ def run_rtdose(
             "expected_rtdose_output_size": expected_size,
             "expected_rtdose_output_preexisting": expected_before is not None,
             "expected_rtdose_output_updated_by_run": expected_updated,
+            "expected_rtdose_output_before_run": expected_before,
+            "expected_rtdose_output_after_conversion": expected_after_conversion,
+            "expected_rtdose_output_after_run": expected_after,
             "coordinate_corrected_rtdose_output": str(coordinate_corrected_output),
             "coordinate_corrected_rtdose_output_exists": coordinate_corrected_exists,
             "coordinate_corrected_rtdose_output_size": coordinate_corrected_size,
@@ -805,6 +1108,8 @@ def run_rtdose(
             "factor": prepare_summary.get("factor"),
             "dose_semantics": prepare_summary.get("dose_semantics"),
             "absolute_dose_labeling": absolute_labeling,
+            "plan_reference_synchronization": plan_reference_synchronization,
+            "final_semantic_validation": final_semantic_validation,
         }
         write_json(summary_path, summary)
         return summary
@@ -816,6 +1121,7 @@ def run_rtdose(
             reason=str(exc),
             command_argv=command_argv,
             extra={"phits2dicom_execution_started": execution_started},
+            stage_status="failed" if execution_started else "gate_failed",
         )
         raise
 
@@ -840,6 +1146,7 @@ def build_prepare_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phits-root-folder", default=None)
     parser.add_argument("--phits-executable-path", default=None)
     parser.add_argument("--phits2dicom-executable-path", default=None)
+    parser.add_argument("--rtplan", required=True)
     parser.add_argument("--template-dicom", required=True)
     parser.add_argument("--ct-reference-dicom", default=None)
     parser.add_argument("--generated-ct-reference-dicom", default=None)
@@ -869,6 +1176,7 @@ def prepare_main(argv: list[str] | None = None) -> int:
             workspace_root=Path(args.workspace_root),
             paths=paths,
             paths_config=raw_config,
+            rtplan_path=Path(args.rtplan),
             template_dicom=Path(args.template_dicom),
             ct_reference_dicom=Path(args.ct_reference_dicom) if args.ct_reference_dicom else None,
             generated_ct_reference_dicom=Path(args.generated_ct_reference_dicom)

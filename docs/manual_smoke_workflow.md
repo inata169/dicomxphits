@@ -46,6 +46,7 @@ PHITS_EXE=/path/to/phits/bin/phits
 PHITS2DICOM_EXE=/path/to/phits2dicom
 WORKSPACE=/outside/repo/dicomxphits-smoke-workspace
 CT_DATFILES_ROOT=/outside/repo/non-patient-ct2phits/DATfiles
+FROZEN_RTPLAN=/outside/repo/non-patient-ct2phits/RTPLAN.dcm
 TEMPLATE_DICOM=/outside/repo/template_rtdose.dcm
 CT_REFERENCE_DICOM=/outside/repo/reference_ct.dcm
 REFERENCE_RTDOSE=/outside/repo/reference_rtdose.dcm
@@ -65,7 +66,8 @@ Run `ct2phits.exe` for the confirmed non-patient phantom first.
 directory. It must contain the ordinary CT2PHITS outputs such as
 `CTusrparam.dat`, `CTcell.dat`, `CTmaterial.dat`, `CTuniverse.dat`,
 `CTsurf.dat`, `CTmatnamecolor.dat`, `CTvoxel.dat`, and `phantominfo.dat`.
-Select one CT slice from the same series as `CT_REFERENCE_DICOM`.
+Use that same frozen plan as `FROZEN_RTPLAN` and select one CT slice from the
+same series as `CT_REFERENCE_DICOM`.
 dicomxphits performs the `.dat` to runtime-include preparation and coordinate
 translation itself. Do not select `CT_repaired`, a generated field directory,
 or a directory where files were manually renamed to `.inp`.
@@ -132,6 +134,7 @@ Prepare RTDOSE conversion:
 ```bash
 dicomxphits-prepare-rtdose \
   --workspace-root "$WORKSPACE" \
+  --rtplan "$FROZEN_RTPLAN" \
   --template-dicom "$TEMPLATE_DICOM" \
   --ct-reference-dicom "$CT_REFERENCE_DICOM" \
   --phits-out "$WORKSPACE/sumtally/phits.out"
@@ -144,6 +147,34 @@ dicomxphits-run-rtdose \
   --workspace-root "$WORKSPACE" \
   --phits2dicom-executable-path "$PHITS2DICOM_EXE"
 ```
+
+Use the same frozen RT Plan that produced the workspace manifest. The accepted
+result is the path recorded as `coordinate_corrected_rtdose_output` in
+`analysis/rtdose_conversion_execution_summary.json`, normally the
+`sumtally/*_all_active_segments_totalfield.fixed.dcm` file. RTDOSE Run reports
+failure if this final file is not a PLAN dose referencing that frozen RT Plan.
+RTDOSE preparation also requires matching manifest and generated-input SHA-256
+evidence from Sumtally Generate and Sumtally Run. Sumtally Run accepts only the
+wrapper path recorded by Generate and rejects a changed wrapper or
+`sumtally.inp`. Generate records every active segment output and recursively
+resolved wrapper `infl` file; Run verifies the same dependency set and digests
+before PHITS launch. Run must create or byte-change the expected dose output and
+records its SHA-256; a timestamp-only change is rejected. RTDOSE Prepare
+verifies the Generate/Run evidence before the IPP title
+patch, and RTDOSE Run verifies the prepared digest. If either summary predates
+this evidence, rerun both Sumtally stages using the existing unchanged segment
+outputs first.
+Referenced non-treatment beams are accepted only as skipped, zero-segment-MU
+manifest entries; active coverage remains limited to treatment-eligible beams,
+while the existing full referenced-beam normalization MU is preserved. A
+non-treatment referenced beam meterset may be zero but must not be negative or
+non-finite.
+The frozen RT Plan is bound by the completed CT2PHITS manifest SHA-256, with
+exact segment-geometry reconstruction as the legacy fallback. The generated
+`phits2dicom.inp` digest is also checked between RTDOSE Prepare and Run, along
+with the digests of its template, CT, prepared dose, and `phits.out` inputs.
+The converter must create or byte-change its expected RTDOSE; merely touching a
+stale output fails before plan-reference synchronization.
 
 Optionally execute the external GPR comparison:
 

@@ -124,6 +124,14 @@ def finite_positive(value: Any) -> bool:
     return math.isfinite(number) and number > 0.0
 
 
+def finite_nonnegative(value: Any) -> bool:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number) and number >= 0.0
+
+
 def active_segments(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     segments = manifest.get("segments")
     if not isinstance(segments, list):
@@ -151,8 +159,18 @@ def validate_public_strict_3dcrt_gate(manifest: dict[str, Any]) -> dict[str, Any
             continue
         seen_beams.add(beam_key)
         label = str(segment.get("beam_number_label") or f"beam {beam_key}")
-        if not finite_positive(segment.get("beam_meterset_mu")):
-            failures.append(f"{label}: beam_meterset_mu must be present, positive, and finite")
+        delivery_type = str(segment.get("delivery_type") or "")
+        skipped_non_treatment = bool(segment.get("skip_reason")) and delivery_type == "unsupported"
+        valid_beam_mu = (
+            finite_nonnegative(segment.get("beam_meterset_mu"))
+            if skipped_non_treatment
+            else finite_positive(segment.get("beam_meterset_mu"))
+        )
+        if not valid_beam_mu:
+            requirement = "nonnegative" if skipped_non_treatment else "positive"
+            failures.append(
+                f"{label}: beam_meterset_mu must be present, {requirement}, and finite"
+            )
 
     for index, segment in enumerate(active, start=1):
         label = str(segment.get("segment_id") or f"active segment {index}")

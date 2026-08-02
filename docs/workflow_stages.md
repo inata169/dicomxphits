@@ -123,9 +123,42 @@ records the conversion contract:
 - `totfact_per_MU = 8.7608E+11 source/MU` is already applied in PHITS
 - `normalization_rule = approved_public_model_totfact_per_mu_applied_in_phits`
 
-The adapter requires a user-specified template DICOM and a CT reference selected
-by the public workflow priority. User-provided DICOM files are copied into the
-workspace before use; source files are not modified in place.
+The adapter requires the frozen RT Plan used for workspace preparation, a
+user-specified template DICOM, and a CT reference selected by the public
+workflow priority. User-provided DICOM files are copied into the workspace
+before use; source files are not modified in place. The RT Plan SOP Instance
+UID, Frame of Reference, workflow mode, treatment-beam coverage, and MU totals
+must match the accepted segment manifest before conversion can proceed.
+The supplied frozen RT Plan must match the full-file SHA-256 recorded in the
+adjacent completed CT2PHITS workspace manifest. For a legacy handoff without
+that record, rebuilding the segment geometry with the manifest's sampling
+policy must reproduce the stored segments exactly.
+Fraction-group referenced non-treatment beams such as `SETUP` are excluded from
+active treatment coverage only when the manifest preserves them as skipped,
+zero-segment-MU entries. Their referenced beam meterset may be zero but must be
+finite and nonnegative. The manifest's plan, included, and normalization MU
+totals remain the full referenced-beam totals, so this validation does not
+alter the existing Sumtally normalization.
+Sumtally Generate and Sumtally Run must also contain the same canonical
+segment-manifest SHA-256 as the current workspace and matching SHA-256 values
+for the generated PHITS wrapper and `sumtally.inp`. Sumtally Run executes only
+the recorded wrapper path and fails before PHITS execution if either generated
+input changed. Generate also records every active segment output and every
+recursively resolved `infl` file consumed by the wrapper; Run revalidates the
+dependency set and digests before PHITS execution. Missing or mismatched
+evidence fails before RTDOSE conversion. The expected Sumtally dose output must
+be newly created or have a changed SHA-256 from the recorded Run; timestamp-only
+updates are rejected. Its SHA-256 is verified by RTDOSE Prepare before the IPP
+title patch, and the post-patch SHA-256 is verified by RTDOSE Run.
+Legacy workspaces regenerate and rerun Sumtally using their existing unchanged
+segment PHITS outputs before RTDOSE preparation.
+RTDOSE Prepare also records the generated `phits2dicom.inp` SHA-256; RTDOSE Run
+verifies it immediately before launching the converter. The workspace template,
+CT reference, prepared Sumtally dose, and companion `phits.out` referenced by
+that input are also hashed during Prepare and revalidated before launch.
+The produced RTDOSE must likewise be new or have a different SHA-256 from any
+preexisting expected output. A timestamp-only change fails before plan-reference
+synchronization.
 
 The template DICOM must be a phits2dicom-compatible RTDOSE base template with
 the overwrite tags required by phits2dicom already present. The public tree
@@ -135,18 +168,25 @@ tags are missing. Public workflows must not fall back to
 repository-local PHITS or RTphits sample files.
 
 After successful conversion, the generated DICOM is explicitly labeled
-`DoseUnits = GY`; the sidecar summary records the same semantics and the
-approved factor identity. The result is absolute dose only for the defined
-public education and research model. It is not evidence of clinical
+`DoseUnits = GY` and `DoseSummationType = PLAN`. Its single
+`ReferencedRTPlanSequence` item is synchronized to the validated frozen RT
+Plan; stale fraction-group or beam references inherited from the template are
+removed. The sidecar summary records the same semantics, exact plan-reference
+validation, and the approved factor identity. The result is absolute dose only
+for the defined public education and research model. It is not evidence of clinical
 commissioning, universal machine `Gy/MU` accuracy, vendor approval, or
 agreement with a physical Elekta unit.
 
-The conversion stage then creates a separate `.fixed.dcm` file. It transposes
+The conversion stage then creates the accepted separate `.fixed.dcm` file next
+to the Sumtally dose output. The execution summary identifies it as
+`coordinate_corrected_rtdose_output`. It transposes
 the supported PHITS2DICOM voxel layout from `[frames, rows, columns]` to
 `[rows, frames, columns]`, updates `PixelSpacing`,
 `GridFrameOffsetVector`, and `ImagePositionPatient`, and preserves the physical
-volume center and dose values. Ambiguous frame offsets or unsupported
-orientation fail before a corrected output is accepted.
+volume center and dose values. The final file is reopened and its PLAN
+summation, frozen-plan reference, Frame of Reference, and GY units are checked
+before success is reported. Ambiguous frame offsets, unsupported orientation,
+or stale plan references fail before a corrected output is accepted.
 
 ## GPR-comparing Boundary
 
