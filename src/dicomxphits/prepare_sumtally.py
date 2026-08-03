@@ -19,6 +19,7 @@ from dicomxphits.prepare_3dcrt_workspace import (
     validate_public_strict_3dcrt_gate,
     write_json,
 )
+from dicomxphits.run_segments import phits_environment
 from dicomxphits.sumtally_inputs import (
     TARGET_TALLY_PATTERNS,
     build_sumtally,
@@ -524,6 +525,7 @@ def run_phits_sumtally(
     stderr_path: Path,
     runner=subprocess.run,
 ) -> subprocess.CompletedProcess[str]:
+    environment = phits_environment(sum_input)
     with sum_input.open("r", encoding="utf-8", errors="replace") as stdin:
         result = runner(
             [phits_executable_path],
@@ -532,6 +534,7 @@ def run_phits_sumtally(
             capture_output=True,
             text=True,
             shell=False,
+            env=environment,
         )
     stdout_path.parent.mkdir(parents=True, exist_ok=True)
     stdout_path.write_text(result.stdout or "", encoding="utf-8")

@@ -244,6 +244,7 @@ def write_manual_smoke_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
         phits_path = workspace / str(segment["phits_input_path"])
         phits_path.parent.mkdir(parents=True, exist_ok=True)
         phits_path.write_text(
+            "$OMP = 8\n"
             "[ Parameters ]\n"
             "  icntl = 0\n"
             "  file(6) = phits.out\n"
@@ -284,6 +285,7 @@ def create_successful_sumtally_workspace(tmp_path: Path) -> tuple[Path, dict[str
 
     def fake_phits_runner(cmd, **kwargs):
         assert kwargs["shell"] is False
+        assert kwargs["env"]["OMP_NUM_THREADS"] == "8"
         sumtally_output.write_text("synthetic merged dose", encoding="utf-8")
         phits_out.write_text("synthetic phits companion", encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="synthetic sumtally ok", stderr="")

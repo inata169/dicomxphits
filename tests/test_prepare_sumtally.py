@@ -58,6 +58,7 @@ def write_workspace(tmp_path, *segments, metadata=None):
         phits_path.parent.mkdir(parents=True, exist_ok=True)
         expected_output_name = Path(str(segment["expected_output_path"]).replace("\\", "/")).name
         phits_path.write_text(
+            "$OMP = 8\n"
             "[ Parameters ]\n"
             "  icntl = 0\n"
             "  file(6) = phits.out\n"
@@ -630,6 +631,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         calls["capture_output"] = kwargs["capture_output"]
         calls["text"] = kwargs["text"]
         calls["shell"] = kwargs["shell"]
+        calls["env"] = kwargs["env"]
         expected_output.write_text("merged dose", encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="sum warn")
 
@@ -647,6 +649,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     assert calls["capture_output"] is True
     assert calls["text"] is True
     assert calls["shell"] is False
+    assert calls["env"]["OMP_NUM_THREADS"] == "8"
     assert summary["returncode"] == 0
     assert summary["phits_execution_started"] is True
     assert summary["expected_sumtally_output_exists"] is True
