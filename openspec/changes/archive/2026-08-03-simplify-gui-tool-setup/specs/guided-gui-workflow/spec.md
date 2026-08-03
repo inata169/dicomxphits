@@ -1,34 +1,6 @@
-# Guided GUI Workflow Specification
+# Guided GUI Workflow Delta
 
-## Purpose
-
-Define the safe, usable desktop workflow that invokes the accepted CT2PHITS
-frontend, validates a local tool profile without executing it, preserves the
-frozen handoff, remembers stable local settings without persisting case or
-safety state, and keeps later fixed-field 3D-CRT stages separately gated.
-
-## Requirements
-
-### Requirement: Integrated CT2PHITS GUI Stage
-
-The GUI SHALL expose the accepted Windows CT2PHITS frontend as the first guided
-stage and SHALL invoke `dicomxphits-run-ct2phits` without a shell. It MUST pass
-the user-supplied CT DICOM root, source RT Plan, RT-PHITS root, new CT2PHITS
-workspace, optional CT series UID, positive timeout, and explicit non-patient
-phantom confirmation. It MUST NOT invoke `ct2phits_win.exe` directly or
-duplicate the frontend's DICOM, workspace, process, or output validation.
-
-#### Scenario: Confirmed guided execution
-
-- **WHEN** a Windows user supplies the required paths, selects a new CT2PHITS
-  workspace, and explicitly confirms non-patient phantom data
-- **THEN** the GUI invokes the accepted CT2PHITS CLI with the corresponding
-  arguments and displays its execution evidence
-
-#### Scenario: Missing explicit confirmation
-
-- **WHEN** the non-patient phantom confirmation is not selected
-- **THEN** the GUI rejects CT2PHITS execution before starting a subprocess
+## ADDED Requirements
 
 ### Requirement: Validated Local Tool Profile
 
@@ -119,6 +91,8 @@ inside the dicomxphits repository.
 - **THEN** the GUI reports that a new output path is required and does not
   overwrite or reuse the directory
 
+## MODIFIED Requirements
+
 ### Requirement: Safe Path Suggestions
 
 The GUI SHALL keep every effective external input and workspace path visible.
@@ -151,26 +125,6 @@ bounded supported path candidates required to validate the local tool profile.
   contains an explicit user value
 - **THEN** the GUI preserves that value instead of silently replacing it with a
   standard-layout candidate
-
-### Requirement: Frozen CT2PHITS Handoff
-
-After the CT2PHITS execution summary reports completion, the GUI SHALL set the
-downstream preparation inputs to the documented frozen RT Plan, CT reference,
-and DATfiles paths inside that CT2PHITS workspace. It SHALL keep the existing
-manual validated-DATfiles handoff available as an advanced compatibility path.
-
-#### Scenario: Completed frontend handoff
-
-- **WHEN** the accepted CT2PHITS stage completes successfully
-- **THEN** downstream preparation uses `<ct2phits-workspace>/RTPLAN.dcm`,
-  `<ct2phits-workspace>/CT/CT000001.dcm`, and
-  `<ct2phits-workspace>/DATfiles`
-
-#### Scenario: Failed or incomplete frontend
-
-- **WHEN** CT2PHITS execution fails or lacks a completed summary
-- **THEN** the GUI does not claim or automatically apply a successful frozen
-  handoff
 
 ### Requirement: Local GUI Settings and Independent Browse History
 
@@ -207,49 +161,3 @@ when the local settings file is missing, invalid, or unreadable.
 
 - **WHEN** the GUI starts with saved local settings
 - **THEN** non-patient confirmation and overwrite permission are both false
-
-### Requirement: Guided Visual Hierarchy and Accessibility
-
-The GUI SHALL group source inputs, local tool settings, derived handoff,
-downstream stages, and execution evidence in workflow order. It SHALL provide
-visible keyboard focus, readable text and controls, and status information that
-does not rely on color alone. Advanced fields SHALL be visually subordinate to
-the primary workflow.
-
-#### Scenario: Initial guided screen
-
-- **WHEN** the GUI opens
-- **THEN** the CT2PHITS source inputs and first safe action are visually primary,
-  advanced fields are not mixed into the primary form, and the supported public
-  scope remains visible
-
-#### Scenario: Stage result
-
-- **WHEN** a stage completes or fails validation
-- **THEN** the GUI identifies the stage, status text, relevant summary path or
-  controlled error, and the next available action without relying only on color
-
-### Requirement: Exclusive Responsive Stage Execution
-
-The GUI SHALL keep the Tk event loop responsive while an external stage runs
-and SHALL prevent another external stage from starting concurrently. It SHALL
-continue to use each accepted adapter's existing timeout and failure evidence
-rather than adding a bypassing process-cancellation path.
-
-#### Scenario: Stage in progress
-
-- **WHEN** one external stage is running
-- **THEN** all other stage actions are disabled and the active stage is shown as
-  in progress until a controlled result is available
-
-### Requirement: Synthetic GUI Validation Boundary
-
-Automated GUI tests SHALL use temporary synthetic files and fake or mock runners.
-They MUST NOT run real RT-PHITS, PHITS, Sumtally, phits2dicom, GPR-comparing, or
-real DICOM workflows.
-
-#### Scenario: Automated integrated-flow test
-
-- **WHEN** the CT2PHITS-to-workspace GUI handoff is tested automatically
-- **THEN** fake stage evidence and temporary placeholder paths are used without
-  executing an external licensed tool

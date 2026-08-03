@@ -149,6 +149,25 @@ The workflow must keep these paths separate:
 - PHITS executable path: used for PHITS and Sumtally execution
 - phits2dicom executable path: used for RTDOSE conversion
 
+The guided Windows GUI normally derives these separate runtime paths from one
+`PHITS installation folder`. Its initial supported standard profile is the
+PHITS 3.35-style Windows layout:
+
+```text
+<PHITS installation folder>/
+├─ bin/phits_win.exe
+└─ utility/RTphits/
+   ├─ RTphits_win.bat
+   ├─ data/HumanVoxelTable.data
+   └─ bin/phits2dicom*.exe
+```
+
+Exactly one `phits2dicom*.exe` must be present directly in the shown `bin`
+folder for automatic selection. The GUI checks only these bounded relative
+paths and does not run an external tool during setup validation. A future or
+nonstandard layout remains usable through the explicit custom-layout controls;
+the GUI does not guess when a component is missing or ambiguous.
+
 No PHITS or RTphits official distribution file is bundled in this tree.
 The user's separately obtained licensed installations are external
 prerequisites. The optional Windows CT2PHITS frontend requires the user-supplied
@@ -236,15 +255,28 @@ successful CT2PHITS run, it automatically passes the frozen `RTPLAN.dcm`,
 `CT/CT000001.dcm`, and `DATfiles` paths to workspace preparation. An existing
 validated handoff can still be entered from the advanced workspace controls.
 
-Selecting an RT Plan may suggest its parent as the CT folder and may propose
-new workspace names from roots already selected by the user. These suggestions
-remain editable. The GUI does not recursively scan for DICOM, discover an
-RT-PHITS or PHITS installation, or bypass the explicit non-patient confirmation.
+For first-time standard setup, open **Tool settings**, select the licensed
+**PHITS installation folder**, and choose **Validate and save setup**. After
+that, a normal case requires only the source RT Plan and CT DICOM folder. The
+GUI derives a visible new CT2PHITS case output below
+`<RT-PHITS root>/work/`; changing the RT Plan or effective RT-PHITS root
+replaces the previous derived value instead of retaining a stale workspace.
 
-Stable local tool paths and each field's most recent Browse directory are saved
-to the ignored `config/dicomxphits.gui.local.json` file. The non-patient
-confirmation and overwrite permission are never persisted and always start
-cleared. The tracked repository does not contain populated local paths.
+Selecting an RT Plan may suggest its parent as the CT folder. Explicit CT input
+values remain editable, while standard-profile tool paths and CT2PHITS case
+output are read-only derived values. The GUI does not recursively scan for
+DICOM, search the computer for installations, run setup-time external tools,
+or bypass the explicit non-patient confirmation. Use **Custom layout
+(advanced)** only when the installed distribution does not match the displayed
+PHITS 3.35-style relative layout.
+
+The validated profile, stable local tool paths, and each field's most recent
+Browse directory are saved to the ignored
+`config/dicomxphits.gui.local.json` file. The per-case RT Plan, CT folder,
+derived CT2PHITS output, non-patient confirmation, and overwrite permission are
+never persisted and always start empty or cleared. Existing flat tool settings
+are retained as a custom layout unless they match the supported standard
+profile. The tracked repository does not contain populated local paths.
 
 ## Directory Layout
 

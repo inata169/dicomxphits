@@ -24,18 +24,31 @@ from dicomxphits.gui import (
     _ct2phits_handoff_from_result,
     _default_values,
     _read_gui_settings,
+    _save_browse_history,
     _save_gui_settings,
+    apply_case_path_suggestions,
+    bind_tool_profile_revalidation,
     browse_initial_directory,
     build_stage_command,
     ct2phits_handoff_values,
     gui_defaults_path,
     geometry_mode_guidance,
+    preserve_tool_profile_mode_values,
     run_stage,
     stage_by_key,
     suggest_case_paths,
     validate_prepare_handoff_selection,
     validate_stage,
     workspace_path_from_parent,
+)
+from dicomxphits.gui_tool_profile import (
+    ROLE_PHITS2DICOM_EXECUTABLE,
+    STANDARD_WINDOWS_LAYOUT_ID,
+    TOOL_PROFILE_CUSTOM,
+    TOOL_PROFILE_STANDARD,
+    resolve_standard_tool_profile,
+    resolve_tool_profile,
+    validate_custom_tool_profile,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
 
@@ -49,6 +62,20 @@ def write_file(path: Path, text: str = "x") -> Path:
 def write_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def write_standard_tool_layout(root: Path) -> dict[str, Path]:
+    rtphits_root = write_dir(root / "utility" / "RTphits")
+    return {
+        "root": write_dir(root),
+        "phits": write_file(root / "bin" / "phits_win.exe"),
+        "rtphits": rtphits_root,
+        "batch": write_file(rtphits_root / "RTphits_win.bat"),
+        "table": write_file(rtphits_root / "data" / "HumanVoxelTable.data"),
+        "phits2dicom": write_file(
+            rtphits_root / "bin" / "phits2dicom_win.exe"
+        ),
+    }
 
 
 def base_config(tmp_path: Path, *, workspace: Path | None = None, allow_overwrite: bool = False) -> GuiConfig:
@@ -99,6 +126,118 @@ def test_gui_config_defaults_to_rectangular_public_model(tmp_path: Path) -> None
     config = base_config(tmp_path)
 
     assert config.geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT
+
+
+def test_standard_tool_profile_resolves_approved_phits_335_layout(
+    tmp_path: Path,
+) -> None:
+    layout = write_standard_tool_layout(tmp_path / "phits")
+
+    resolution = resolve_standard_tool_profile(layout["root"])
+
+    assert resolution.ready is True
+    assert resolution.layout_id == STANDARD_WINDOWS_LAYOUT_ID
+    assert resolution.phits_root_folder == str(layout["root"].resolve())
+    assert resolution.rtphits_root == str(layout["rtphits"].resolve())
+    assert resolution.phits_executable_path == str(layout["phits"].resolve())
+    assert resolution.phits2dicom_executable_path == str(
+        layout["phits2dicom"].resolve()
+    )
+
+
+def test_standard_tool_profile_reports_missing_and_ambiguous_roles(
+    tmp_path: Path,
+) -> None:
+    layout = write_standard_tool_layout(tmp_path / "phits")
+    layout["table"].unlink()
+    write_file(layout["rtphits"] / "bin" / "phits2dicom_openmp.exe")
+
+    resolution = resolve_standard_tool_profile(layout["root"])
+
+    assert resolution.ready is False
+    rendered = "\n".join(issue.message for issue in resolution.issues)
+    assert "HumanVoxelTable.data" in rendered
+    assert "Multiple phits2dicom executables" in rendered
+    assert any(
+        issue.role == ROLE_PHITS2DICOM_EXECUTABLE
+        for issue in resolution.issues
+    )
+    assert resolution.ready_for_stage("run_ct2phits") is False
+    assert resolution.ready_for_stage("run_segments") is True
+    assert resolution.ready_for_stage("run_rtdose") is False
+
+
+def test_missing_rtphits_folder_disables_ct2phits_and_rtdose(
+    tmp_path: Path,
+) -> None:
+    root = write_dir(tmp_path / "phits")
+    write_file(root / "bin" / "phits_win.exe")
+
+    resolution = resolve_standard_tool_profile(root)
+
+    assert resolution.ready_for_stage("run_ct2phits") is False
+    assert resolution.ready_for_stage("run_rtdose") is False
+    assert any(
+        issue.role == ROLE_PHITS2DICOM_EXECUTABLE
+        for issue in resolution.issues
+    )
+
+
+def test_unselected_standard_folder_disables_all_dependent_stages() -> None:
+    resolution = resolve_standard_tool_profile("")
+
+    for stage_key in (
+        "run_ct2phits",
+        "prepare_workspace",
+        "run_segments",
+        "generate_sumtally",
+        "run_sumtally",
+        "run_rtdose",
+    ):
+        assert resolution.ready_for_stage(stage_key) is False
+    assert resolution.ready_for_stage("prepare_rtdose") is True
+
+
+def test_standard_profile_rejects_rtphits_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    root = write_dir(tmp_path / "selected-phits")
+    write_file(root / "bin" / "phits_win.exe")
+    utility = write_dir(root / "utility")
+    outside = write_standard_tool_layout(tmp_path / "outside-phits")["rtphits"]
+    try:
+        (utility / "RTphits").symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+
+    resolution = resolve_standard_tool_profile(root)
+
+    assert resolution.ready is False
+    assert resolution.rtphits_root == ""
+    assert resolution.phits2dicom_executable_path == ""
+    assert "escapes the selected installation" in "\n".join(
+        issue.message for issue in resolution.issues
+    )
+
+
+def test_custom_tool_profile_uses_same_rtphits_markers(tmp_path: Path) -> None:
+    layout = write_standard_tool_layout(tmp_path / "nonstandard")
+    values = {
+        "phits_root_folder": str(layout["root"]),
+        "rtphits_root": str(layout["rtphits"]),
+        "phits_executable_path": str(layout["phits"]),
+        "phits2dicom_executable_path": str(layout["phits2dicom"]),
+    }
+
+    assert validate_custom_tool_profile(values).ready is True
+
+    layout["batch"].unlink()
+    resolution = validate_custom_tool_profile(values)
+
+    assert resolution.ready is False
+    assert "RTphits_win.bat" in "\n".join(
+        issue.message for issue in resolution.issues
+    )
 
 
 @pytest.mark.parametrize("help_flag", ["-h", "--help"])
@@ -166,7 +305,7 @@ def test_gui_defaults_load_local_json_without_private_fixture_paths(tmp_path: Pa
     values = _default_values(defaults_path)
 
     assert values["geometry_mode"] == GEOMETRY_MODE_RECTANGULAR_3DCRT
-    assert values["rtplan_path"] == "relative-or-user-local-plan.dcm"
+    assert values["rtplan_path"] == ""
     assert values["machine_config_path"] == "machine-config.json"
     assert "unknown_key" not in values
 
@@ -618,6 +757,35 @@ def test_rtplan_path_suggestions_are_visible_derivations_only(tmp_path: Path) ->
     ) == public_parent / "RT-PLAN-01-3dcrt"
 
 
+def test_standard_profile_replaces_stale_derived_ct2phits_workspace(
+    tmp_path: Path,
+) -> None:
+    new_plan = tmp_path / "new case" / "RT PLAN 02.dcm"
+    rtphits_root = tmp_path / "phits" / "utility" / "RTphits"
+    suggestions = suggest_case_paths(new_plan, rtphits_root=rtphits_root)
+    current = {
+        "ct_dicom_root": "explicit-ct-folder",
+        "ct2phits_workspace_root": "stale-workspace",
+    }
+
+    standard = apply_case_path_suggestions(
+        current,
+        suggestions,
+        tool_profile_mode=TOOL_PROFILE_STANDARD,
+    )
+    custom = apply_case_path_suggestions(
+        current,
+        suggestions,
+        tool_profile_mode=TOOL_PROFILE_CUSTOM,
+    )
+
+    assert standard["ct_dicom_root"] == "explicit-ct-folder"
+    assert standard["ct2phits_workspace_root"] == str(
+        rtphits_root / "work" / "RT-PLAN-02-ct2phits"
+    )
+    assert custom["ct2phits_workspace_root"] == "stale-workspace"
+
+
 def test_completed_ct2phits_handoff_uses_frozen_documented_paths(
     tmp_path: Path,
 ) -> None:
@@ -684,9 +852,9 @@ def test_saved_legacy_handoff_paths_do_not_authorize_prepare(
     )
     defaults = _default_values(defaults_path)
 
-    assert defaults["rtplan_path"] == "stale-RTPLAN.dcm"
-    assert defaults["ct_reference_dicom"] == "stale-CT000001.dcm"
-    assert defaults["ct_datfiles_root"] == "stale-DATfiles"
+    assert defaults["rtplan_path"] == ""
+    assert defaults["ct_reference_dicom"] == ""
+    assert defaults["ct_datfiles_root"] == ""
     with pytest.raises(GuiValidationError, match="Run CT2PHITS successfully"):
         validate_prepare_handoff_selection(
             manual_handoff_selected=False,
@@ -716,6 +884,8 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
     tool_dir = write_dir(tmp_path / "tool-browser")
     values = {
         "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
+        "tool_profile_mode": TOOL_PROFILE_CUSTOM,
+        "phits_installation_folder": "remembered-installation",
         "rtphits_root": "remembered-rtphits",
         "phits_root_folder": "remembered-phits",
         "phits_executable_path": "remembered-phits.exe",
@@ -723,6 +893,7 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
         "rtdose_template_dicom": "remembered-template.dcm",
         "machine_config_path": "remembered-machine.json",
         "source_rtplan_path": "must-not-be-persisted.dcm",
+        "ct2phits_workspace_root": "must-not-be-persisted-workspace",
         "confirmed_non_patient_phantom": "true",
         "allow_overwrite": "true",
     }
@@ -734,9 +905,12 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
     _save_gui_settings(values, history, defaults_path)
     saved = json.loads(defaults_path.read_text(encoding="utf-8"))
 
-    assert saved["settings_version"] == 2
+    assert saved["settings_version"] == 4
+    assert saved["tool_profile_mode"] == TOOL_PROFILE_CUSTOM
+    assert saved["phits_installation_folder"] == "remembered-installation"
     assert saved["rtphits_root"] == "remembered-rtphits"
     assert "source_rtplan_path" not in saved
+    assert "ct2phits_workspace_root" not in saved
     assert "confirmed_non_patient_phantom" not in saved
     assert "allow_overwrite" not in saved
     assert _browse_directories(defaults_path) == history
@@ -756,6 +930,192 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
         {},
     ) == tmp_path
     assert _default_values(defaults_path)["phits_root_folder"] == "remembered-phits"
+
+
+def test_browse_history_saves_without_persisting_unvalidated_case_values(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    _save_gui_settings(
+        {
+            "tool_profile_mode": TOOL_PROFILE_CUSTOM,
+            "phits_root_folder": "validated-phits-root",
+        },
+        {},
+        defaults_path,
+    )
+
+    _save_browse_history(
+        {"source_rtplan_path": str(tmp_path / "case-browser")},
+        defaults_path,
+    )
+    saved = json.loads(defaults_path.read_text(encoding="utf-8"))
+
+    assert saved["phits_root_folder"] == "validated-phits-root"
+    assert saved["browse_directories"]["source_rtplan_path"] == str(
+        tmp_path / "case-browser"
+    )
+    assert "source_rtplan_path" not in saved
+
+
+def test_gui_settings_migrate_matching_legacy_layout_to_standard_profile(
+    tmp_path: Path,
+) -> None:
+    layout = write_standard_tool_layout(tmp_path / "phits")
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "phits_root_folder": str(layout["root"]),
+                "rtphits_root": str(layout["rtphits"]),
+                "phits_executable_path": str(layout["phits"]),
+                "phits2dicom_executable_path": str(layout["phits2dicom"]),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    values = _default_values(defaults_path)
+
+    assert values["tool_profile_mode"] == TOOL_PROFILE_STANDARD
+    assert values["phits_installation_folder"] == str(layout["root"])
+
+
+def test_gui_settings_preserve_unmatched_legacy_layout_as_custom(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_text(
+        json.dumps(
+            {
+                "phits_root_folder": "legacy-phits",
+                "rtphits_root": "legacy-rtphits",
+                "phits_executable_path": "legacy-phits.exe",
+                "phits2dicom_executable_path": "legacy-phits2dicom.exe",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    values = _default_values(defaults_path)
+
+    assert values["tool_profile_mode"] == TOOL_PROFILE_CUSTOM
+    assert values["phits_root_folder"] == "legacy-phits"
+    assert values["custom_phits_root_folder"] == "legacy-phits"
+
+
+def test_profile_mode_switch_preserves_explicit_custom_paths() -> None:
+    custom_values = {
+        "tool_profile_mode": TOOL_PROFILE_CUSTOM,
+        "rtphits_root": "custom-rtphits",
+        "phits_root_folder": "custom-phits",
+        "phits_executable_path": "custom-phits.exe",
+        "phits2dicom_executable_path": "custom-phits2dicom.exe",
+        "custom_rtphits_root": "",
+        "custom_phits_root_folder": "",
+        "custom_phits_executable_path": "",
+        "custom_phits2dicom_executable_path": "",
+        "ct2phits_workspace_root": "custom-workspace",
+        "custom_ct2phits_workspace_root": "",
+    }
+
+    standard_values = preserve_tool_profile_mode_values(
+        custom_values,
+        previous_mode=TOOL_PROFILE_CUSTOM,
+        selected_mode=TOOL_PROFILE_STANDARD,
+    )
+    standard_values.update(
+        {
+            "rtphits_root": "standard-rtphits",
+            "phits_root_folder": "standard-phits",
+            "phits_executable_path": "standard-phits.exe",
+            "phits2dicom_executable_path": "standard-phits2dicom.exe",
+            "ct2phits_workspace_root": "standard-derived-workspace",
+        }
+    )
+    restored = preserve_tool_profile_mode_values(
+        standard_values,
+        previous_mode=TOOL_PROFILE_STANDARD,
+        selected_mode=TOOL_PROFILE_CUSTOM,
+    )
+
+    assert restored["rtphits_root"] == "custom-rtphits"
+    assert restored["phits_root_folder"] == "custom-phits"
+    assert restored["phits_executable_path"] == "custom-phits.exe"
+    assert restored["phits2dicom_executable_path"] == "custom-phits2dicom.exe"
+    assert restored["ct2phits_workspace_root"] == "custom-workspace"
+
+
+def test_filesystem_invalid_legacy_paths_fall_back_without_crashing(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_text(
+        json.dumps({"phits_root_folder": "invalid\u0000path"}),
+        encoding="utf-8",
+    )
+
+    values = _default_values(defaults_path)
+    resolution = resolve_tool_profile(values)
+
+    assert values["tool_profile_mode"] == TOOL_PROFILE_CUSTOM
+    assert resolution.ready is False
+    assert resolution.ready_for_stage("prepare_workspace") is False
+
+
+def test_standard_settings_round_trip_keeps_custom_profile_state(
+    tmp_path: Path,
+) -> None:
+    layout = write_standard_tool_layout(tmp_path / "standard-phits")
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    custom_paths = {
+        "custom_rtphits_root": "custom-rtphits",
+        "custom_phits_root_folder": "custom-phits",
+        "custom_phits_executable_path": "custom-phits.exe",
+        "custom_phits2dicom_executable_path": "custom-phits2dicom.exe",
+    }
+    _save_gui_settings(
+        {
+            "tool_profile_mode": TOOL_PROFILE_STANDARD,
+            "phits_installation_folder": str(layout["root"]),
+            **custom_paths,
+        },
+        {},
+        defaults_path,
+    )
+
+    restored = _default_values(defaults_path)
+
+    assert restored["tool_profile_mode"] == TOOL_PROFILE_STANDARD
+    assert restored["phits_root_folder"] == str(layout["root"].resolve())
+    for name, value in custom_paths.items():
+        assert restored[name] == value
+
+
+def test_all_editable_tool_paths_bind_immediate_revalidation() -> None:
+    class FakeVariable:
+        def __init__(self) -> None:
+            self.callbacks: list[tuple[str, object]] = []
+
+        def trace_add(self, mode: str, callback) -> None:
+            self.callbacks.append((mode, callback))
+
+    names = (
+        "phits_installation_folder",
+        "rtphits_root",
+        "phits_root_folder",
+        "phits_executable_path",
+        "phits2dicom_executable_path",
+    )
+    variables = {name: FakeVariable() for name in names}
+
+    callback = lambda *_args: None
+    bind_tool_profile_revalidation(variables, callback)
+
+    assert all(
+        variable.callbacks == [("write", callback)]
+        for variable in variables.values()
+    )
 
 
 def test_gui_settings_invalid_encoding_falls_back_safely(tmp_path: Path) -> None:

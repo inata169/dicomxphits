@@ -23,7 +23,9 @@ until the previous stage gate has passed.
   run.
 - Beam MU must be present, positive, and finite.
 - PHITS root folder, PHITS executable path, and phits2dicom executable path are
-  separate settings.
+  separate runtime roles. The guided Windows GUI normally resolves them from
+  one explicitly selected PHITS installation folder and validates each role
+  before enabling its dependent stage.
 - Workspace preparation requires the raw `DATfiles` emitted by `ct2phits.exe`
   for a confirmed non-patient phantom and one CT DICOM slice from that same
   series. Pass them with `--ct-datfiles-root`, `--ct-reference-dicom`, and
@@ -60,11 +62,19 @@ completion, the GUI applies the documented frozen handoff paths inside that
 workspace to the next preparation stage. The source RT Plan remains distinct
 from the frozen downstream snapshot.
 
-The GUI may suggest empty case paths from an explicitly selected RT Plan and
-user-configured roots, but it does not scan for DICOM datasets or discover
-external tool installations. Stable tool paths and per-field Browse history
-may be stored only in the ignored local GUI settings file; confirmation and
-overwrite controls are not persisted.
+The GUI's standard profile checks only the approved PHITS 3.35-style Windows
+relative paths below an explicitly selected PHITS installation folder. It does
+not recursively search for external installations and does not run any tool
+during setup validation. A missing or ambiguous role keeps only its dependent
+stages disabled and is reported explicitly; a nonstandard or future layout can
+be entered through custom-layout controls.
+
+In standard mode, selecting an RT Plan derives a new CT2PHITS case output below
+the effective RT-PHITS `work` directory. That output is derived state:
+changing the RT Plan or RT-PHITS root replaces a stale non-empty value. Stable
+tool profile settings and per-field Browse history may be stored only in the
+ignored local GUI settings file. Case inputs, the derived CT2PHITS output,
+confirmation, and overwrite controls are not persisted.
 
 ## Prepare Workspace Adapter
 
