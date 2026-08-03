@@ -200,18 +200,19 @@ PHITS 3.35-style Windows layout:
 
 ```text
 <PHITS installation folder>/
-├─ bin/phits_win.exe
+├─ bin/phits335_win_openmp.exe
 └─ utility/RTphits/
    ├─ RTphits_win.bat
    ├─ data/HumanVoxelTable.data
-   └─ bin/phits2dicom*.exe
+   └─ bin/phits2dicom_win.exe
 ```
 
-Exactly one `phits2dicom*.exe` must be present directly in the shown `bin`
-folder for automatic selection. The GUI checks only these bounded relative
-paths and does not run an external tool during setup validation. A future or
-nonstandard layout remains usable through the explicit custom-layout controls;
-the GUI does not guess when a component is missing or ambiguous.
+The standard profile selects the PHITS 3.35 OpenMP executable and the exact
+Windows phits2dicom executable. Linux and macOS phits2dicom files distributed
+beside it do not create an ambiguity. The GUI checks only these bounded
+relative paths and does not run an external tool during setup validation. A
+future or nonstandard layout remains usable through the explicit custom-layout
+controls; the GUI does not silently fall back to the serial PHITS executable.
 
 No PHITS or RTphits official distribution file is bundled in this tree.
 The user's separately obtained licensed installations are external
@@ -266,6 +267,9 @@ dicomxphits-prepare-3dcrt-workspace `
   --phits-root-folder <licensed-phits-root> `
   --phits-executable-path <licensed-phits-executable> `
   --phits2dicom-executable-path <licensed-phits2dicom-executable> `
+  --maxcas 1000000 `
+  --maxbch 10 `
+  --omp-threads 8 `
   --ct-datfiles-root <ct2phits-workspace>/DATfiles `
   --ct-reference-dicom <ct2phits-workspace>/CT/CT000001.dcm `
   --confirm-non-patient-phantom
@@ -301,8 +305,17 @@ or bypass the explicit non-patient confirmation. Use **Custom layout
 (advanced)** only when the installed distribution does not match the displayed
 PHITS 3.35-style relative layout.
 
-The validated profile, stable local tool paths, and each field's most recent
-Browse directory are saved to the ignored
+Before **Prepare workspace**, the Workspace page exposes `maxcas` (histories
+per batch), `maxbch` (batches), and OpenMP threads. Their defaults are
+`1000000`, `10`, and `8`; each must be a positive integer. The selected values
+are written only into newly prepared segment inputs and their summaries. They
+do not rewrite an existing workspace or change Sumtally settings. The generated
+first line remains `$OMP = N`: the dollar sign is official PHITS OpenMP syntax,
+not a comment marker. Direct segment execution also passes the same value as
+`OMP_NUM_THREADS=N` to the selected OpenMP executable.
+
+The validated profile, stable local tool paths, valid segment runtime
+preferences, and each field's most recent Browse directory are saved to the ignored
 `config/dicomxphits.gui.local.json` file. The per-case RT Plan, CT folder,
 derived CT2PHITS output, non-patient confirmation, and overwrite permission are
 never persisted and always start empty or cleared. Existing flat tool settings
@@ -355,8 +368,11 @@ dicomxphits-prepare-3dcrt-workspace `
   --rtplan "C:\path\to\RTphits\work\case-id\RTPLAN.dcm" `
   --workspace-root "C:\outside-repo\dicomxphits-work\case-id" `
   --phits-root-folder "C:\path\to\phits" `
-  --phits-executable-path "C:\path\to\phits\bin\phits_win.exe" `
-  --phits2dicom-executable-path "C:\path\to\phits\utility\RTphits\bin\phits2dicom.exe" `
+  --phits-executable-path "C:\path\to\phits\bin\phits335_win_openmp.exe" `
+  --phits2dicom-executable-path "C:\path\to\phits\utility\RTphits\bin\phits2dicom_win.exe" `
+  --maxcas 1000000 `
+  --maxbch 10 `
+  --omp-threads 8 `
   --ct-datfiles-root "C:\path\to\RTphits\work\case-id\DATfiles" `
   --ct-reference-dicom "C:\path\to\RTphits\work\case-id\CT\CT000001.dcm" `
   --confirm-non-patient-phantom
@@ -375,13 +391,15 @@ Run the generated active segments explicitly before Sumtally:
 ```powershell
 dicomxphits-run-segments `
   --workspace-root "C:\outside-repo\dicomxphits-work\case-id" `
-  --phits-executable-path "C:\path\to\phits\bin\phits_win.exe"
+  --phits-executable-path "C:\path\to\phits\bin\phits335_win_openmp.exe"
 ```
 
 The segment runner invokes the PHITS executable using PHITS's `file = ...`
 launcher input contract and runs from the workspace root, so all generated
-include paths resolve correctly. Do not run a segment by changing the working
-directory to `segments/<segment-id>`.
+include paths resolve correctly. It reads the required `$OMP = N` directive
+and passes `OMP_NUM_THREADS=N` to the direct OpenMP executable. Do not remove
+the dollar sign or run a segment by changing the working directory to
+`segments/<segment-id>`.
 
 ### Sumtally Adapter
 
@@ -395,7 +413,7 @@ dicomxphits-generate-sumtally `
 
 dicomxphits-run-sumtally `
   --workspace-root "C:\outside-repo\dicomxphits-work\case-id" `
-  --phits-executable-path "C:\path\to\phits\bin\phits_win.exe"
+  --phits-executable-path "C:\path\to\phits\bin\phits335_win_openmp.exe"
 ```
 
 The generated Sumtally output is MU-weighted all-segments totalfield output. It
@@ -417,7 +435,7 @@ dicomxphits-prepare-rtdose `
 
 dicomxphits-run-rtdose `
   --workspace-root "C:\outside-repo\dicomxphits-work\case-id" `
-  --phits2dicom-executable-path "C:\path\to\phits\utility\RTphits\bin\phits2dicom.exe"
+  --phits2dicom-executable-path "C:\path\to\phits\utility\RTphits\bin\phits2dicom_win.exe"
 ```
 
 `--template-dicom` must be a phits2dicom-compatible RTDOSE base template that

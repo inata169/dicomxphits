@@ -158,8 +158,8 @@ def phits_environment(phits_input: Path) -> dict[str, str]:
             if threads <= 0:
                 raise ValueError("$OMP thread count must be a positive integer")
             environment["OMP_NUM_THREADS"] = str(threads)
-            break
-    return environment
+            return environment
+    raise ValueError("PHITS input is missing a valid positive $OMP directive")
 
 
 def run_one_segment(

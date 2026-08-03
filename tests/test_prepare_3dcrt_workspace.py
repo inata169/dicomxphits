@@ -328,24 +328,79 @@ def test_prepare_workspace_adapter_is_standalone_without_project_root():
 
 
 def test_parser_exposes_geometry_mode_and_machine_config_path():
-    parser_actions = {action.dest for action in build_parser()._actions}
+    parser = build_parser()
+    parser_actions = {action.dest: action for action in parser._actions}
 
     assert "geometry_mode" in parser_actions
     assert "machine_config_path" in parser_actions
     assert "relative_dose_only" in parser_actions
-    assert build_parser().parse_args(
+    assert parser_actions["maxcas"].default == 1_000_000
+    assert parser_actions["maxbch"].default == 10
+    assert parser_actions["omp_threads"].default == 8
+    assert parser.parse_args(
         ["--rtplan", "plan.dcm", "--workspace-root", "workspace"]
     ).geometry_mode == "rectangular_3dcrt"
-    assert build_parser().parse_args(
+    assert parser.parse_args(
         ["--rtplan", "plan.dcm", "--workspace-root", "workspace"]
     ).relative_dose_only is False
     assert tuple(
         next(
             action
-            for action in build_parser()._actions
+            for action in parser._actions
             if action.dest == "geometry_mode"
         ).choices
     ) == ("rectangular_3dcrt",)
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--maxcas", "0"),
+        ("--maxcas", "-1"),
+        ("--maxbch", "1.5"),
+        ("--omp-threads", "eight"),
+    ],
+)
+def test_parser_rejects_invalid_runtime_values(option, value):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            [
+                "--rtplan",
+                "plan.dcm",
+                "--workspace-root",
+                "workspace",
+                option,
+                value,
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("maxcas", 0),
+        ("maxcas", True),
+        ("maxbch", -1),
+        ("maxbch", 1.5),
+        ("omp_threads", 0),
+    ],
+)
+def test_prepare_rejects_invalid_runtime_before_workspace_creation(
+    tmp_path,
+    field_name,
+    value,
+):
+    workspace = tmp_path / "workspace"
+
+    with pytest.raises(ValueError, match=field_name):
+        prepare_public_3dcrt_workspace(
+            rtplan_path=tmp_path / "missing-plan.dcm",
+            workspace_root=workspace,
+            paths=complete_paths(),
+            **{field_name: value},
+        )
+
+    assert not workspace.exists()
 
 
 def test_rectangular_3dcrt_requires_ct_assets_before_workspace_creation(tmp_path):
@@ -420,6 +475,16 @@ def test_rectangular_3dcrt_default_needs_no_vendor_or_iaea_runtime_input(
         encoding="utf-8"
     )
     assert generation["machine_config_source"] == "built_in_public_default"
+    assert generation["segment_runtime"] == {
+        "maxcas": 1_000_000,
+        "maxbch": 10,
+        "omp_threads": 8,
+        "omp_directive": "$OMP = 8",
+    }
+    assert summary["segment_runtime"] == generation["segment_runtime"]
+    assert text.startswith("$OMP = 8\n")
+    assert " maxcas = 1000000" in text
+    assert " maxbch = 10" in text
     assert "set: c10[20] $ Collimator angle (deg)" in text
     assert "set: c20[10] $ Gantry angle (deg)" in text
     assert "tr2   0 0 0" in text
@@ -449,6 +514,51 @@ def test_rectangular_3dcrt_default_needs_no_vendor_or_iaea_runtime_input(
     )
     assert "vendor" not in text.lower()
     assert "facility" not in text.lower()
+
+
+def test_rectangular_3dcrt_applies_explicit_runtime_to_all_inputs_and_summary(
+    monkeypatch,
+    tmp_path,
+):
+    manifest = manifest_with(
+        rectangular_segment(segment_id="first"),
+        rectangular_segment(
+            segment_id="second",
+            expected_output_path="segments/second/deposit-target-3D.out",
+        ),
+    )
+    install_manifest_export(monkeypatch, manifest)
+    rtplan = tmp_path / "synthetic_rtplan.dcm"
+    rtplan.write_text("placeholder", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+
+    summary = prepare_public_3dcrt_workspace(
+        rtplan_path=rtplan,
+        workspace_root=workspace,
+        paths=complete_paths(),
+        machine_config_path=write_machine_config(tmp_path),
+        apply_approved_totfact=False,
+        ct_datfiles_root=tmp_path / "DATfiles",
+        ct_reference_dicom=tmp_path / "CT.dcm",
+        confirmed_non_patient_phantom=True,
+        maxcas=250_000,
+        maxbch=24,
+        omp_threads=12,
+    )
+
+    expected_runtime = {
+        "maxcas": 250_000,
+        "maxbch": 24,
+        "omp_threads": 12,
+        "omp_directive": "$OMP = 12",
+    }
+    assert summary["segment_runtime"] == expected_runtime
+    assert summary["phits_generation"]["segment_runtime"] == expected_runtime
+    for relative_path in summary["phits_generation"]["generated_phits_inputs"]:
+        text = (workspace / relative_path).read_text(encoding="utf-8")
+        assert text.startswith("$OMP = 12\n")
+        assert " maxcas = 250000" in text
+        assert " maxbch = 24" in text
 
 
 def test_rectangular_3dcrt_preserves_validated_gantry_source_and_transform_pair(

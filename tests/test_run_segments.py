@@ -12,7 +12,12 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
-from dicomxphits.run_segments import build_parser, main, run_segments
+from dicomxphits.run_segments import (
+    build_parser,
+    main,
+    phits_environment,
+    run_segments,
+)
 
 
 def active_segment(index=0, **overrides):
@@ -61,6 +66,36 @@ def paths():
         phits_executable_path="/opt/phits/bin/phits",
         phits2dicom_executable_path=None,
     )
+
+
+def test_phits_environment_reads_documented_omp_directive(tmp_path):
+    phits_input = tmp_path / "phits.inp"
+    phits_input.write_text(
+        "$OMP = 12\n[ Parameters ]\n maxcas = 1\n",
+        encoding="utf-8",
+    )
+
+    environment = phits_environment(phits_input)
+
+    assert environment["OMP_NUM_THREADS"] == "12"
+
+
+@pytest.mark.parametrize(
+    "first_line",
+    ["OMP = 12", "$OMP = 0", "$OMP = -1", "$OMP = eight", ""],
+)
+def test_phits_environment_rejects_missing_or_invalid_omp_directive(
+    tmp_path,
+    first_line,
+):
+    phits_input = tmp_path / "phits.inp"
+    phits_input.write_text(
+        f"{first_line}\n[ Parameters ]\n maxcas = 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"\$OMP"):
+        phits_environment(phits_input)
 
 
 def fake_runner_for(workspace: Path, outputs: list[Path], *, returncode: int = 0):

@@ -10,11 +10,11 @@ TOOL_PROFILE_CUSTOM = "custom"
 TOOL_PROFILE_MODES = (TOOL_PROFILE_STANDARD, TOOL_PROFILE_CUSTOM)
 STANDARD_WINDOWS_LAYOUT_ID = "phits-3.35-windows"
 
-PHITS_EXECUTABLE_RELATIVE = Path("bin") / "phits_win.exe"
+PHITS_EXECUTABLE_RELATIVE = Path("bin") / "phits335_win_openmp.exe"
 RTPHITS_ROOT_RELATIVE = Path("utility") / "RTphits"
 RTPHITS_BATCH_RELATIVE = Path("RTphits_win.bat")
 RTPHITS_HU_TABLE_RELATIVE = Path("data") / "HumanVoxelTable.data"
-PHITS2DICOM_BIN_RELATIVE = Path("bin")
+PHITS2DICOM_EXECUTABLE_RELATIVE = Path("bin") / "phits2dicom_win.exe"
 
 ROLE_PHITS_ROOT = "PHITS root"
 ROLE_RTPHITS_ROOT = "RT-PHITS root"
@@ -127,25 +127,6 @@ def _unresolved_standard_profile(
     )
 
 
-def _phits2dicom_candidates(directory: Path) -> tuple[Path, ...]:
-    try:
-        children = tuple(directory.iterdir())
-    except OSError:
-        return ()
-    return tuple(
-        sorted(
-            (
-                child
-                for child in children
-                if child.is_file()
-                and child.name.lower().startswith("phits2dicom")
-                and child.suffix.lower() == ".exe"
-            ),
-            key=lambda path: path.name.lower(),
-        )
-    )
-
-
 def resolve_standard_tool_profile(
     phits_installation_folder: str | Path,
 ) -> ToolProfileResolution:
@@ -249,45 +230,26 @@ def resolve_standard_tool_profile(
                     + RTPHITS_HU_TABLE_RELATIVE.as_posix(),
                 )
             )
-        bin_directory = rtphits_root / PHITS2DICOM_BIN_RELATIVE
-        if not _is_within(bin_directory, root):
+        phits2dicom = rtphits_root / PHITS2DICOM_EXECUTABLE_RELATIVE
+        if not _is_within(phits2dicom, root):
             issues.append(
                 ToolProfileIssue(
                     ROLE_PHITS2DICOM_EXECUTABLE,
-                    "phits2dicom bin folder escapes the selected installation folder.",
+                    "Standard phits2dicom executable escapes the selected installation folder.",
                 )
             )
+        elif phits2dicom.is_file():
+            phits2dicom_path = _path_text(phits2dicom)
         else:
-            candidates = _phits2dicom_candidates(bin_directory)
-            escaped = tuple(path for path in candidates if not _is_within(path, root))
-            if escaped:
-                rendered = ", ".join(path.name for path in escaped)
-                issues.append(
-                    ToolProfileIssue(
-                        ROLE_PHITS2DICOM_EXECUTABLE,
-                        f"phits2dicom candidate escapes the installation: {rendered}",
-                    )
+            issues.append(
+                ToolProfileIssue(
+                    ROLE_PHITS2DICOM_EXECUTABLE,
+                    "Missing standard phits2dicom executable: "
+                    + (
+                        RTPHITS_ROOT_RELATIVE / PHITS2DICOM_EXECUTABLE_RELATIVE
+                    ).as_posix(),
                 )
-            elif len(candidates) == 1:
-                phits2dicom_path = _path_text(candidates[0])
-            elif not candidates:
-                issues.append(
-                    ToolProfileIssue(
-                        ROLE_PHITS2DICOM_EXECUTABLE,
-                        "No phits2dicom*.exe file was found directly below "
-                        + (
-                            RTPHITS_ROOT_RELATIVE / PHITS2DICOM_BIN_RELATIVE
-                        ).as_posix(),
-                    )
-                )
-            else:
-                rendered = ", ".join(path.name for path in candidates)
-                issues.append(
-                    ToolProfileIssue(
-                        ROLE_PHITS2DICOM_EXECUTABLE,
-                        f"Multiple phits2dicom executables were found: {rendered}",
-                    )
-                )
+            )
 
     return ToolProfileResolution(
         mode=TOOL_PROFILE_STANDARD,
