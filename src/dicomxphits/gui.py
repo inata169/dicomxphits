@@ -499,8 +499,11 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
 def read_summary(path: Path) -> dict[str, object] | None:
     if not path.is_file():
         return None
-    with path.open("r", encoding="utf-8") as stream:
-        data = json.load(stream)
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            data = json.load(stream)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {"summary_error": f"{type(exc).__name__}: {exc}"}
     if isinstance(data, dict):
         return data
     return {"summary_error": "summary JSON root is not an object"}
@@ -540,6 +543,14 @@ def rtdose_action_enabled(stage_key: str, state: str) -> bool:
 
 def successful_nav_status(stage_key: str) -> str:
     return "Prepared" if stage_key == "prepare_rtdose" else "Completed"
+
+
+def rtdose_nav_status(state: str) -> str:
+    if state == RTDOSE_COMPLETED:
+        return "Completed"
+    if state == RTDOSE_PREPARED:
+        return "Prepared"
+    return "Not run"
 
 
 def validation_nav_status(stage_key: str, *, rtdose_state: str) -> str:
@@ -2163,10 +2174,7 @@ def _build_gui() -> int:
 
     def refresh_rtdose_workflow_state(*_args: object) -> None:
         state = current_rtdose_state()
-        if state == RTDOSE_COMPLETED:
-            nav_status["rtdose"].set("Completed")
-        elif state == RTDOSE_PREPARED:
-            nav_status["rtdose"].set("Prepared")
+        nav_status["rtdose"].set(rtdose_nav_status(state))
         refresh_action_button_states()
 
     values["workspace_root"].trace_add("write", refresh_rtdose_workflow_state)

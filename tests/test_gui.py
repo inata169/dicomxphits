@@ -38,6 +38,7 @@ from dicomxphits.gui import (
     geometry_mode_guidance,
     preserve_tool_profile_mode_values,
     rtdose_action_enabled,
+    rtdose_nav_status,
     rtdose_stage_state,
     run_stage,
     stage_by_key,
@@ -476,6 +477,28 @@ def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> No
     assert validation_nav_status(
         "run_rtdose", rtdose_state=RTDOSE_PREPARED
     ) == "Prepared"
+
+
+def test_rtdose_nav_status_resets_for_unprepared_workspace() -> None:
+    assert rtdose_nav_status(RTDOSE_COMPLETED) == "Completed"
+    assert rtdose_nav_status(RTDOSE_PREPARED) == "Prepared"
+    assert rtdose_nav_status(RTDOSE_NOT_PREPARED) == "Not run"
+
+
+def test_rtdose_state_treats_malformed_summary_as_unsuccessful(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    prepare_summary = workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    run_summary = workspace / stage_by_key("run_rtdose").summary_relative_path
+    write_file(prepare_summary, "{truncated")
+
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+
+    write_file(prepare_summary, json.dumps({"stage_status": "success"}))
+    write_file(run_summary, "{truncated")
+
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
 
 
 def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
