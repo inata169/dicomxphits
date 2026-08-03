@@ -12,16 +12,27 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping, Sequence
 
+from dicomxphits.gui_tool_profile import (
+    TOOL_PROFILE_CUSTOM,
+    TOOL_PROFILE_MODES,
+    TOOL_PROFILE_STANDARD,
+    ToolProfileResolution,
+    resolve_tool_profile,
+    standard_profile_matches_values,
+)
+
 
 PUBLIC_ROOT = Path(__file__).resolve().parents[2]
 GEOMETRY_MODE_RECTANGULAR_3DCRT = "rectangular_3dcrt"
 GEOMETRY_MODES = (GEOMETRY_MODE_RECTANGULAR_3DCRT,)
 GUI_DEFAULTS_ENV_VAR = "DICOMXPHITS_GUI_DEFAULTS_JSON"
 GUI_DEFAULTS_FILE_NAME = "dicomxphits.gui.local.json"
-GUI_SETTINGS_VERSION = 2
+GUI_SETTINGS_VERSION = 3
 DEFAULT_CT2PHITS_TIMEOUT_SECONDS = 300.0
 PERSISTED_GUI_FIELDS = (
     "geometry_mode",
+    "tool_profile_mode",
+    "phits_installation_folder",
     "rtphits_root",
     "phits_root_folder",
     "phits_executable_path",
@@ -497,6 +508,8 @@ def run_stage(
 
 def _base_default_values() -> dict[str, str]:
     return {
+        "tool_profile_mode": TOOL_PROFILE_STANDARD,
+        "phits_installation_folder": "",
         "source_rtplan_path": "",
         "ct_dicom_root": "",
         "rtphits_root": "",
@@ -538,17 +551,41 @@ def _read_gui_settings(defaults_path: Path | None = None) -> dict[str, object]:
 def _default_values(defaults_path: Path | None = None) -> dict[str, str]:
     values = _base_default_values()
     data = _read_gui_settings(defaults_path)
-    for key in values:
+    for key in PERSISTED_GUI_FIELDS:
         value = data.get(key)
         if isinstance(value, str):
             values[key] = value
-    legacy_ct_root = data.get("ct_asset_root")
-    if not values["ct_datfiles_root"] and isinstance(legacy_ct_root, str):
-        values["ct_datfiles_root"] = legacy_ct_root
-    if not values["source_rtplan_path"] and values["rtplan_path"]:
-        values["source_rtplan_path"] = values["rtplan_path"]
     if values["geometry_mode"] not in GEOMETRY_MODES:
         values["geometry_mode"] = GEOMETRY_MODE_RECTANGULAR_3DCRT
+    stored_mode = data.get("tool_profile_mode")
+    if stored_mode not in TOOL_PROFILE_MODES:
+        has_legacy_tool_paths = any(
+            str(values[name]).strip()
+            for name in (
+                "rtphits_root",
+                "phits_root_folder",
+                "phits_executable_path",
+                "phits2dicom_executable_path",
+            )
+        )
+        if has_legacy_tool_paths and standard_profile_matches_values(values):
+            values["tool_profile_mode"] = TOOL_PROFILE_STANDARD
+            values["phits_installation_folder"] = values["phits_root_folder"]
+        elif has_legacy_tool_paths:
+            values["tool_profile_mode"] = TOOL_PROFILE_CUSTOM
+        else:
+            values["tool_profile_mode"] = TOOL_PROFILE_STANDARD
+    if (
+        values["tool_profile_mode"] == TOOL_PROFILE_STANDARD
+        and not values["phits_installation_folder"].strip()
+        and values["phits_root_folder"].strip()
+    ):
+        values["phits_installation_folder"] = values["phits_root_folder"]
+    if (
+        values["tool_profile_mode"] == TOOL_PROFILE_STANDARD
+        and values["phits_installation_folder"].strip()
+    ):
+        values.update(resolve_tool_profile(values).values())
     return values
 
 
@@ -597,6 +634,14 @@ def _save_gui_settings(
             # The temporary name remains covered by config/*.local.json.
             pass
     return path
+
+
+def _save_browse_history(
+    browse_directories: Mapping[str, str],
+    defaults_path: Path | None = None,
+) -> Path:
+    path = defaults_path or gui_defaults_path()
+    return _save_gui_settings(_default_values(path), browse_directories, path)
 
 
 def browse_initial_directory(
@@ -685,6 +730,24 @@ def suggest_case_paths(
             workspace_path_from_parent(workspace_parent, plan, "workspace_root")
         )
     return suggestions
+
+
+def apply_case_path_suggestions(
+    current_values: Mapping[str, str],
+    suggestions: Mapping[str, str],
+    *,
+    tool_profile_mode: str,
+) -> dict[str, str]:
+    updated = dict(current_values)
+    for name, suggestion in suggestions.items():
+        if (
+            name == "ct2phits_workspace_root"
+            and tool_profile_mode == TOOL_PROFILE_STANDARD
+        ):
+            updated[name] = suggestion
+        elif not str(updated.get(name, "")).strip():
+            updated[name] = suggestion
+    return updated
 
 
 def ct2phits_handoff_values(
@@ -928,11 +991,57 @@ def _build_gui() -> int:
     manual_handoff = tk.BooleanVar(value=False)
     verified_handoff_available = tk.BooleanVar(value=False)
     handoff_status = tk.StringVar(value="Not generated")
+    tool_profile_status = tk.StringVar(value="Not validated")
     execution_guard = StageExecutionGuard()
-    action_buttons: list[ttk.Button] = []
+    action_buttons: dict[str, ttk.Button] = {}
+    tool_profile_resolution = resolve_tool_profile(defaults)
 
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
+
+    def refresh_action_button_states() -> None:
+        busy = execution_guard.active_stage is not None
+        for stage_key, button in action_buttons.items():
+            enabled = (
+                not busy and tool_profile_resolution.ready_for_stage(stage_key)
+            )
+            button.state(["!disabled"] if enabled else ["disabled"])
+
+    def refresh_derived_ct2phits_workspace() -> None:
+        if values["tool_profile_mode"].get() != TOOL_PROFILE_STANDARD:
+            return
+        plan = values["source_rtplan_path"].get().strip()
+        rtphits_root = values["rtphits_root"].get().strip()
+        if not plan or not rtphits_root:
+            values["ct2phits_workspace_root"].set("")
+            return
+        values["ct2phits_workspace_root"].set(
+            str(
+                workspace_path_from_parent(
+                    Path(rtphits_root).expanduser() / "work",
+                    plan,
+                    "ct2phits_workspace_root",
+                )
+            )
+        )
+
+    def refresh_tool_profile() -> ToolProfileResolution:
+        nonlocal tool_profile_resolution
+        tool_profile_resolution = resolve_tool_profile(values_snapshot())
+        if tool_profile_resolution.mode == TOOL_PROFILE_STANDARD:
+            for name, value in tool_profile_resolution.values().items():
+                values[name].set(value)
+        if tool_profile_resolution.ready:
+            profile_name = tool_profile_resolution.layout_id or "custom layout"
+            tool_profile_status.set(f"Ready — {profile_name}")
+        else:
+            first = tool_profile_resolution.issues[0].message
+            remainder = len(tool_profile_resolution.issues) - 1
+            suffix = f" (+{remainder} more)" if remainder else ""
+            tool_profile_status.set(f"Needs attention — {first}{suffix}")
+        refresh_derived_ct2phits_workspace()
+        refresh_action_button_states()
+        return tool_profile_resolution
 
     def config_from_entries() -> GuiConfig:
         try:
@@ -1066,6 +1175,24 @@ def _build_gui() -> int:
         if announce:
             append(f"Local tool settings saved: {path}", "success")
 
+    def save_browse_history() -> None:
+        try:
+            _save_browse_history(browse_directories)
+        except OSError as exc:
+            append(f"Browse history could not be saved: {exc}", "warning")
+
+    def validate_and_save_tool_profile() -> None:
+        resolution = refresh_tool_profile()
+        if not resolution.ready:
+            message = "\n".join(
+                f"- {issue.role}: {issue.message}" for issue in resolution.issues
+            )
+            append(f"Tool setup validation failed: {message}", "error")
+            messagebox.showerror("Local tool setup", message)
+            return
+        save_local_settings(announce=True)
+        append("Local tool setup validated without running external tools.", "success")
+
     def apply_safe_suggestions() -> None:
         plan = values["source_rtplan_path"].get().strip()
         if not plan:
@@ -1076,9 +1203,13 @@ def _build_gui() -> int:
             rtphits_root=values["rtphits_root"].get(),
             workspace_parent=workspace_parent,
         )
-        for name, suggestion in suggestions.items():
-            if not values[name].get().strip():
-                values[name].set(suggestion)
+        updated = apply_case_path_suggestions(
+            values_snapshot(),
+            suggestions,
+            tool_profile_mode=values["tool_profile_mode"].get(),
+        )
+        for name in suggestions:
+            values[name].set(updated[name])
         append("Suggested case paths were filled without scanning the filesystem.")
 
     def browse_file(name: str, *, after_select: Callable[[], None] | None = None) -> None:
@@ -1097,7 +1228,7 @@ def _build_gui() -> int:
             )
             if after_select:
                 after_select()
-            save_local_settings()
+            save_browse_history()
 
     def browse_dir(
         name: str,
@@ -1131,7 +1262,7 @@ def _build_gui() -> int:
             )
             if after_select:
                 after_select()
-            save_local_settings()
+            save_browse_history()
 
     def path_row(
         parent: ttk.Frame,
@@ -1268,13 +1399,17 @@ def _build_gui() -> int:
         directory=True,
         helper="Choose the folder containing the non-patient phantom CT series.",
     )
-    path_row(
+    ct_workspace_controls = path_row(
         case_frame,
         5,
-        "CT2PHITS workspace",
+        "CT2PHITS case output",
         "ct2phits_workspace_root",
         directory=True,
-        helper="Browse selects a parent; the proposed child must be new and below RT-PHITS.",
+        helper=(
+            "Automatically derived below RT-PHITS in standard mode; "
+            "the directory must be new."
+        ),
+        readonly=values["tool_profile_mode"].get() == TOOL_PROFILE_STANDARD,
         new_workspace=True,
     )
 
@@ -1283,60 +1418,134 @@ def _build_gui() -> int:
     tool_frame = ttk.Frame(ct2_page, style="Surface.TFrame", padding=(18, 12))
     tool_frame.grid(row=2, column=0, sticky="ew", pady=(2, 0))
     tool_frame.columnconfigure(1, weight=1)
-    ttk.Label(tool_frame, text="Local tool settings", style="Heading.TLabel").grid(
+    ttk.Label(tool_frame, text="Local tool setup", style="Heading.TLabel").grid(
         row=0, column=0, columnspan=3, sticky="w", pady=(0, 6)
     )
-    path_row(
+    mode_frame = ttk.Frame(tool_frame, style="Surface.TFrame")
+    mode_frame.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(2, 6))
+    ttk.Radiobutton(
+        mode_frame,
+        text="Standard PHITS 3.35-style layout",
+        variable=values["tool_profile_mode"],
+        value=TOOL_PROFILE_STANDARD,
+    ).grid(row=0, column=0, padx=(0, 18), sticky="w")
+    ttk.Radiobutton(
+        mode_frame,
+        text="Custom layout (advanced)",
+        variable=values["tool_profile_mode"],
+        value=TOOL_PROFILE_CUSTOM,
+    ).grid(row=0, column=1, sticky="w")
+    installation_controls = path_row(
         tool_frame,
-        1,
-        "RT-PHITS root",
-        "rtphits_root",
+        2,
+        "PHITS installation folder",
+        "phits_installation_folder",
         directory=True,
-        helper="User-supplied licensed installation; the GUI does not discover it.",
-        after_select=apply_safe_suggestions,
+        helper=(
+            "Select the licensed PHITS folder once; only approved relative "
+            "candidates below it are checked."
+        ),
+        after_select=refresh_tool_profile,
     )
-    path_row(tool_frame, 3, "PHITS root", "phits_root_folder", directory=True)
+    ttk.Label(
+        tool_frame,
+        textvariable=tool_profile_status,
+        style="SurfaceMuted.TLabel",
+        wraplength=780,
+    ).grid(row=4, column=1, columnspan=2, padx=(0, 10), sticky="w")
+
+    custom_frame = ttk.Frame(tool_frame, style="Surface.TFrame")
+    custom_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+    custom_frame.columnconfigure(1, weight=1)
+    ttk.Label(
+        custom_frame,
+        text="Effective tool paths",
+        style="SurfaceMuted.TLabel",
+    ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+    custom_tool_controls = [
+        path_row(
+            custom_frame,
+            1,
+            "RT-PHITS root",
+            "rtphits_root",
+            directory=True,
+            readonly=values["tool_profile_mode"].get() == TOOL_PROFILE_STANDARD,
+            after_select=refresh_tool_profile,
+        ),
+        path_row(
+            custom_frame,
+            3,
+            "PHITS root",
+            "phits_root_folder",
+            directory=True,
+            readonly=values["tool_profile_mode"].get() == TOOL_PROFILE_STANDARD,
+            after_select=refresh_tool_profile,
+        ),
+        path_row(
+            custom_frame,
+            5,
+            "PHITS executable",
+            "phits_executable_path",
+            directory=False,
+            readonly=values["tool_profile_mode"].get() == TOOL_PROFILE_STANDARD,
+            after_select=refresh_tool_profile,
+        ),
+        path_row(
+            custom_frame,
+            7,
+            "phits2dicom executable",
+            "phits2dicom_executable_path",
+            directory=False,
+            readonly=values["tool_profile_mode"].get() == TOOL_PROFILE_STANDARD,
+            after_select=refresh_tool_profile,
+        ),
+    ]
     path_row(
         tool_frame,
-        5,
-        "PHITS executable",
-        "phits_executable_path",
-        directory=False,
-    )
-    path_row(
-        tool_frame,
-        7,
-        "phits2dicom executable",
-        "phits2dicom_executable_path",
-        directory=False,
-    )
-    path_row(
-        tool_frame,
-        9,
+        6,
         "RTDOSE template",
         "rtdose_template_dicom",
         directory=False,
     )
-    advanced = ttk.Frame(tool_frame, style="Surface.TFrame")
-    advanced.grid(row=11, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-    advanced.columnconfigure(1, weight=1)
-    ttk.Label(advanced, text="Series UID (optional)", style="Surface.TLabel").grid(
+    ct2_advanced = ttk.Frame(tool_frame, style="Surface.TFrame")
+    ct2_advanced.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+    ct2_advanced.columnconfigure(1, weight=1)
+    ttk.Label(ct2_advanced, text="Series UID (optional)", style="Surface.TLabel").grid(
         row=0, column=0, padx=(0, 14), sticky="w"
     )
-    ttk.Entry(advanced, textvariable=values["ct_series_instance_uid"]).grid(
+    ttk.Entry(ct2_advanced, textvariable=values["ct_series_instance_uid"]).grid(
         row=0, column=1, padx=(0, 10), sticky="ew"
     )
-    ttk.Label(advanced, text="Timeout (seconds)", style="Surface.TLabel").grid(
+    ttk.Label(ct2_advanced, text="Timeout (seconds)", style="Surface.TLabel").grid(
         row=0, column=2, padx=(10, 8), sticky="w"
     )
     ttk.Entry(
-        advanced, textvariable=values["ct2phits_timeout_seconds"], width=10
+        ct2_advanced, textvariable=values["ct2phits_timeout_seconds"], width=10
     ).grid(row=0, column=3, sticky="e")
     ttk.Button(
         tool_frame,
-        text="Save local settings",
-        command=lambda: save_local_settings(announce=True),
-    ).grid(row=12, column=2, pady=(10, 0), sticky="e")
+        text="Validate and save setup",
+        command=validate_and_save_tool_profile,
+    ).grid(row=9, column=2, pady=(10, 0), sticky="e")
+
+    def update_tool_profile_mode(*_args: object) -> None:
+        custom = values["tool_profile_mode"].get() == TOOL_PROFILE_CUSTOM
+        install_entry, install_button = installation_controls
+        install_entry.state(["readonly"] if custom else ["!readonly"])
+        install_button.state(["disabled"] if custom else ["!disabled"])
+        for entry, button in custom_tool_controls:
+            entry.state(["!readonly"] if custom else ["readonly"])
+            button.state(["!disabled"] if custom else ["disabled"])
+        workspace_entry, workspace_button = ct_workspace_controls
+        workspace_entry.state(["!readonly"] if custom else ["readonly"])
+        workspace_button.state(["!disabled"] if custom else ["disabled"])
+        refresh_tool_profile()
+
+    values["tool_profile_mode"].trace_add("write", update_tool_profile_mode)
+    values["source_rtplan_path"].trace_add(
+        "write", lambda *_args: refresh_derived_ct2phits_workspace()
+    )
+    update_tool_profile_mode()
     tool_frame.grid_remove()
 
     def toggle_tool_settings() -> None:
@@ -1600,9 +1809,7 @@ def _build_gui() -> int:
             execution_guard.finish()
         else:
             execution_guard.begin(stage_key)
-        busy = stage_key is not None
-        for button in action_buttons:
-            button.state(["disabled"] if busy else ["!disabled"])
+        refresh_action_button_states()
         global_status.set(
             f"Running {stage_by_key(stage_key).label}…" if stage_key else "Ready"
         )
@@ -1672,6 +1879,14 @@ def _build_gui() -> int:
             append("Another stage is already running.", "warning")
             return
         spec = stage_by_key(stage_key)
+        resolution = refresh_tool_profile()
+        profile_issues = resolution.issues_for_stage(stage_key)
+        if profile_issues:
+            message = "\n".join(
+                f"- {issue.role}: {issue.message}" for issue in profile_issues
+            )
+            finish_stage_error(spec, message, validation=True)
+            return
         config = config_from_entries()
         try:
             if spec.key == "prepare_workspace":
@@ -1711,7 +1926,7 @@ def _build_gui() -> int:
         command=lambda: start_stage("run_ct2phits"),
     )
     ct2_button.grid(row=0, column=1, sticky="e")
-    action_buttons.append(ct2_button)
+    action_buttons["run_ct2phits"] = ct2_button
 
     workspace_button = ttk.Button(
         workspace_action_frame,
@@ -1720,7 +1935,7 @@ def _build_gui() -> int:
         command=lambda: start_stage("prepare_workspace"),
     )
     workspace_button.grid(row=0, column=1, padx=(18, 0), sticky="e")
-    action_buttons.append(workspace_button)
+    action_buttons["prepare_workspace"] = workspace_button
 
     phits_button = ttk.Button(
         phits_frame,
@@ -1729,7 +1944,7 @@ def _build_gui() -> int:
         command=lambda: start_stage("run_segments"),
     )
     phits_button.grid(row=4, column=2, pady=(10, 0), sticky="e")
-    action_buttons.append(phits_button)
+    action_buttons["run_segments"] = phits_button
 
     sumtally_actions = ttk.Frame(
         sumtally_page, style="Surface.TFrame", padding=(18, 12)
@@ -1742,7 +1957,7 @@ def _build_gui() -> int:
         command=lambda: start_stage("generate_sumtally"),
     )
     sumtally_generate_button.grid(row=0, column=1, padx=(8, 4), sticky="e")
-    action_buttons.append(sumtally_generate_button)
+    action_buttons["generate_sumtally"] = sumtally_generate_button
     sumtally_run_button = ttk.Button(
         sumtally_actions,
         text="Run Sumtally",
@@ -1750,7 +1965,7 @@ def _build_gui() -> int:
         command=lambda: start_stage("run_sumtally"),
     )
     sumtally_run_button.grid(row=0, column=2, padx=(4, 0), sticky="e")
-    action_buttons.append(sumtally_run_button)
+    action_buttons["run_sumtally"] = sumtally_run_button
 
     rtdose_actions = ttk.Frame(
         rtdose_page, style="Surface.TFrame", padding=(18, 12)
@@ -1763,7 +1978,7 @@ def _build_gui() -> int:
         command=lambda: start_stage("prepare_rtdose"),
     )
     rtdose_prepare_button.grid(row=0, column=1, padx=(8, 4), sticky="e")
-    action_buttons.append(rtdose_prepare_button)
+    action_buttons["prepare_rtdose"] = rtdose_prepare_button
     rtdose_run_button = ttk.Button(
         rtdose_actions,
         text="Run RTDOSE",
@@ -1771,7 +1986,9 @@ def _build_gui() -> int:
         command=lambda: start_stage("run_rtdose"),
     )
     rtdose_run_button.grid(row=0, column=2, padx=(4, 0), sticky="e")
-    action_buttons.append(rtdose_run_button)
+    action_buttons["run_rtdose"] = rtdose_run_button
+
+    refresh_action_button_states()
 
     def close_gui() -> None:
         if execution_guard.active_stage is not None:
@@ -1780,7 +1997,8 @@ def _build_gui() -> int:
                 "Wait for the active stage to finish before closing the GUI.",
             )
             return
-        save_local_settings()
+        if refresh_tool_profile().ready:
+            save_local_settings()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", close_gui)
