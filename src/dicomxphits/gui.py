@@ -38,6 +38,10 @@ CUSTOM_TOOL_PATH_FIELDS = (
 CUSTOM_TOOL_SETTING_FIELDS = {
     name: f"custom_{name}" for name in CUSTOM_TOOL_PATH_FIELDS
 }
+TOOL_PROFILE_EDITABLE_FIELDS = (
+    "phits_installation_folder",
+    *CUSTOM_TOOL_PATH_FIELDS,
+)
 PERSISTED_GUI_FIELDS = (
     "geometry_mode",
     "tool_profile_mode",
@@ -623,6 +627,16 @@ def preserve_tool_profile_mode_values(
     return updated
 
 
+def bind_tool_profile_revalidation(
+    variables: Mapping[str, object],
+    callback: Callable[..., None],
+) -> None:
+    for name in TOOL_PROFILE_EDITABLE_FIELDS:
+        variable = variables[name]
+        trace_add = getattr(variable, "trace_add")
+        trace_add("write", callback)
+
+
 def _browse_directories(defaults_path: Path | None = None) -> dict[str, str]:
     data = _read_gui_settings(defaults_path)
     raw = data.get("browse_directories")
@@ -1030,6 +1044,7 @@ def _build_gui() -> int:
     action_buttons: dict[str, ttk.Button] = {}
     tool_profile_resolution = resolve_tool_profile(defaults)
     active_tool_profile_mode = values["tool_profile_mode"].get()
+    tool_profile_update_in_progress = False
 
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
@@ -1061,24 +1076,31 @@ def _build_gui() -> int:
         )
 
     def refresh_tool_profile() -> ToolProfileResolution:
-        nonlocal tool_profile_resolution
-        if values["tool_profile_mode"].get() == TOOL_PROFILE_CUSTOM:
-            for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
-                values[custom_name].set(values[name].get())
-        tool_profile_resolution = resolve_tool_profile(values_snapshot())
-        if tool_profile_resolution.mode == TOOL_PROFILE_STANDARD:
-            for name, value in tool_profile_resolution.values().items():
-                values[name].set(value)
-        if tool_profile_resolution.ready:
-            profile_name = tool_profile_resolution.layout_id or "custom layout"
-            tool_profile_status.set(f"Ready — {profile_name}")
-        else:
-            first = tool_profile_resolution.issues[0].message
-            remainder = len(tool_profile_resolution.issues) - 1
-            suffix = f" (+{remainder} more)" if remainder else ""
-            tool_profile_status.set(f"Needs attention — {first}{suffix}")
-        refresh_derived_ct2phits_workspace()
-        refresh_action_button_states()
+        nonlocal tool_profile_resolution, tool_profile_update_in_progress
+        if tool_profile_update_in_progress:
+            return tool_profile_resolution
+        tool_profile_update_in_progress = True
+        try:
+            if values["tool_profile_mode"].get() == TOOL_PROFILE_CUSTOM:
+                for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
+                    values[custom_name].set(values[name].get())
+            tool_profile_resolution = resolve_tool_profile(values_snapshot())
+            if tool_profile_resolution.mode == TOOL_PROFILE_STANDARD:
+                for name, value in tool_profile_resolution.values().items():
+                    if name != "phits_installation_folder":
+                        values[name].set(value)
+            if tool_profile_resolution.ready:
+                profile_name = tool_profile_resolution.layout_id or "custom layout"
+                tool_profile_status.set(f"Ready — {profile_name}")
+            else:
+                first = tool_profile_resolution.issues[0].message
+                remainder = len(tool_profile_resolution.issues) - 1
+                suffix = f" (+{remainder} more)" if remainder else ""
+                tool_profile_status.set(f"Needs attention — {first}{suffix}")
+            refresh_derived_ct2phits_workspace()
+            refresh_action_button_states()
+        finally:
+            tool_profile_update_in_progress = False
         return tool_profile_resolution
 
     def config_from_entries() -> GuiConfig:
@@ -1567,15 +1589,22 @@ def _build_gui() -> int:
     ).grid(row=9, column=2, pady=(10, 0), sticky="e")
 
     def update_tool_profile_mode(*_args: object) -> None:
-        nonlocal active_tool_profile_mode
+        nonlocal active_tool_profile_mode, tool_profile_update_in_progress
         selected_mode = values["tool_profile_mode"].get()
         transitioned = preserve_tool_profile_mode_values(
             values_snapshot(),
             previous_mode=active_tool_profile_mode,
             selected_mode=selected_mode,
         )
-        for name in (*CUSTOM_TOOL_PATH_FIELDS, *CUSTOM_TOOL_SETTING_FIELDS.values()):
-            values[name].set(transitioned[name])
+        tool_profile_update_in_progress = True
+        try:
+            for name in (
+                *CUSTOM_TOOL_PATH_FIELDS,
+                *CUSTOM_TOOL_SETTING_FIELDS.values(),
+            ):
+                values[name].set(transitioned[name])
+        finally:
+            tool_profile_update_in_progress = False
         active_tool_profile_mode = selected_mode
         custom = values["tool_profile_mode"].get() == TOOL_PROFILE_CUSTOM
         install_entry, install_button = installation_controls
@@ -1590,6 +1619,10 @@ def _build_gui() -> int:
         refresh_tool_profile()
 
     values["tool_profile_mode"].trace_add("write", update_tool_profile_mode)
+    bind_tool_profile_revalidation(
+        values,
+        lambda *_args: refresh_tool_profile(),
+    )
     values["source_rtplan_path"].trace_add(
         "write", lambda *_args: refresh_derived_ct2phits_workspace()
     )

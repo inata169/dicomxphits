@@ -27,6 +27,7 @@ from dicomxphits.gui import (
     _save_browse_history,
     _save_gui_settings,
     apply_case_path_suggestions,
+    bind_tool_profile_revalidation,
     browse_initial_directory,
     build_stage_command,
     ct2phits_handoff_values,
@@ -1045,6 +1046,32 @@ def test_standard_settings_round_trip_keeps_custom_profile_state(
     assert restored["phits_root_folder"] == str(layout["root"].resolve())
     for name, value in custom_paths.items():
         assert restored[name] == value
+
+
+def test_all_editable_tool_paths_bind_immediate_revalidation() -> None:
+    class FakeVariable:
+        def __init__(self) -> None:
+            self.callbacks: list[tuple[str, object]] = []
+
+        def trace_add(self, mode: str, callback) -> None:
+            self.callbacks.append((mode, callback))
+
+    names = (
+        "phits_installation_folder",
+        "rtphits_root",
+        "phits_root_folder",
+        "phits_executable_path",
+        "phits2dicom_executable_path",
+    )
+    variables = {name: FakeVariable() for name in names}
+
+    callback = lambda *_args: None
+    bind_tool_profile_revalidation(variables, callback)
+
+    assert all(
+        variable.callbacks == [("write", callback)]
+        for variable in variables.values()
+    )
 
 
 def test_gui_settings_invalid_encoding_falls_back_safely(tmp_path: Path) -> None:
