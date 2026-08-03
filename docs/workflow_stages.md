@@ -26,10 +26,12 @@ until the previous stage gate has passed.
   separate runtime roles. The guided Windows GUI normally resolves them from
   one explicitly selected PHITS installation folder and validates each role
   before enabling its dependent stage.
-- Workspace preparation requires the raw `DATfiles` emitted by `ct2phits.exe`
-  for a confirmed non-patient phantom and one CT DICOM slice from that same
+- Workspace preparation requires the raw `DATfiles` emitted through the Windows
+  `dicomxphits-run-ct2phits` frontend and the user-supplied `RTphits_win.bat`
+  for a confirmed non-patient phantom, plus one CT DICOM slice from that same
   series. Pass them with `--ct-datfiles-root`, `--ct-reference-dicom`, and
-  `--confirm-non-patient-phantom`.
+  `--confirm-non-patient-phantom`. The workflow never invokes the CT2PHITS
+  executable directly.
 - Workspace preparation validates CT/RTPLAN Frame of Reference, supported axial
   HFS orientation, CT origin, and a shared referenced-beam isocenter before it
   writes the workspace.

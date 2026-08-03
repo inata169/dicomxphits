@@ -9,7 +9,8 @@ certification software.
 
 ## Technology
 
-- Python 3.12 or newer
+- Python 3.12 only for the v1 supported environment; Python 3.11 and earlier
+  and Python 3.13 and later are outside the v1 support range
 - `pydicom` and `numpy`
 - `pytest` with synthetic DICOM and fake or mock external-tool runners
 - Windows adapters for explicitly authorized local external-tool execution

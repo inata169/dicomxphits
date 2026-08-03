@@ -6,9 +6,9 @@ add a GUI, runtime command, or CI requirement for real PHITS tools.
 
 ## Safety Rules
 
-- Real DICOM files must never be placed under `public_release/dicomxphits/`.
-  The only DICOM file allowed in this tree is the reviewed, sanitized,
-  zero-dose public RTDOSE template under `templates/`.
+- Real DICOM files must never be placed anywhere in this repository. The only
+  tracked DICOM file is the reviewed, sanitized, zero-dose public RTDOSE
+  template under `templates/`.
 - Real PHITS or phits2dicom smoke execution is optional local validation only
   and is not required for CI.
 - Local real-tool workspaces should be outside the repository tree or under
@@ -26,48 +26,54 @@ add a GUI, runtime command, or CI requirement for real PHITS tools.
 
 Run each stage only after the previous stage summary reports success.
 
-1. Prepare a strict 3D-CRT workspace.
-2. Run the per-segment PHITS inputs to create every manifest
+1. On Windows, run the CT2PHITS frontend for a confirmed non-patient phantom.
+   `dicomxphits-run-ct2phits` invokes the user-supplied `RTphits_win.bat`; it
+   does not run the CT2PHITS executable directly.
+2. Prepare a strict 3D-CRT workspace from the validated frozen handoff.
+3. Run the per-segment PHITS inputs to create every manifest
    `expected_output_path`.
-3. Generate Sumtally input for all active strict 3D-CRT segments.
-4. Run Sumtally with PHITS, or use a mocked runner in automated tests.
-5. Prepare RTDOSE conversion from the all-segments totalfield Sumtally output.
-6. Run phits2dicom locally, or use a mocked runner in automated tests.
-7. Optionally execute the external GPR comparison, or record an explicit skip.
-8. Review summaries and logs.
+4. Generate Sumtally input for all active strict 3D-CRT segments.
+5. Run Sumtally with PHITS, or use a mocked runner in automated tests.
+6. Prepare RTDOSE conversion from the all-segments totalfield Sumtally output.
+7. Run phits2dicom locally, or use a mocked runner in automated tests.
+8. Optionally execute the external GPR comparison, or record an explicit skip.
+9. Review summaries and logs.
 
 ## Local Path Placeholders
 
 Keep these values separate:
 
-```text
-PHITS_ROOT=/path/to/phits-root
-PHITS_EXE=/path/to/phits/bin/phits
-PHITS2DICOM_EXE=/path/to/phits2dicom
-WORKSPACE=/outside/repo/dicomxphits-smoke-workspace
-CT_DATFILES_ROOT=/outside/repo/non-patient-ct2phits/DATfiles
-FROZEN_RTPLAN=/outside/repo/non-patient-ct2phits/RTPLAN.dcm
-TEMPLATE_DICOM=/outside/repo/template_rtdose.dcm
-CT_REFERENCE_DICOM=/outside/repo/reference_ct.dcm
-REFERENCE_RTDOSE=/outside/repo/reference_rtdose.dcm
-EVALUATION_RTDOSE=/outside/repo/evaluation_rtdose.fixed.dcm
-GPR_ROOT=/path/to/GPR-comparing
+```powershell
+$PhitsRoot = "C:\path\to\phits"
+$PhitsExe = "C:\path\to\phits\bin\phits_win.exe"
+$RtphitsRoot = "C:\path\to\phits\utility\RTphits"
+$Phits2DicomExe = "C:\path\to\phits\utility\RTphits\bin\phits2dicom.exe"
+$SourceRtplan = "C:\outside-repo\non-patient-input\RTPLAN.dcm"
+$CtDicomRoot = "C:\outside-repo\non-patient-input\CT"
+$Ct2phitsWorkspace = "C:\path\to\phits\utility\RTphits\work\smoke-case"
+$Workspace = "C:\outside-repo\dicomxphits-smoke-workspace"
+$TemplateDicom = "templates\phits2dicom_rtdose_template.dcm"
+$ReferenceRtDose = "C:\outside-repo\reference_rtdose.dcm"
+$EvaluationRtDose = "C:\outside-repo\evaluation_rtdose.fixed.dcm"
+$GprRoot = "C:\path\to\GPR-comparing"
 ```
 
-`TEMPLATE_DICOM` must be a phits2dicom-compatible RTDOSE base template with the
+`$TemplateDicom` must be a phits2dicom-compatible RTDOSE base template with the
 required overwrite tags already present. When a local compatible template is not
 available, use
 `templates/phits2dicom_rtdose_template.dcm`. Do not use repository-local PHITS
 or RTphits sample files. If a clinical RTDOSE is missing required overwrite
 tags, prepare fails before phits2dicom execution.
 
-Run `ct2phits.exe` for the confirmed non-patient phantom first.
-`CT_DATFILES_ROOT` must point directly to the resulting raw `DATfiles`
-directory. It must contain the ordinary CT2PHITS outputs such as
+Run the Windows frontend command shown below for the confirmed non-patient
+phantom first. It calls the supplied `RTphits_win.bat` and creates a frozen
+handoff below `$Ct2phitsWorkspace`. `$CtDatfilesRoot` must then point directly
+to its raw `DATfiles` directory. It must contain ordinary CT2PHITS outputs,
+including
 `CTusrparam.dat`, `CTcell.dat`, `CTmaterial.dat`, `CTuniverse.dat`,
 `CTsurf.dat`, `CTmatnamecolor.dat`, `CTvoxel.dat`, and `phantominfo.dat`.
-Use that same frozen plan as `FROZEN_RTPLAN` and select one CT slice from the
-same series as `CT_REFERENCE_DICOM`.
+Use that same frozen plan as `$FrozenRtplan` and one CT slice from the same
+series as `$CtReferenceDicom`.
 dicomxphits performs the `.dat` to runtime-include preparation and coordinate
 translation itself. Do not select `CT_repaired`, a generated field directory,
 or a directory where files were manually renamed to `.inp`.
@@ -78,17 +84,37 @@ the repository tree for real-tool smoke outputs.
 
 ## Stage Commands
 
+Run the Windows CT2PHITS frontend through `RTphits_win.bat`:
+
+```powershell
+dicomxphits-run-ct2phits `
+  --ct-dicom-root $CtDicomRoot `
+  --rtplan $SourceRtplan `
+  --rtphits-root $RtphitsRoot `
+  --workspace-root $Ct2phitsWorkspace `
+  --timeout-seconds 300 `
+  --confirm-non-patient-phantom
+
+$FrozenRtplan = Join-Path $Ct2phitsWorkspace "RTPLAN.dcm"
+$CtDatfilesRoot = Join-Path $Ct2phitsWorkspace "DATfiles"
+$CtReferenceDicom = Join-Path $Ct2phitsWorkspace "CT\CT000001.dcm"
+```
+
+If the source contains multiple CT series, add
+`--ct-series-instance-uid <uid>`. Confirm the exact copied CT slice recorded by
+the completed frontend summary before assigning `$CtReferenceDicom`.
+
 Prepare the public workspace:
 
-```bash
-dicomxphits-prepare-3dcrt-workspace \
-  --rtplan /outside/repo/synthetic_or_local_rtplan.dcm \
-  --workspace-root "$WORKSPACE" \
-  --phits-root-folder "$PHITS_ROOT" \
-  --phits-executable-path "$PHITS_EXE" \
-  --phits2dicom-executable-path "$PHITS2DICOM_EXE" \
-  --ct-datfiles-root "$CT_DATFILES_ROOT" \
-  --ct-reference-dicom "$CT_REFERENCE_DICOM" \
+```powershell
+dicomxphits-prepare-3dcrt-workspace `
+  --rtplan $FrozenRtplan `
+  --workspace-root $Workspace `
+  --phits-root-folder $PhitsRoot `
+  --phits-executable-path $PhitsExe `
+  --phits2dicom-executable-path $Phits2DicomExe `
+  --ct-datfiles-root $CtDatfilesRoot `
+  --ct-reference-dicom $CtReferenceDicom `
   --confirm-non-patient-phantom
 ```
 
@@ -101,10 +127,10 @@ external software prerequisite; the confirmed non-patient CT2PHITS raw
 
 Run all generated active segments with the public runner:
 
-```bash
-dicomxphits-run-segments \
-  --workspace-root "$WORKSPACE" \
-  --phits-executable-path "$PHITS_EXE"
+```powershell
+dicomxphits-run-segments `
+  --workspace-root $Workspace `
+  --phits-executable-path $PhitsExe
 ```
 
 The runner follows the strict segment manifest and requires every active
@@ -115,37 +141,37 @@ PHITS executable and keeps the workspace root as the working directory so that
 
 Generate all-active-segments totalfield Sumtally input:
 
-```bash
-dicomxphits-generate-sumtally \
-  --workspace-root "$WORKSPACE" \
-  --phits-root-folder "$PHITS_ROOT"
+```powershell
+dicomxphits-generate-sumtally `
+  --workspace-root $Workspace `
+  --phits-root-folder $PhitsRoot
 ```
 
 Run Sumtally with PHITS for optional local real-tool validation:
 
-```bash
-dicomxphits-run-sumtally \
-  --workspace-root "$WORKSPACE" \
-  --phits-executable-path "$PHITS_EXE"
+```powershell
+dicomxphits-run-sumtally `
+  --workspace-root $Workspace `
+  --phits-executable-path $PhitsExe
 ```
 
 Prepare RTDOSE conversion:
 
-```bash
-dicomxphits-prepare-rtdose \
-  --workspace-root "$WORKSPACE" \
-  --rtplan "$FROZEN_RTPLAN" \
-  --template-dicom "$TEMPLATE_DICOM" \
-  --ct-reference-dicom "$CT_REFERENCE_DICOM" \
-  --phits-out "$WORKSPACE/sumtally/phits.out"
+```powershell
+dicomxphits-prepare-rtdose `
+  --workspace-root $Workspace `
+  --rtplan $FrozenRtplan `
+  --template-dicom $TemplateDicom `
+  --ct-reference-dicom $CtReferenceDicom `
+  --phits-out "$Workspace\sumtally\phits.out"
 ```
 
 Run phits2dicom for optional local real-tool validation:
 
-```bash
-dicomxphits-run-rtdose \
-  --workspace-root "$WORKSPACE" \
-  --phits2dicom-executable-path "$PHITS2DICOM_EXE"
+```powershell
+dicomxphits-run-rtdose `
+  --workspace-root $Workspace `
+  --phits2dicom-executable-path $Phits2DicomExe
 ```
 
 Use the same frozen RT Plan that produced the workspace manifest. The accepted
@@ -178,15 +204,15 @@ stale output fails before plan-reference synchronization.
 
 Optionally execute the external GPR comparison:
 
-```bash
-dicomxphits-run-gpr-compare \
-  --reference-rtdose "$REFERENCE_RTDOSE" \
-  --evaluation-rtdose "$EVALUATION_RTDOSE" \
-  --output-dir "$WORKSPACE/gpr" \
-  --gpr-root "$GPR_ROOT" \
-  --dd 3 \
-  --dta 3 \
-  --cutoff 10 \
+```powershell
+dicomxphits-run-gpr-compare `
+  --reference-rtdose $ReferenceRtDose `
+  --evaluation-rtdose $EvaluationRtDose `
+  --output-dir "$Workspace\gpr" `
+  --gpr-root $GprRoot `
+  --dd 3 `
+  --dta 3 `
+  --cutoff 10 `
   --execute
 ```
 
@@ -218,7 +244,7 @@ The Sumtally output contract must remain:
 
 RTDOSE conversion must not treat this output as per-beam `beamMU`.
 
-## Local-Only GUI Confidence Check
+## Historical Evidence: Local-Only GUI Confidence Check
 
 A human-operated Windows GUI confidence check was performed after the
 rectangular smoke-input updates were merged into `main`. The check used a fresh
