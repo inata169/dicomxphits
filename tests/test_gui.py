@@ -32,6 +32,7 @@ from dicomxphits.gui import (
     ct2phits_handoff_values,
     gui_defaults_path,
     geometry_mode_guidance,
+    preserve_tool_profile_mode_values,
     run_stage,
     stage_by_key,
     suggest_case_paths,
@@ -849,7 +850,7 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
     _save_gui_settings(values, history, defaults_path)
     saved = json.loads(defaults_path.read_text(encoding="utf-8"))
 
-    assert saved["settings_version"] == 3
+    assert saved["settings_version"] == 4
     assert saved["tool_profile_mode"] == TOOL_PROFILE_CUSTOM
     assert saved["phits_installation_folder"] == "remembered-installation"
     assert saved["rtphits_root"] == "remembered-rtphits"
@@ -945,6 +946,74 @@ def test_gui_settings_preserve_unmatched_legacy_layout_as_custom(
 
     assert values["tool_profile_mode"] == TOOL_PROFILE_CUSTOM
     assert values["phits_root_folder"] == "legacy-phits"
+    assert values["custom_phits_root_folder"] == "legacy-phits"
+
+
+def test_profile_mode_switch_preserves_explicit_custom_paths() -> None:
+    custom_values = {
+        "tool_profile_mode": TOOL_PROFILE_CUSTOM,
+        "rtphits_root": "custom-rtphits",
+        "phits_root_folder": "custom-phits",
+        "phits_executable_path": "custom-phits.exe",
+        "phits2dicom_executable_path": "custom-phits2dicom.exe",
+        "custom_rtphits_root": "",
+        "custom_phits_root_folder": "",
+        "custom_phits_executable_path": "",
+        "custom_phits2dicom_executable_path": "",
+    }
+
+    standard_values = preserve_tool_profile_mode_values(
+        custom_values,
+        previous_mode=TOOL_PROFILE_CUSTOM,
+        selected_mode=TOOL_PROFILE_STANDARD,
+    )
+    standard_values.update(
+        {
+            "rtphits_root": "standard-rtphits",
+            "phits_root_folder": "standard-phits",
+            "phits_executable_path": "standard-phits.exe",
+            "phits2dicom_executable_path": "standard-phits2dicom.exe",
+        }
+    )
+    restored = preserve_tool_profile_mode_values(
+        standard_values,
+        previous_mode=TOOL_PROFILE_STANDARD,
+        selected_mode=TOOL_PROFILE_CUSTOM,
+    )
+
+    assert restored["rtphits_root"] == "custom-rtphits"
+    assert restored["phits_root_folder"] == "custom-phits"
+    assert restored["phits_executable_path"] == "custom-phits.exe"
+    assert restored["phits2dicom_executable_path"] == "custom-phits2dicom.exe"
+
+
+def test_standard_settings_round_trip_keeps_custom_profile_state(
+    tmp_path: Path,
+) -> None:
+    layout = write_standard_tool_layout(tmp_path / "standard-phits")
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    custom_paths = {
+        "custom_rtphits_root": "custom-rtphits",
+        "custom_phits_root_folder": "custom-phits",
+        "custom_phits_executable_path": "custom-phits.exe",
+        "custom_phits2dicom_executable_path": "custom-phits2dicom.exe",
+    }
+    _save_gui_settings(
+        {
+            "tool_profile_mode": TOOL_PROFILE_STANDARD,
+            "phits_installation_folder": str(layout["root"]),
+            **custom_paths,
+        },
+        {},
+        defaults_path,
+    )
+
+    restored = _default_values(defaults_path)
+
+    assert restored["tool_profile_mode"] == TOOL_PROFILE_STANDARD
+    assert restored["phits_root_folder"] == str(layout["root"].resolve())
+    for name, value in custom_paths.items():
+        assert restored[name] == value
 
 
 def test_gui_settings_invalid_encoding_falls_back_safely(tmp_path: Path) -> None:

@@ -27,8 +27,17 @@ GEOMETRY_MODE_RECTANGULAR_3DCRT = "rectangular_3dcrt"
 GEOMETRY_MODES = (GEOMETRY_MODE_RECTANGULAR_3DCRT,)
 GUI_DEFAULTS_ENV_VAR = "DICOMXPHITS_GUI_DEFAULTS_JSON"
 GUI_DEFAULTS_FILE_NAME = "dicomxphits.gui.local.json"
-GUI_SETTINGS_VERSION = 3
+GUI_SETTINGS_VERSION = 4
 DEFAULT_CT2PHITS_TIMEOUT_SECONDS = 300.0
+CUSTOM_TOOL_PATH_FIELDS = (
+    "rtphits_root",
+    "phits_root_folder",
+    "phits_executable_path",
+    "phits2dicom_executable_path",
+)
+CUSTOM_TOOL_SETTING_FIELDS = {
+    name: f"custom_{name}" for name in CUSTOM_TOOL_PATH_FIELDS
+}
 PERSISTED_GUI_FIELDS = (
     "geometry_mode",
     "tool_profile_mode",
@@ -37,6 +46,7 @@ PERSISTED_GUI_FIELDS = (
     "phits_root_folder",
     "phits_executable_path",
     "phits2dicom_executable_path",
+    *CUSTOM_TOOL_SETTING_FIELDS.values(),
     "rtdose_template_dicom",
     "machine_config_path",
 )
@@ -507,7 +517,7 @@ def run_stage(
 
 
 def _base_default_values() -> dict[str, str]:
-    return {
+    values = {
         "tool_profile_mode": TOOL_PROFILE_STANDARD,
         "phits_installation_folder": "",
         "source_rtplan_path": "",
@@ -529,6 +539,8 @@ def _base_default_values() -> dict[str, str]:
         "ct_datfiles_root": "",
         "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
     }
+    values.update({name: "" for name in CUSTOM_TOOL_SETTING_FIELDS.values()})
+    return values
 
 
 def gui_defaults_path() -> Path:
@@ -581,12 +593,34 @@ def _default_values(defaults_path: Path | None = None) -> dict[str, str]:
         and values["phits_root_folder"].strip()
     ):
         values["phits_installation_folder"] = values["phits_root_folder"]
+    if values["tool_profile_mode"] == TOOL_PROFILE_CUSTOM:
+        for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
+            if not values[custom_name].strip():
+                values[custom_name] = values[name]
+            values[name] = values[custom_name]
     if (
         values["tool_profile_mode"] == TOOL_PROFILE_STANDARD
         and values["phits_installation_folder"].strip()
     ):
         values.update(resolve_tool_profile(values).values())
     return values
+
+
+def preserve_tool_profile_mode_values(
+    current_values: Mapping[str, str],
+    *,
+    previous_mode: str,
+    selected_mode: str,
+) -> dict[str, str]:
+    updated = dict(current_values)
+    if previous_mode == TOOL_PROFILE_CUSTOM:
+        for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
+            updated[custom_name] = str(current_values.get(name, ""))
+    if selected_mode == TOOL_PROFILE_CUSTOM:
+        for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
+            updated[name] = str(updated.get(custom_name, ""))
+    updated["tool_profile_mode"] = selected_mode
+    return updated
 
 
 def _browse_directories(defaults_path: Path | None = None) -> dict[str, str]:
@@ -995,6 +1029,7 @@ def _build_gui() -> int:
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
     tool_profile_resolution = resolve_tool_profile(defaults)
+    active_tool_profile_mode = values["tool_profile_mode"].get()
 
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
@@ -1027,6 +1062,9 @@ def _build_gui() -> int:
 
     def refresh_tool_profile() -> ToolProfileResolution:
         nonlocal tool_profile_resolution
+        if values["tool_profile_mode"].get() == TOOL_PROFILE_CUSTOM:
+            for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
+                values[custom_name].set(values[name].get())
         tool_profile_resolution = resolve_tool_profile(values_snapshot())
         if tool_profile_resolution.mode == TOOL_PROFILE_STANDARD:
             for name, value in tool_profile_resolution.values().items():
@@ -1529,6 +1567,16 @@ def _build_gui() -> int:
     ).grid(row=9, column=2, pady=(10, 0), sticky="e")
 
     def update_tool_profile_mode(*_args: object) -> None:
+        nonlocal active_tool_profile_mode
+        selected_mode = values["tool_profile_mode"].get()
+        transitioned = preserve_tool_profile_mode_values(
+            values_snapshot(),
+            previous_mode=active_tool_profile_mode,
+            selected_mode=selected_mode,
+        )
+        for name in (*CUSTOM_TOOL_PATH_FIELDS, *CUSTOM_TOOL_SETTING_FIELDS.values()):
+            values[name].set(transitioned[name])
+        active_tool_profile_mode = selected_mode
         custom = values["tool_profile_mode"].get() == TOOL_PROFILE_CUSTOM
         install_entry, install_button = installation_controls
         install_entry.state(["readonly"] if custom else ["!readonly"])
