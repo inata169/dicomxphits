@@ -290,6 +290,12 @@ successful CT2PHITS run, it automatically passes the frozen `RTPLAN.dcm`,
 `CT/CT000001.dcm`, and `DATfiles` paths to workspace preparation. An existing
 validated handoff can still be entered from the advanced workspace controls.
 
+RTDOSE remains a two-step action. After **Prepare RTDOSE** succeeds, the GUI
+shows **Prepared**, disables the prepare action, and makes **Run RTDOSE** the
+next available action. Only **Run RTDOSE** invokes phits2dicom and creates the
+raw and coordinate-corrected DICOM outputs. A successful prepare summary must
+be reused rather than prepared again.
+
 For first-time standard setup, open **Tool settings**, select the licensed
 **PHITS installation folder**, and choose **Validate and save setup**. After
 that, a normal case requires only the source RT Plan and CT DICOM folder. The

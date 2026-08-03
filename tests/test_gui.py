@@ -16,6 +16,9 @@ if str(PUBLIC_SRC) not in sys.path:
 import dicomxphits.gui as gui_module
 from dicomxphits.gui import (
     GEOMETRY_MODE_RECTANGULAR_3DCRT,
+    RTDOSE_COMPLETED,
+    RTDOSE_NOT_PREPARED,
+    RTDOSE_PREPARED,
     GuiConfig,
     StageExecutionGuard,
     StageResult,
@@ -34,9 +37,14 @@ from dicomxphits.gui import (
     gui_defaults_path,
     geometry_mode_guidance,
     preserve_tool_profile_mode_values,
+    rtdose_action_enabled,
+    rtdose_nav_status,
+    rtdose_stage_state,
     run_stage,
     stage_by_key,
     suggest_case_paths,
+    successful_nav_status,
+    validation_nav_status,
     validate_prepare_handoff_selection,
     validate_stage,
     workspace_path_from_parent,
@@ -448,6 +456,111 @@ def test_prepare_rtdose_stage_passes_default_phits_out(tmp_path: Path) -> None:
     result = run_stage(config, "prepare_rtdose", runner=fake_runner)
 
     assert result.summary == {"stage_status": "success"}
+
+
+def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+    assert successful_nav_status("prepare_rtdose") == "Prepared"
+    assert rtdose_action_enabled("prepare_rtdose", RTDOSE_NOT_PREPARED) is True
+    assert rtdose_action_enabled("run_rtdose", RTDOSE_NOT_PREPARED) is False
+
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps({"stage_status": "success"}),
+    )
+
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+    assert rtdose_action_enabled("prepare_rtdose", RTDOSE_PREPARED) is False
+    assert rtdose_action_enabled("run_rtdose", RTDOSE_PREPARED) is True
+    assert validation_nav_status(
+        "prepare_rtdose", rtdose_state=RTDOSE_PREPARED
+    ) == "Prepared"
+    assert validation_nav_status(
+        "run_rtdose", rtdose_state=RTDOSE_PREPARED
+    ) == "Prepared"
+
+
+def test_rtdose_nav_status_resets_for_unprepared_workspace() -> None:
+    assert rtdose_nav_status(RTDOSE_COMPLETED) == "Completed"
+    assert rtdose_nav_status(RTDOSE_PREPARED) == "Prepared"
+    assert rtdose_nav_status(RTDOSE_NOT_PREPARED) == "Not run"
+
+
+def test_rtdose_state_treats_malformed_summary_as_unsuccessful(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    prepare_summary = workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    run_summary = workspace / stage_by_key("run_rtdose").summary_relative_path
+    write_file(prepare_summary, "{truncated")
+
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+
+    write_file(prepare_summary, json.dumps({"stage_status": "success"}))
+    write_file(run_summary, "{truncated")
+
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+
+def test_stage_status_treats_summary_read_error_as_failure(tmp_path: Path) -> None:
+    result = StageResult(
+        stage_key="prepare_rtdose",
+        command=["dicomxphits-prepare-rtdose"],
+        return_code=0,
+        summary_path=tmp_path / "rtdose_conversion_prepare_summary.json",
+        summary={"summary_error": "JSONDecodeError: truncated summary"},
+        stdout="",
+        stderr="",
+    )
+
+    assert gui_module._stage_status(result) == "invalid_summary"
+
+
+def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps({"stage_status": "success"}),
+    )
+    write_file(
+        workspace / stage_by_key("run_rtdose").summary_relative_path,
+        json.dumps({"stage_status": "success"}),
+    )
+
+    assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+    assert rtdose_action_enabled("prepare_rtdose", RTDOSE_COMPLETED) is False
+    assert rtdose_action_enabled("run_rtdose", RTDOSE_COMPLETED) is False
+    assert successful_nav_status("run_rtdose") == "Completed"
+
+
+def test_duplicate_successful_rtdose_prepare_guides_user_to_run(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    config = base_config(tmp_path, workspace=workspace)
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps({"stage_status": "success"}),
+    )
+
+    with pytest.raises(
+        GuiValidationError,
+        match="already prepared.*Run RTDOSE",
+    ):
+        validate_stage(config, stage_by_key("prepare_rtdose"))
+
+
+def test_failed_rtdose_prepare_does_not_unlock_run(tmp_path: Path) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps({"stage_status": "failed"}),
+    )
+
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+    assert rtdose_action_enabled("run_rtdose", RTDOSE_NOT_PREPARED) is False
 
 
 def test_prepare_stage_allows_new_workspace_and_uses_parent_cwd(tmp_path: Path) -> None:
