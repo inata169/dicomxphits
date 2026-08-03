@@ -216,14 +216,16 @@ then launch the guided Tkinter interface. Run these commands from the repository
 root in PowerShell, not from the Linux Dev Container terminal:
 
 ```powershell
-py -3.12 -m venv .venv
+py -3 --version
+py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 .\launchers\run_gui_venv.ps1
 ```
 
-If the Python launcher is unavailable and `python --version` reports Python
-3.12 or newer, use `python -m venv .venv` for the first command. The launcher
-intentionally uses `.venv\Scripts\python.exe`; it does not create an
+Confirm that the first command reports Python 3.12 or newer. If the Python
+launcher is unavailable, check `python --version` and use
+`python -m venv .venv` instead, again requiring Python 3.12 or newer. The GUI
+launcher intentionally uses `.venv\Scripts\python.exe`; it does not create an
 environment, install dependencies, or reuse the Dev Container's Linux Python.
 
 The GUI presents CT2PHITS as the first stage, then keeps workspace preparation,
