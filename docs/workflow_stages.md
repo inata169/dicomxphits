@@ -123,6 +123,13 @@ stages.
 The RTDOSE stage is split into `dicomxphits-prepare-rtdose` and
 `dicomxphits-run-rtdose`.
 
+In the guided GUI, a successful Prepare summary changes the RTDOSE state to
+`Prepared`, disables **Prepare RTDOSE**, and enables **Run RTDOSE**. The Run
+action is the step that invokes phits2dicom and creates the DICOM output.
+Selecting a workspace with a successful Prepare summary restores that state;
+repeating Prepare is not required and does not replace the successful state
+with a validation failure.
+
 It consumes the preceding all-active-segments totalfield Sumtally output and
 records the conversion contract:
 

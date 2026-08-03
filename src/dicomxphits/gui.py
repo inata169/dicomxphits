@@ -29,6 +29,9 @@ GUI_DEFAULTS_ENV_VAR = "DICOMXPHITS_GUI_DEFAULTS_JSON"
 GUI_DEFAULTS_FILE_NAME = "dicomxphits.gui.local.json"
 GUI_SETTINGS_VERSION = 4
 DEFAULT_CT2PHITS_TIMEOUT_SECONDS = 300.0
+RTDOSE_NOT_PREPARED = "not_prepared"
+RTDOSE_PREPARED = "prepared"
+RTDOSE_COMPLETED = "completed"
 CUSTOM_TOOL_PATH_FIELDS = (
     "rtphits_root",
     "phits_root_folder",
@@ -383,6 +386,15 @@ def validate_stage(
         and summary_path.exists()
         and not config.allow_overwrite
     ):
+        if spec.key == "prepare_rtdose" and summary_succeeded(
+            read_summary(summary_path)
+        ):
+            state = rtdose_stage_state(workspace)
+            if state == RTDOSE_COMPLETED:
+                raise GuiValidationError("RTDOSE is already completed.")
+            raise GuiValidationError(
+                "RTDOSE is already prepared. Click Run RTDOSE to create the output."
+            )
         raise GuiValidationError(f"stage output already exists: {summary_path}")
     return workspace
 
@@ -492,6 +504,51 @@ def read_summary(path: Path) -> dict[str, object] | None:
     if isinstance(data, dict):
         return data
     return {"summary_error": "summary JSON root is not an object"}
+
+
+def summary_succeeded(summary: Mapping[str, object] | None) -> bool:
+    if not summary:
+        return False
+    for key in ("stage_status", "status"):
+        value = summary.get(key)
+        if isinstance(value, str) and value in {"completed", "success", "prepared"}:
+            return True
+    return False
+
+
+def rtdose_stage_state(workspace_root: Path) -> str:
+    execution = read_summary(
+        workspace_root / stage_by_key("run_rtdose").summary_relative_path
+    )
+    if summary_succeeded(execution):
+        return RTDOSE_COMPLETED
+    preparation = read_summary(
+        workspace_root / stage_by_key("prepare_rtdose").summary_relative_path
+    )
+    if summary_succeeded(preparation):
+        return RTDOSE_PREPARED
+    return RTDOSE_NOT_PREPARED
+
+
+def rtdose_action_enabled(stage_key: str, state: str) -> bool:
+    if stage_key == "prepare_rtdose":
+        return state == RTDOSE_NOT_PREPARED
+    if stage_key == "run_rtdose":
+        return state == RTDOSE_PREPARED
+    return True
+
+
+def successful_nav_status(stage_key: str) -> str:
+    return "Prepared" if stage_key == "prepare_rtdose" else "Completed"
+
+
+def validation_nav_status(stage_key: str, *, rtdose_state: str) -> str:
+    if stage_key in {"prepare_rtdose", "run_rtdose"}:
+        if rtdose_state == RTDOSE_COMPLETED:
+            return "Completed"
+        if rtdose_state == RTDOSE_PREPARED:
+            return "Prepared"
+    return "Validation failed"
 
 
 def run_stage(
@@ -1057,11 +1114,19 @@ def _build_gui() -> int:
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
 
+    def current_rtdose_state() -> str:
+        workspace = values["workspace_root"].get().strip()
+        if not workspace:
+            return RTDOSE_NOT_PREPARED
+        return rtdose_stage_state(Path(workspace).expanduser())
+
     def refresh_action_button_states() -> None:
         busy = execution_guard.active_stage is not None
+        rtdose_state = current_rtdose_state()
         for stage_key, button in action_buttons.items():
             enabled = (
                 not busy and tool_profile_resolution.ready_for_stage(stage_key)
+                and rtdose_action_enabled(stage_key, rtdose_state)
             )
             button.state(["!disabled"] if enabled else ["disabled"])
 
@@ -1906,12 +1971,28 @@ def _build_gui() -> int:
         )
 
     def finish_stage_error(spec: StageSpec, message: str, *, validation: bool) -> None:
-        nav_status[stage_to_nav[spec.key]].set("Validation failed" if validation else "Failed")
+        rtdose_state = current_rtdose_state()
+        nav_status[stage_to_nav[spec.key]].set(
+            validation_nav_status(spec.key, rtdose_state=rtdose_state)
+            if validation
+            else "Failed"
+        )
         append(
             f"{spec.label}: {'validation failed' if validation else 'failed'}: {message}",
-            "error",
+            "info"
+            if validation
+            and spec.key == "prepare_rtdose"
+            and rtdose_state in {RTDOSE_PREPARED, RTDOSE_COMPLETED}
+            else "error",
         )
-        messagebox.showerror(spec.label, message)
+        if (
+            validation
+            and spec.key == "prepare_rtdose"
+            and rtdose_state in {RTDOSE_PREPARED, RTDOSE_COMPLETED}
+        ):
+            messagebox.showinfo(spec.label, message)
+        else:
+            messagebox.showerror(spec.label, message)
         set_busy(None)
 
     def finish_stage_success(spec: StageSpec, result: StageResult) -> None:
@@ -1952,9 +2033,7 @@ def _build_gui() -> int:
             verified_handoff_available.set(True)
             handoff_status.set("Verified frozen handoff")
             append("Frozen CT2PHITS handoff applied to downstream preparation.", "success")
-        nav_status[stage_to_nav[spec.key]].set(
-            "Completed" if success else status.replace("_", " ").title()
-        )
+        nav_status[stage_to_nav[spec.key]].set(successful_nav_status(spec.key))
         append(
             f"{spec.label}: {status}; summary: {result.summary_path}",
             "success" if success else "warning",
@@ -1964,6 +2043,9 @@ def _build_gui() -> int:
         if result.stderr:
             append(result.stderr.strip(), "warning")
         set_busy(None)
+        if spec.key == "prepare_rtdose":
+            append("RTDOSE is prepared. Next: click Run RTDOSE.", "info")
+            rtdose_run_button.focus_set()
 
     def start_stage(stage_key: str) -> None:
         if execution_guard.active_stage is not None:
@@ -2079,6 +2161,16 @@ def _build_gui() -> int:
     rtdose_run_button.grid(row=0, column=2, padx=(4, 0), sticky="e")
     action_buttons["run_rtdose"] = rtdose_run_button
 
+    def refresh_rtdose_workflow_state(*_args: object) -> None:
+        state = current_rtdose_state()
+        if state == RTDOSE_COMPLETED:
+            nav_status["rtdose"].set("Completed")
+        elif state == RTDOSE_PREPARED:
+            nav_status["rtdose"].set("Prepared")
+        refresh_action_button_states()
+
+    values["workspace_root"].trace_add("write", refresh_rtdose_workflow_state)
+    refresh_rtdose_workflow_state()
     refresh_action_button_states()
 
     def close_gui() -> None:
