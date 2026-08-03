@@ -181,6 +181,21 @@ def test_missing_rtphits_folder_disables_ct2phits_and_rtdose(
     )
 
 
+def test_unselected_standard_folder_disables_all_dependent_stages() -> None:
+    resolution = resolve_standard_tool_profile("")
+
+    for stage_key in (
+        "run_ct2phits",
+        "prepare_workspace",
+        "run_segments",
+        "generate_sumtally",
+        "run_sumtally",
+        "run_rtdose",
+    ):
+        assert resolution.ready_for_stage(stage_key) is False
+    assert resolution.ready_for_stage("prepare_rtdose") is True
+
+
 def test_custom_tool_profile_uses_same_rtphits_markers(tmp_path: Path) -> None:
     layout = write_standard_tool_layout(tmp_path / "nonstandard")
     values = {

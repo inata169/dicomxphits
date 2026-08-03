@@ -126,6 +126,26 @@ def resolve_standard_tool_profile(
                     ROLE_PHITS_ROOT,
                     "Select the PHITS installation folder.",
                 ),
+                ToolProfileIssue(
+                    ROLE_RTPHITS_ROOT,
+                    "RT-PHITS cannot be resolved until a PHITS folder is selected.",
+                ),
+                ToolProfileIssue(
+                    ROLE_RTPHITS_BATCH,
+                    "RT-PHITS batch cannot be resolved until a PHITS folder is selected.",
+                ),
+                ToolProfileIssue(
+                    ROLE_HU_TABLE,
+                    "CT2PHITS HU table cannot be resolved until a PHITS folder is selected.",
+                ),
+                ToolProfileIssue(
+                    ROLE_PHITS_EXECUTABLE,
+                    "PHITS executable cannot be resolved until a PHITS folder is selected.",
+                ),
+                ToolProfileIssue(
+                    ROLE_PHITS2DICOM_EXECUTABLE,
+                    "phits2dicom cannot be resolved until a PHITS folder is selected.",
+                ),
             ),
         )
 
