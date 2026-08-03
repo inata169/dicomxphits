@@ -20,6 +20,11 @@ from dicomxphits.gui_tool_profile import (
     resolve_tool_profile,
     standard_profile_matches_values,
 )
+from dicomxphits.prepare_3dcrt_workspace import (
+    DEFAULT_SEGMENT_MAXBCH,
+    DEFAULT_SEGMENT_MAXCAS,
+    DEFAULT_SEGMENT_OMP_THREADS,
+)
 
 
 PUBLIC_ROOT = Path(__file__).resolve().parents[2]
@@ -27,8 +32,13 @@ GEOMETRY_MODE_RECTANGULAR_3DCRT = "rectangular_3dcrt"
 GEOMETRY_MODES = (GEOMETRY_MODE_RECTANGULAR_3DCRT,)
 GUI_DEFAULTS_ENV_VAR = "DICOMXPHITS_GUI_DEFAULTS_JSON"
 GUI_DEFAULTS_FILE_NAME = "dicomxphits.gui.local.json"
-GUI_SETTINGS_VERSION = 4
+GUI_SETTINGS_VERSION = 5
 DEFAULT_CT2PHITS_TIMEOUT_SECONDS = 300.0
+RUNTIME_SETTING_DEFAULTS = {
+    "maxcas": str(DEFAULT_SEGMENT_MAXCAS),
+    "maxbch": str(DEFAULT_SEGMENT_MAXBCH),
+    "omp_threads": str(DEFAULT_SEGMENT_OMP_THREADS),
+}
 CUSTOM_TOOL_PATH_FIELDS = (
     "rtphits_root",
     "phits_root_folder",
@@ -54,6 +64,7 @@ PERSISTED_GUI_FIELDS = (
     *CUSTOM_TOOL_SETTING_FIELDS.values(),
     "rtdose_template_dicom",
     "machine_config_path",
+    *RUNTIME_SETTING_DEFAULTS,
 )
 GUI_HELP_TEXT = """\
 usage: dicomxphits-gui [-h]
@@ -92,6 +103,9 @@ class GuiConfig:
     ct2phits_workspace_root: str = ""
     ct_series_instance_uid: str = ""
     ct2phits_timeout_seconds: float = DEFAULT_CT2PHITS_TIMEOUT_SECONDS
+    maxcas: int | str = DEFAULT_SEGMENT_MAXCAS
+    maxbch: int | str = DEFAULT_SEGMENT_MAXBCH
+    omp_threads: int | str = DEFAULT_SEGMENT_OMP_THREADS
 
 
 @dataclass(frozen=True)
@@ -281,6 +295,25 @@ def _ct2phits_timeout_value(config: GuiConfig) -> float:
     return value
 
 
+def _runtime_setting_value(config: GuiConfig, field_name: str) -> int:
+    raw_value = getattr(config, field_name)
+    if isinstance(raw_value, bool):
+        raise GuiValidationError(f"{field_name} must be a decimal positive integer")
+    text = str(raw_value).strip()
+    if re.fullmatch(r"[0-9]+", text) is None or int(text) <= 0:
+        raise GuiValidationError(f"{field_name} must be a decimal positive integer")
+    return int(text)
+
+
+def _normalized_runtime_setting(value: object, *, field_name: str) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if re.fullmatch(r"[0-9]+", text) is None or int(text) <= 0:
+        return None
+    return str(int(text))
+
+
 def validate_prepare_handoff_selection(
     *,
     manual_handoff_selected: bool,
@@ -315,6 +348,8 @@ def validate_stage(
         _ct2phits_timeout_value(config)
 
     if spec.key == "prepare_workspace":
+        for field_name in RUNTIME_SETTING_DEFAULTS:
+            _runtime_setting_value(config, field_name)
         if geometry_mode not in GEOMETRY_MODES:
             raise GuiValidationError(f"unknown geometry_mode: {geometry_mode}")
         required_paths = tuple(
@@ -433,6 +468,12 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
         if geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT:
             command.extend(
                 [
+                    "--maxcas",
+                    str(_runtime_setting_value(config, "maxcas")),
+                    "--maxbch",
+                    str(_runtime_setting_value(config, "maxbch")),
+                    "--omp-threads",
+                    str(_runtime_setting_value(config, "omp_threads")),
                     "--ct-datfiles-root",
                     str(_resolved_path(config, "ct_datfiles_root")),
                     "--ct-reference-dicom",
@@ -543,6 +584,7 @@ def _base_default_values() -> dict[str, str]:
         "machine_config_path": "",
         "ct_datfiles_root": "",
         "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
+        **RUNTIME_SETTING_DEFAULTS,
     }
     values.update({name: "" for name in CUSTOM_TOOL_SETTING_FIELDS.values()})
     values[CUSTOM_WORKSPACE_SETTING_FIELD] = ""
@@ -573,6 +615,10 @@ def _default_values(defaults_path: Path | None = None) -> dict[str, str]:
         value = data.get(key)
         if isinstance(value, str):
             values[key] = value
+    for key, default in RUNTIME_SETTING_DEFAULTS.items():
+        values[key] = _normalized_runtime_setting(
+            values.get(key), field_name=key
+        ) or default
     if values["geometry_mode"] not in GEOMETRY_MODES:
         values["geometry_mode"] = GEOMETRY_MODE_RECTANGULAR_3DCRT
     stored_mode = data.get("tool_profile_mode")
@@ -663,6 +709,7 @@ def _save_gui_settings(
     defaults_path: Path | None = None,
 ) -> Path:
     path = defaults_path or gui_defaults_path()
+    previous = _read_gui_settings(path)
     payload: dict[str, object] = {
         "settings_version": GUI_SETTINGS_VERSION,
         "browse_directories": {
@@ -673,7 +720,14 @@ def _save_gui_settings(
     }
     for key in PERSISTED_GUI_FIELDS:
         value = values.get(key)
-        if isinstance(value, str):
+        if key in RUNTIME_SETTING_DEFAULTS:
+            normalized = _normalized_runtime_setting(value, field_name=key)
+            if normalized is None:
+                normalized = _normalized_runtime_setting(
+                    previous.get(key), field_name=key
+                )
+            payload[key] = normalized or RUNTIME_SETTING_DEFAULTS[key]
+        elif isinstance(value, str):
             payload[key] = value
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.stem + ".tmp.local.json")
@@ -1137,6 +1191,9 @@ def _build_gui() -> int:
             ct2phits_workspace_root=values["ct2phits_workspace_root"].get(),
             ct_series_instance_uid=values["ct_series_instance_uid"].get(),
             ct2phits_timeout_seconds=timeout,
+            maxcas=values["maxcas"].get(),
+            maxbch=values["maxbch"].get(),
+            omp_threads=values["omp_threads"].get(),
         )
 
     app = ttk.Frame(root, style="App.TFrame")
@@ -1734,11 +1791,42 @@ def _build_gui() -> int:
         directory=False,
         helper="Leave empty to use the built-in public rectangular research model.",
     )
+    runtime_frame = ttk.Frame(workspace_frame, style="Surface.TFrame")
+    runtime_frame.grid(
+        row=6, column=0, columnspan=3, pady=(10, 2), sticky="ew"
+    )
+    for column in (1, 3, 5):
+        runtime_frame.columnconfigure(column, weight=1)
+    for index, (label, name) in enumerate(
+        (
+            ("maxcas (histories/batch)", "maxcas"),
+            ("maxbch (batches)", "maxbch"),
+            ("OpenMP threads", "omp_threads"),
+        )
+    ):
+        column = index * 2
+        ttk.Label(runtime_frame, text=label, style="Surface.TLabel").grid(
+            row=0, column=column, padx=(0 if index == 0 else 14, 8), sticky="w"
+        )
+        ttk.Entry(
+            runtime_frame,
+            textvariable=values[name],
+            width=12,
+        ).grid(row=0, column=column + 1, sticky="ew")
+    ttk.Label(
+        runtime_frame,
+        text=(
+            "Positive integers for newly prepared PHITS segment inputs. "
+            "$OMP is official PHITS syntax; these controls do not change Sumtally."
+        ),
+        style="SurfaceMuted.TLabel",
+        wraplength=780,
+    ).grid(row=1, column=0, columnspan=6, pady=(5, 0), sticky="w")
     ttk.Checkbutton(
         workspace_frame,
         text="Allow overwrite of downstream stage summaries",
         variable=overwrite,
-    ).grid(row=6, column=1, sticky="w", pady=(6, 2))
+    ).grid(row=8, column=1, sticky="w", pady=(6, 2))
 
     manual_frame = ttk.Frame(
         workspace_page, style="Surface.TFrame", padding=(18, 12)

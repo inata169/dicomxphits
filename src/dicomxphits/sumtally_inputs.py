@@ -9,6 +9,9 @@ from typing import Any
 
 
 TARGET_TALLY_PATTERNS = ["deposit-target-3D", "deposit_target"]
+DEFAULT_SUMTALLY_MAXCAS = 1_000_000
+DEFAULT_SUMTALLY_MAXBCH = 10
+DEFAULT_SUMTALLY_OMP_THREADS = 8
 
 
 def file_sha256(path: Path) -> str:
@@ -347,16 +350,38 @@ def generate_sum_inp(
     )
     output_dir = Path(output_path).resolve().parent
     lines = content.splitlines(keepends=True)
-    new_lines: list[str] = []
+    preferred_eol = "\r\n" if "\r\n" in content else "\n"
+    new_lines: list[str] = [
+        f"$OMP = {DEFAULT_SUMTALLY_OMP_THREADS}{preferred_eol}"
+    ]
 
     params_active = False
     params_pattern = get_section_pattern("Parameters")
     icntl_done = False
+    maxcas_done = False
+    maxbch_done = False
+
+    def append_missing_sumtally_parameters() -> None:
+        nonlocal maxcas_done, maxbch_done
+        if not maxcas_done:
+            new_lines.append(
+                f"  maxcas = {DEFAULT_SUMTALLY_MAXCAS}{preferred_eol}"
+            )
+            maxcas_done = True
+        if not maxbch_done:
+            new_lines.append(
+                f"  maxbch = {DEFAULT_SUMTALLY_MAXBCH}{preferred_eol}"
+            )
+            maxbch_done = True
 
     i = 0
     while i < len(lines):
         line = lines[i]
         stripped = line.rstrip("\r\n")
+
+        if re.match(r"^\s*\$OMP\s*=", stripped, re.IGNORECASE):
+            i += 1
+            continue
 
         if re.search(params_pattern, stripped, re.IGNORECASE):
             params_active = True
@@ -366,14 +391,24 @@ def generate_sum_inp(
 
         if params_active:
             if re.match(r"^\s*\[", stripped) and not re.search(params_pattern, stripped, re.IGNORECASE):
+                append_missing_sumtally_parameters()
                 params_active = False
+            elif re.match(r"^\s*maxcas\s*=", stripped, re.IGNORECASE):
+                eol = "\r\n" if "\r\n" in line else "\n"
+                new_lines.append(f"  maxcas = {DEFAULT_SUMTALLY_MAXCAS}{eol}")
+                maxcas_done = True
+                i += 1
+                continue
+            elif re.match(r"^\s*maxbch\s*=", stripped, re.IGNORECASE):
+                eol = "\r\n" if "\r\n" in line else "\n"
+                new_lines.append(f"  maxbch = {DEFAULT_SUMTALLY_MAXBCH}{eol}")
+                maxbch_done = True
+                i += 1
+                continue
             elif re.match(r"^\s*icntl\s*=", stripped, re.IGNORECASE):
                 eol = "\r\n" if "\r\n" in line else "\n"
                 new_lines.append(f"  icntl = 13{eol}")
                 icntl_done = True
-                i += 1
-                continue
-            elif re.match(r"^\s*\$OMP\s*=", stripped, re.IGNORECASE):
                 i += 1
                 continue
 
@@ -419,6 +454,9 @@ def generate_sum_inp(
 
         new_lines.append(line)
         i += 1
+
+    if params_active:
+        append_missing_sumtally_parameters()
 
     if not icntl_done:
         result: list[str] = []

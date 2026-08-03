@@ -50,6 +50,9 @@ GEOMETRY_MODE_RECTANGULAR_3DCRT = "rectangular_3dcrt"
 GEOMETRY_MODES = (GEOMETRY_MODE_RECTANGULAR_3DCRT,)
 RECTANGULAR_PHITS_INPUT_NAME = "phits.inp"
 RECTANGULAR_CT_GENERATION_MODE = "rectangular_3dcrt_public_ct_voxel_phits_inputs"
+DEFAULT_SEGMENT_MAXCAS = 1_000_000
+DEFAULT_SEGMENT_MAXBCH = 10
+DEFAULT_SEGMENT_OMP_THREADS = 8
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,21 @@ def finite_nonnegative(value: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return math.isfinite(number) and number >= 0.0
+
+
+def require_positive_integer(value: Any, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{label} must be a positive integer")
+    return value
+
+
+def positive_decimal_integer(value: str) -> int:
+    if re.fullmatch(r"[0-9]+", value) is None:
+        raise argparse.ArgumentTypeError("must be a decimal positive integer")
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a decimal positive integer")
+    return parsed
 
 
 def active_segments(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -460,7 +478,13 @@ def generate_rectangular_phits_workspace(
     ct_asset_root: Path | None = None,
     confirmed_non_patient_phantom: bool = False,
     ct_preparation: PreparedCt2PhitsSet | None = None,
+    maxcas: int = DEFAULT_SEGMENT_MAXCAS,
+    maxbch: int = DEFAULT_SEGMENT_MAXBCH,
+    omp_threads: int = DEFAULT_SEGMENT_OMP_THREADS,
 ) -> dict[str, Any]:
+    maxcas = require_positive_integer(maxcas, label="maxcas")
+    maxbch = require_positive_integer(maxbch, label="maxbch")
+    omp_threads = require_positive_integer(omp_threads, label="omp_threads")
     if machine_config_path is None:
         machine_config = public_default_machine_config()
         machine_config_source = "built_in_public_default"
@@ -502,6 +526,9 @@ def generate_rectangular_phits_workspace(
                         if calibration is not None
                         else None
                     ),
+                    maxcas_per_batch=maxcas,
+                    batches=maxbch,
+                    omp_threads=omp_threads,
                 ),
             )
         )
@@ -525,6 +552,12 @@ def generate_rectangular_phits_workspace(
         "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
         "generation_mode": generation_mode,
         "machine_config_source": machine_config_source,
+        "segment_runtime": {
+            "maxcas": maxcas,
+            "maxbch": maxbch,
+            "omp_threads": omp_threads,
+            "omp_directive": f"$OMP = {omp_threads}",
+        },
         "absolute_dose_calibration": (
             calibration
             if calibration is not None
@@ -610,7 +643,13 @@ def prepare_public_3dcrt_workspace(
     ct_datfiles_root: Path | None = None,
     ct_reference_dicom: Path | None = None,
     confirmed_non_patient_phantom: bool = False,
+    maxcas: int = DEFAULT_SEGMENT_MAXCAS,
+    maxbch: int = DEFAULT_SEGMENT_MAXBCH,
+    omp_threads: int = DEFAULT_SEGMENT_OMP_THREADS,
 ) -> dict[str, Any]:
+    maxcas = require_positive_integer(maxcas, label="maxcas")
+    maxbch = require_positive_integer(maxbch, label="maxbch")
+    omp_threads = require_positive_integer(omp_threads, label="omp_threads")
     validate_geometry_mode_args(geometry_mode=geometry_mode, machine_config_path=machine_config_path)
     require_tool_paths(paths, geometry_mode=geometry_mode)
     if geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT:
@@ -664,6 +703,9 @@ def prepare_public_3dcrt_workspace(
             ct_asset_root=ct_preparation.assets.root,
             confirmed_non_patient_phantom=True,
             ct_preparation=ct_preparation,
+            maxcas=maxcas,
+            maxbch=maxbch,
+            omp_threads=omp_threads,
         )
     rtplan_summary_path = rtplan_path.name
     workspace_summary_path = "."
@@ -697,6 +739,12 @@ def prepare_public_3dcrt_workspace(
             "phits2dicom_executable_path": paths.phits2dicom_executable_path,
         },
         "strict_gate": gate_summary,
+        "segment_runtime": {
+            "maxcas": maxcas,
+            "maxbch": maxbch,
+            "omp_threads": omp_threads,
+            "omp_directive": f"$OMP = {omp_threads}",
+        },
         "phits_generation": phits_summary,
         "phits_execution_performed": False,
     }
@@ -718,6 +766,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phits-root-folder", default=None)
     parser.add_argument("--phits-executable-path", default=None)
     parser.add_argument("--phits2dicom-executable-path", default=None)
+    parser.add_argument(
+        "--maxcas",
+        type=positive_decimal_integer,
+        default=DEFAULT_SEGMENT_MAXCAS,
+        help="Positive histories per batch for generated segment inputs",
+    )
+    parser.add_argument(
+        "--maxbch",
+        type=positive_decimal_integer,
+        default=DEFAULT_SEGMENT_MAXBCH,
+        help="Positive batch count for generated segment inputs",
+    )
+    parser.add_argument(
+        "--omp-threads",
+        type=positive_decimal_integer,
+        default=DEFAULT_SEGMENT_OMP_THREADS,
+        help="Positive OpenMP thread count for generated segment inputs",
+    )
     parser.add_argument(
         "--geometry-mode",
         choices=GEOMETRY_MODES,
@@ -787,6 +853,9 @@ def main(argv: list[str] | None = None) -> int:
                 else None
             ),
             confirmed_non_patient_phantom=args.confirm_non_patient_phantom,
+            maxcas=args.maxcas,
+            maxbch=args.maxbch,
+            omp_threads=args.omp_threads,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

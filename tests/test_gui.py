@@ -68,7 +68,7 @@ def write_standard_tool_layout(root: Path) -> dict[str, Path]:
     rtphits_root = write_dir(root / "utility" / "RTphits")
     return {
         "root": write_dir(root),
-        "phits": write_file(root / "bin" / "phits_win.exe"),
+        "phits": write_file(root / "bin" / "phits335_win_openmp.exe"),
         "rtphits": rtphits_root,
         "batch": write_file(rtphits_root / "RTphits_win.bat"),
         "table": write_file(rtphits_root / "data" / "HumanVoxelTable.data"),
@@ -118,6 +118,9 @@ def test_pr3_cli_contract_exposes_rectangular_geometry_mode() -> None:
     assert "ct_datfiles_root" in parser_actions
     assert "ct_reference_dicom" in parser_actions
     assert "confirm_non_patient_phantom" in parser_actions
+    assert parser_actions["maxcas"].default == 1_000_000
+    assert parser_actions["maxbch"].default == 10
+    assert parser_actions["omp_threads"].default == 8
     assert parser.parse_args(["--rtplan", "plan.dcm", "--workspace-root", "workspace"]).geometry_mode == "rectangular_3dcrt"
     assert tuple(parser_actions["geometry_mode"].choices) == ("rectangular_3dcrt",)
 
@@ -145,33 +148,33 @@ def test_standard_tool_profile_resolves_approved_phits_335_layout(
     )
 
 
-def test_standard_tool_profile_reports_missing_and_ambiguous_roles(
+def test_standard_tool_profile_ignores_other_platform_converter_siblings(
     tmp_path: Path,
 ) -> None:
     layout = write_standard_tool_layout(tmp_path / "phits")
     layout["table"].unlink()
-    write_file(layout["rtphits"] / "bin" / "phits2dicom_openmp.exe")
+    write_file(layout["rtphits"] / "bin" / "phits2dicom_lin.exe")
+    write_file(layout["rtphits"] / "bin" / "phits2dicom_mac.exe")
 
     resolution = resolve_standard_tool_profile(layout["root"])
 
     assert resolution.ready is False
     rendered = "\n".join(issue.message for issue in resolution.issues)
     assert "HumanVoxelTable.data" in rendered
-    assert "Multiple phits2dicom executables" in rendered
-    assert any(
-        issue.role == ROLE_PHITS2DICOM_EXECUTABLE
-        for issue in resolution.issues
+    assert "Multiple phits2dicom executables" not in rendered
+    assert resolution.phits2dicom_executable_path == str(
+        layout["phits2dicom"].resolve()
     )
     assert resolution.ready_for_stage("run_ct2phits") is False
     assert resolution.ready_for_stage("run_segments") is True
-    assert resolution.ready_for_stage("run_rtdose") is False
+    assert resolution.ready_for_stage("run_rtdose") is True
 
 
 def test_missing_rtphits_folder_disables_ct2phits_and_rtdose(
     tmp_path: Path,
 ) -> None:
     root = write_dir(tmp_path / "phits")
-    write_file(root / "bin" / "phits_win.exe")
+    write_file(root / "bin" / "phits335_win_openmp.exe")
 
     resolution = resolve_standard_tool_profile(root)
 
@@ -202,7 +205,7 @@ def test_standard_profile_rejects_rtphits_symlink_escape(
     tmp_path: Path,
 ) -> None:
     root = write_dir(tmp_path / "selected-phits")
-    write_file(root / "bin" / "phits_win.exe")
+    write_file(root / "bin" / "phits335_win_openmp.exe")
     utility = write_dir(root / "utility")
     outside = write_standard_tool_layout(tmp_path / "outside-phits")["rtphits"]
     try:
@@ -453,6 +456,9 @@ def test_prepare_stage_allows_new_workspace_and_uses_parent_cwd(tmp_path: Path) 
 
     def fake_runner(cmd, **kwargs):
         assert cmd[0] == "dicomxphits-prepare-3dcrt-workspace"
+        assert cmd[cmd.index("--maxcas") + 1] == "1000000"
+        assert cmd[cmd.index("--maxbch") + 1] == "10"
+        assert cmd[cmd.index("--omp-threads") + 1] == "8"
         assert kwargs["cwd"] == tmp_path.resolve()
         workspace.mkdir()
         summary = workspace / stage_by_key("prepare_workspace").summary_relative_path
@@ -462,6 +468,49 @@ def test_prepare_stage_allows_new_workspace_and_uses_parent_cwd(tmp_path: Path) 
     result = run_stage(config, "prepare_workspace", runner=fake_runner)
 
     assert result.summary == {"stage_status": "success"}
+
+
+def test_prepare_stage_passes_explicit_runtime_values(tmp_path: Path) -> None:
+    config = replace(
+        base_config(tmp_path, workspace=tmp_path / "new-workspace"),
+        maxcas="250000",
+        maxbch="24",
+        omp_threads="12",
+    )
+
+    command = build_stage_command(config, stage_by_key("prepare_workspace"))
+
+    assert command[command.index("--maxcas") + 1] == "250000"
+    assert command[command.index("--maxbch") + 1] == "24"
+    assert command[command.index("--omp-threads") + 1] == "12"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("maxcas", ""),
+        ("maxcas", "0"),
+        ("maxbch", "-1"),
+        ("maxbch", "1.5"),
+        ("omp_threads", "eight"),
+    ],
+)
+def test_prepare_stage_rejects_invalid_runtime_before_subprocess(
+    tmp_path: Path,
+    field_name: str,
+    value: str,
+) -> None:
+    calls: list[list[str]] = []
+    config = replace(base_config(tmp_path), **{field_name: value})
+
+    with pytest.raises(GuiValidationError, match=field_name):
+        run_stage(
+            config,
+            "prepare_workspace",
+            runner=lambda cmd, **kwargs: calls.append(cmd),
+        )
+
+    assert calls == []
 
 
 def test_ct2phits_stage_uses_existing_rtphits_root_as_cwd(
@@ -892,6 +941,9 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
         "phits2dicom_executable_path": "remembered-phits2dicom.exe",
         "rtdose_template_dicom": "remembered-template.dcm",
         "machine_config_path": "remembered-machine.json",
+        "maxcas": "250000",
+        "maxbch": "24",
+        "omp_threads": "12",
         "source_rtplan_path": "must-not-be-persisted.dcm",
         "ct2phits_workspace_root": "must-not-be-persisted-workspace",
         "confirmed_non_patient_phantom": "true",
@@ -905,10 +957,13 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
     _save_gui_settings(values, history, defaults_path)
     saved = json.loads(defaults_path.read_text(encoding="utf-8"))
 
-    assert saved["settings_version"] == 4
+    assert saved["settings_version"] == 5
     assert saved["tool_profile_mode"] == TOOL_PROFILE_CUSTOM
     assert saved["phits_installation_folder"] == "remembered-installation"
     assert saved["rtphits_root"] == "remembered-rtphits"
+    assert saved["maxcas"] == "250000"
+    assert saved["maxbch"] == "24"
+    assert saved["omp_threads"] == "12"
     assert "source_rtplan_path" not in saved
     assert "ct2phits_workspace_root" not in saved
     assert "confirmed_non_patient_phantom" not in saved
@@ -930,6 +985,44 @@ def test_gui_settings_persist_stable_paths_and_independent_browse_history(
         {},
     ) == tmp_path
     assert _default_values(defaults_path)["phits_root_folder"] == "remembered-phits"
+
+
+def test_gui_settings_invalid_runtime_keeps_last_valid_values(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    _save_gui_settings(
+        {"maxcas": "250000", "maxbch": "24", "omp_threads": "12"},
+        {},
+        defaults_path,
+    )
+
+    _save_gui_settings(
+        {"maxcas": "0", "maxbch": "1.5", "omp_threads": "bad"},
+        {},
+        defaults_path,
+    )
+
+    restored = _default_values(defaults_path)
+    assert restored["maxcas"] == "250000"
+    assert restored["maxbch"] == "24"
+    assert restored["omp_threads"] == "12"
+
+
+def test_gui_settings_invalid_or_missing_runtime_uses_defaults(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_text(
+        json.dumps({"maxcas": "0", "maxbch": "bad"}),
+        encoding="utf-8",
+    )
+
+    restored = _default_values(defaults_path)
+
+    assert restored["maxcas"] == "1000000"
+    assert restored["maxbch"] == "10"
+    assert restored["omp_threads"] == "8"
 
 
 def test_browse_history_saves_without_persisting_unvalidated_case_values(

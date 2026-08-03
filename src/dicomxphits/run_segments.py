@@ -158,8 +158,8 @@ def phits_environment(phits_input: Path) -> dict[str, str]:
             if threads <= 0:
                 raise ValueError("$OMP thread count must be a positive integer")
             environment["OMP_NUM_THREADS"] = str(threads)
-            break
-    return environment
+            return environment
+    raise ValueError("PHITS input is missing a valid positive $OMP directive")
 
 
 def run_one_segment(
@@ -181,6 +181,7 @@ def run_one_segment(
     )
     if not phits_input.is_file():
         raise FileNotFoundError(f"PHITS input file not found: {phits_input}")
+    environment = phits_environment(phits_input)
 
     output_dir = expected_output.parent
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -199,7 +200,7 @@ def run_one_segment(
         capture_output=True,
         text=True,
         shell=False,
-        env=phits_environment(phits_input),
+        env=environment,
     )
     stdout_path.write_text(result.stdout or "", encoding="utf-8")
     stderr_path.write_text(result.stderr or "", encoding="utf-8")
@@ -276,7 +277,7 @@ def run_segments(
                 segment_summaries.append(blank_segment_summary(item, status="skipped", reason=skip_reason))
 
         for _summary_index, segment in active_segments:
-            resolve_workspace_file(
+            phits_input = resolve_workspace_file(
                 workspace_root,
                 str(segment.get("phits_input_path") or ""),
                 label="phits_input_path",
@@ -286,6 +287,9 @@ def run_segments(
                 str(segment.get("expected_output_path") or ""),
                 label="expected_output_path",
             )
+            if not phits_input.is_file():
+                raise FileNotFoundError(f"PHITS input file not found: {phits_input}")
+            phits_environment(phits_input)
 
         for summary_index, segment in active_segments:
             segment_summaries[summary_index] = (
