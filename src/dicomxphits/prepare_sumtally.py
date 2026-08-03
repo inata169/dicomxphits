@@ -523,9 +523,11 @@ def run_phits_sumtally(
     sum_input: Path,
     stdout_path: Path,
     stderr_path: Path,
+    environment: dict[str, str] | None = None,
     runner=subprocess.run,
 ) -> subprocess.CompletedProcess[str]:
-    environment = phits_environment(sum_input)
+    if environment is None:
+        environment = phits_environment(sum_input)
     with sum_input.open("r", encoding="utf-8", errors="replace") as stdin:
         result = runner(
             [phits_executable_path],
@@ -670,12 +672,14 @@ def run_sumtally(
         stdout_path = workspace_root / "sumtally" / "sumtally_stdout.txt"
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
 
+        environment = phits_environment(selected_sum_input)
         phits_started = True
         result = run_phits_sumtally(
             phits_executable_path=paths.phits_executable_path,
             sum_input=selected_sum_input,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            environment=environment,
             runner=runner,
         )
         output_after = sumtally_output_snapshot(expected_output)

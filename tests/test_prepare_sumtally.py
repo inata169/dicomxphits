@@ -22,6 +22,7 @@ from dicomxphits.prepare_sumtally import (
     run_sumtally,
     select_sumtally_base_input,
 )
+from dicomxphits.sumtally_inputs import file_sha256
 
 
 def active_segment(index=0, **overrides):
@@ -121,6 +122,38 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     content = (workspace / "sumtally" / "sumtally.inp").read_text(encoding="utf-8")
     assert "isumtally = 2" in content
     assert "seg_001/deposit-target-3D.out  50" in content
+
+
+def test_generate_sumtally_keeps_segment_runtime_controls_out_of_wrapper(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    base_input = workspace / manifest["segments"][0]["phits_input_path"]
+    base_input.write_text(
+        "$OMP = 12\n"
+        "[ Parameters ]\n"
+        "  icntl = 0\n"
+        "  maxcas = 250000\n"
+        "  maxbch = 24\n"
+        "  file(6) = phits.out\n"
+        "[ T-Deposit ]\n"
+        "  title = Segment dose placeholder\n"
+        "  file = deposit-target-3D.out\n"
+        "[ E N D ]\n",
+        encoding="utf-8",
+    )
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    wrapper = Path(summary["outputs"]["sum_input"]).read_text(encoding="utf-8")
+    assert wrapper.startswith("$OMP = 8\n")
+    assert "maxcas = 1000000" in wrapper
+    assert "maxbch = 10" in wrapper
+    assert "$OMP = 12" not in wrapper
+    assert "maxcas = 250000" not in wrapper
+    assert "maxbch = 24" not in wrapper
 
 
 def test_generate_sumtally_accepts_zero_mu_skipped_non_treatment_beam(tmp_path):
@@ -674,6 +707,45 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         summary["wrapper_include_evidence"]
         == generation["wrapper_include_evidence"]
     )
+
+
+def test_run_sumtally_invalid_omp_records_execution_not_started(tmp_path):
+    workspace, _ = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    wrapper = Path(generation["outputs"]["sum_input"])
+    wrapper.write_text(
+        wrapper.read_text(encoding="utf-8").replace("$OMP = 8\n", "", 1),
+        encoding="utf-8",
+    )
+    generation_path = workspace / "analysis" / "sumtally_generation_summary.json"
+    generation_summary = json.loads(generation_path.read_text(encoding="utf-8"))
+    generation_summary["sum_input_sha256"] = file_sha256(wrapper)
+    generation_path.write_text(json.dumps(generation_summary), encoding="utf-8")
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(ValueError, match=r"\$OMP"):
+        run_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    summary = json.loads(
+        (workspace / "analysis" / "sumtally_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert calls == []
+    assert summary["phits_execution_started"] is False
 
 
 def test_relative_workspace_root_round_trips_generated_paths(
