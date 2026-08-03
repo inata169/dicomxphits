@@ -6,7 +6,14 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
 
     steps:
       - name: Check out repository
@@ -24,7 +31,7 @@ jobs:
 
       - name: Compile package
         env:
-          PYTHONPYCACHEPREFIX: /tmp/dicomxphits-pycache
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/dicomxphits-pycache
         run: python -m compileall src
 
       - name: Run tests
