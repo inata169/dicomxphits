@@ -20,15 +20,16 @@ workflow is supported there.
 
 | Environment | Documented use | Important boundary |
 | --- | --- | --- |
-| Windows host with Python 3.12 or newer | Guided desktop GUI and the public CLI adapters, including the Windows CT2PHITS frontend | The supplied GUI launcher and `RTphits_win.bat` adapter are Windows-only. Licensed external tools and confirmed non-patient inputs remain user-supplied and outside this repository. |
-| Linux or the project Dev Container | Python development, synthetic/mock tests, CLI validation, and the public-tree audit | The Dev Container is not a real-tool runtime. It does not support the Windows CT2PHITS frontend or the supplied PowerShell GUI launcher. |
-| GitHub Actions on Ubuntu and Windows | Synthetic/mock compilation, tests, and public-tree validation | CI does not run PHITS, RT-PHITS, CT2PHITS, Sumtally, phits2dicom, GPR, or real DICOM. |
+| Windows host with Python 3.12 | Guided desktop GUI and the public CLI adapters, including the Windows CT2PHITS frontend | The supplied GUI launcher and `RTphits_win.bat` adapter are Windows-only. Python 3.13 and later are not currently validated for this workflow. Licensed external tools and confirmed non-patient inputs remain user-supplied and outside this repository. |
+| Linux or the project Dev Container | Python 3.12 development, synthetic/mock tests, CLI validation, and the public-tree audit | The Dev Container is not a real-tool runtime. It does not support the Windows CT2PHITS frontend or the supplied PowerShell GUI launcher. |
+| GitHub Actions on Ubuntu and Windows | Python 3.12 synthetic/mock compilation, tests, and public-tree validation | CI does not run PHITS, RT-PHITS, CT2PHITS, Sumtally, phits2dicom, GPR, or real DICOM. |
 | macOS | No v1 workflow is currently documented or validated | Package installation or partial Python execution must not be interpreted as support for the guided workflow or external tools. |
 
 The documented guided GUI workflow is therefore a Windows-host workflow. The
 repository's Linux Dev Container is a separate development and validation
 environment; its Python installation does not create the Windows host
-`.venv` required by the launcher.
+`.venv` required by the launcher. Python 3.12 is the documented and validated
+runtime for the v1 workflow; later Python versions remain unverified.
 
 ## v1.0.0 Workflow
 
@@ -216,17 +217,18 @@ then launch the guided Tkinter interface. Run these commands from the repository
 root in PowerShell, not from the Linux Dev Container terminal:
 
 ```powershell
-py -3 --version
-py -3 -m venv .venv
+py -3.12 --version
+py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
 .\launchers\run_gui_venv.ps1
 ```
 
-Confirm that the first command reports Python 3.12 or newer. If the Python
-launcher is unavailable, check `python --version` and use
-`python -m venv .venv` instead, again requiring Python 3.12 or newer. The GUI
-launcher intentionally uses `.venv\Scripts\python.exe`; it does not create an
-environment, install dependencies, or reuse the Dev Container's Linux Python.
+Confirm that the first command reports Python 3.12. If the Python launcher is
+unavailable, use `python --version` only when it reports Python 3.12, then run
+`python -m venv .venv` instead. Python 3.13 and later are currently unverified
+for the documented workflow. The GUI launcher intentionally uses
+`.venv\Scripts\python.exe`; it does not create an environment, install
+dependencies, or reuse the Dev Container's Linux Python.
 
 The GUI presents CT2PHITS as the first stage, then keeps workspace preparation,
 PHITS, Sumtally, and RTDOSE conversion as separate gated actions. After a
