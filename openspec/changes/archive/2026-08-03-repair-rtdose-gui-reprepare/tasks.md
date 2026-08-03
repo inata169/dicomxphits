@@ -16,7 +16,7 @@
 ## 3. Completion
 
 - [x] 3.1 Run focused tests and the full public validation suite.
-- [ ] 3.2 Promote the accepted delta, archive this change, and validate the
+- [x] 3.2 Promote the accepted delta, archive this change, and validate the
   resulting OpenSpec tree.
-- [ ] 3.3 Resolve the delayed pull request #16 review threads with the
+- [x] 3.3 Respond to the delayed pull request #16 review threads with the
   corrective commit evidence.

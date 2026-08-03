@@ -102,11 +102,13 @@ directories. Each archived change was also copied individually to an isolated
 temporary OpenSpec root, validated there as an active change in strict mode,
 and removed after all three validations passed.
 
-The repository now contains four current specifications, five archived
+The repository now contains four current specifications, six archived
 changes, and zero active change directories. The PHITS runtime-control delta
 from pull request #15 was promoted into the current specification and archived
-as part of that task. The previously deferred CT2PHITS workplace Dev Container
-task is also recorded complete against the dated cross-check evidence.
+as part of that task. The guided RTDOSE state and explicit reprepare recovery
+from pull request #17 are also recorded in the current guided GUI specification
+and archived. The previously deferred CT2PHITS workplace Dev Container task is
+recorded complete against the dated cross-check evidence.
 
 An explicitly authorized Windows workflow with designated non-patient phantom
 data outside the repository completed CT2PHITS, workspace preparation, PHITS
@@ -142,13 +144,15 @@ within its approved scope. It did not change PHITS physics, calculated dose,
 MU, normalization, machine-model behavior, DICOM coordinate meaning, the
 public fixed-field 3D-CRT scope, version, tag, or release.
 
-At the current `main` baseline, the full public validation completes with 555
-tests passed and one expected Windows-only test skipped in the Linux Dev
-Container, Python source compilation succeeds, and the public-tree audit passes
-110 tracked files. Pull requests #15 and #16 completed their Codex review/fix
-loops without remaining actionable findings and were squash-merged with their
-branches deleted. These checks use synthetic/mock fixtures and do not extend
-the real-tool or clinical validation boundary described above.
+At the pull request #17 closeout candidate, the full public validation completes
+with 555 tests passed and one expected Windows-only test skipped in the Linux
+Dev Container, Python source compilation succeeds, and the public-tree audit
+passes 114 tracked files. Pull requests #15 and #16 were squash-merged with
+their branches deleted. A delayed review of the final pull request #16 commit
+then identified the missing RTDOSE GUI OpenSpec record and reprepare recovery;
+pull request #17 records and corrects both findings. These checks use
+synthetic/mock fixtures and do not extend the real-tool or clinical validation
+boundary described above.
 
 ## Current development plan
 

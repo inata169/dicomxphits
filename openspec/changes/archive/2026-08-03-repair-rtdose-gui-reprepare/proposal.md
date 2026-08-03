@@ -38,3 +38,11 @@ guidance before pull request #16. This change records that accepted behavior
 after the missing OpenSpec record was identified. The recovery correction is a
 minimal bug fix that restores the adapter's existing documented requirement to
 rerun RTDOSE Prepare when its upstream binding has changed.
+
+## Completion
+
+The accepted requirement was promoted into the current guided GUI
+specification and this change was archived on 2026-08-03. Focused and full
+synthetic/mock validation passed, no external tool or real DICOM was executed,
+and the delayed pull request #16 review threads received corrective commit and
+validation evidence.
