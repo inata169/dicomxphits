@@ -141,7 +141,11 @@ In the guided GUI, a successful Prepare summary changes the RTDOSE state to
 action is the step that invokes phits2dicom and creates the DICOM output.
 Selecting a workspace with a successful Prepare summary restores that state;
 repeating Prepare is not required and does not replace the successful state
-with a validation failure.
+with a validation failure. If upstream Sumtally evidence is regenerated after
+Prepare, select **Allow overwrite of downstream stage summaries** to re-enable
+Prepare and generate a new binding before Run. This permission is not persisted,
+and the RTDOSE adapter remains responsible for validating the replacement
+evidence.
 
 It consumes the preceding all-active-segments totalfield Sumtally output and
 records the conversion contract:

@@ -574,9 +574,16 @@ def rtdose_stage_state(workspace_root: Path) -> str:
     return RTDOSE_NOT_PREPARED
 
 
-def rtdose_action_enabled(stage_key: str, state: str) -> bool:
+def rtdose_action_enabled(
+    stage_key: str,
+    state: str,
+    *,
+    allow_overwrite: bool = False,
+) -> bool:
     if stage_key == "prepare_rtdose":
-        return state == RTDOSE_NOT_PREPARED
+        return state == RTDOSE_NOT_PREPARED or (
+            state == RTDOSE_PREPARED and allow_overwrite
+        )
     if stage_key == "run_rtdose":
         return state == RTDOSE_PREPARED
     return True
@@ -1193,9 +1200,18 @@ def _build_gui() -> int:
         for stage_key, button in action_buttons.items():
             enabled = (
                 not busy and tool_profile_resolution.ready_for_stage(stage_key)
-                and rtdose_action_enabled(stage_key, rtdose_state)
+                and rtdose_action_enabled(
+                    stage_key,
+                    rtdose_state,
+                    allow_overwrite=overwrite.get(),
+                )
             )
             button.state(["!disabled"] if enabled else ["disabled"])
+
+    overwrite.trace_add(
+        "write",
+        lambda *_args: refresh_action_button_states(),
+    )
 
     def refresh_derived_ct2phits_workspace() -> None:
         if values["tool_profile_mode"].get() != TOOL_PROFILE_STANDARD:
