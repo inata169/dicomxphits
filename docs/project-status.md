@@ -17,11 +17,13 @@ request #1 through pull request #9, see
 
 - Public release: `v1.0.0`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Latest completed project: RTDOSE full-plan provenance correction
+- Current `main` HEAD: `f17a32430ac0b3eec3bb15c7fa363b8cb8aa2cb0`
+  (2026-08-03)
+- Latest completed project: guided GUI tool-setup simplification
 - Completion pull request:
-  [#8](https://github.com/inata169/dicomxphits/pull/8)
-- Squash merge commit: `854e5e216f501403e725fc39a085abd3ddc2d2e2`
-- Main baseline validated through pull request
+  [#13](https://github.com/inata169/dicomxphits/pull/13)
+- Squash merge commit: `f17a32430ac0b3eec3bb15c7fa363b8cb8aa2cb0`
+- Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
 - Status last reviewed: 2026-08-03
@@ -53,6 +55,17 @@ completion state and restart procedure.
 The earlier LLM development-loop foundation remains complete under pull
 request [#1](https://github.com/inata169/dicomxphits/pull/1), squash commit
 `7d2f511a3136da6d35b857b42c8e048e9f1f5c84`.
+
+After the dated Dev Container validation through pull request #9, pull request
+[#10](https://github.com/inata169/dicomxphits/pull/10) recorded that evidence,
+pull request [#11](https://github.com/inata169/dicomxphits/pull/11) added
+Windows synthetic/mock CI, pull request
+[#12](https://github.com/inata169/dicomxphits/pull/12) clarified platform and
+GUI setup documentation, and pull request
+[#13](https://github.com/inata169/dicomxphits/pull/13) simplified the guided GUI
+tool profile and CT2PHITS case-path setup. These later changes do not extend the
+dated Dev Container evidence beyond pull request #9. At current `main`, the
+public-tree audit passes 104 tracked files.
 
 ## Validation baseline
 

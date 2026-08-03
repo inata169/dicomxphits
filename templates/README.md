@@ -20,12 +20,12 @@ project-authored 10x10 validation RTDOSE file, then sanitized for public export:
 Use it as the `--template-dicom` input when a local RTDOSE template is not
 available:
 
-```bash
-dicomxphits-prepare-rtdose \
-  --workspace-root "$WORKSPACE" \
-  --template-dicom public_release/dicomxphits/templates/phits2dicom_rtdose_template.dcm \
-  --ct-reference-dicom "$CT_REFERENCE_DICOM" \
-  --phits-out "$WORKSPACE/sumtally/phits.out"
+```powershell
+dicomxphits-prepare-rtdose `
+  --workspace-root $Workspace `
+  --template-dicom templates/phits2dicom_rtdose_template.dcm `
+  --ct-reference-dicom $CtReferenceDicom `
+  --phits-out "$Workspace\sumtally\phits.out"
 ```
 
 Do not place real patient DICOM, real clinical RTDOSE exports, PHITS execution

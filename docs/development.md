@@ -3,10 +3,11 @@
 See [Project status](project-status.md) for the durable completion baseline,
 unverified items, and the human-approved starting point for future work.
 
-Use Python 3.12 or newer. Development and automated validation must use public
-source, synthetic inputs, mocks, and fake runners. Never put real patient or
-facility data, credentials, official PHITS/RT-PHITS files, original IAEA
-phase-space files, or real-tool results in this repository.
+Use Python 3.12 for v1 development. Python 3.11 and earlier and Python 3.13 and
+later are outside the v1 support range. Development and automated validation
+must use public source, synthetic inputs, mocks, and fake runners. Never put
+real patient or facility data, credentials, official PHITS/RT-PHITS files,
+original IAEA phase-space files, or real-tool results in this repository.
 
 ## Windows Local
 
@@ -79,3 +80,29 @@ remote, history, and tags; make the smallest approved change; run focused
 validation; inspect its output and the diff; and apply only bounded safe fixes.
 Then run the full commands above. Finish with success, a non-converging failure,
 or a human-decision stop, and provide the validation evidence in every case.
+
+## Dev Container Troubleshooting
+
+When a Windows working folder is bind-mounted into the Linux Dev Container,
+CRLF/LF handling can make many unchanged files appear as modified. Check the
+working tree and whether the differences disappear when carriage returns at
+end of line are ignored:
+
+```bash
+git status --short
+git diff --ignore-cr-at-eol --quiet
+```
+
+If line endings are the only cause in this repository, set the repository-local
+checkout policy and recheck the status:
+
+```bash
+git config --local core.autocrlf true
+```
+
+If VS Code still shows stale source-control decorations, open the Command
+Palette with F1 and run `Developer: Reload Window`. A Linux-container warning
+that a Windows-form `safe.directory` entry is `not absolute` is not by itself a
+container startup failure: if Git commands work and `git status --short` is
+clean, no repository repair is required. Do not mass-renormalize the tree just
+to address either display condition.
