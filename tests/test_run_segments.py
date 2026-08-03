@@ -12,7 +12,12 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
-from dicomxphits.run_segments import build_parser, main, run_segments
+from dicomxphits.run_segments import (
+    build_parser,
+    main,
+    phits_environment,
+    run_segments,
+)
 
 
 def active_segment(index=0, **overrides):
@@ -61,6 +66,36 @@ def paths():
         phits_executable_path="/opt/phits/bin/phits",
         phits2dicom_executable_path=None,
     )
+
+
+def test_phits_environment_reads_documented_omp_directive(tmp_path):
+    phits_input = tmp_path / "phits.inp"
+    phits_input.write_text(
+        "$OMP = 12\n[ Parameters ]\n maxcas = 1\n",
+        encoding="utf-8",
+    )
+
+    environment = phits_environment(phits_input)
+
+    assert environment["OMP_NUM_THREADS"] == "12"
+
+
+@pytest.mark.parametrize(
+    "first_line",
+    ["OMP = 12", "$OMP = 0", "$OMP = -1", "$OMP = eight", ""],
+)
+def test_phits_environment_rejects_missing_or_invalid_omp_directive(
+    tmp_path,
+    first_line,
+):
+    phits_input = tmp_path / "phits.inp"
+    phits_input.write_text(
+        f"{first_line}\n[ Parameters ]\n maxcas = 1\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"\$OMP"):
+        phits_environment(phits_input)
 
 
 def fake_runner_for(workspace: Path, outputs: list[Path], *, returncode: int = 0):
@@ -228,6 +263,43 @@ def test_run_segments_removes_stale_expected_output_before_success_check(tmp_pat
     assert summary["failed"] == 1
     assert summary["segments"][0]["status"] == "failed"
     assert not expected.exists()
+
+
+def test_run_segments_validates_all_omp_directives_before_removing_outputs(tmp_path):
+    workspace, manifest = write_workspace(tmp_path, active_segment(0), active_segment(1))
+    expected_outputs = [
+        workspace / segment["expected_output_path"]
+        for segment in manifest["segments"]
+    ]
+    for output in expected_outputs:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("prior dose\n", encoding="utf-8")
+    root_outputs = [workspace / "batch.out", workspace / "phits.out"]
+    for output in root_outputs:
+        output.write_text("prior root output\n", encoding="utf-8")
+    second_input = workspace / manifest["segments"][1]["phits_input_path"]
+    second_input.write_text(
+        "[ Parameters ]\n  icntl = 0\n[ E N D ]\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(ValueError, match=r"\$OMP"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+    assert all(output.read_text(encoding="utf-8") == "prior dose\n" for output in expected_outputs)
+    assert all(output.read_text(encoding="utf-8") == "prior root output\n" for output in root_outputs)
+    assert read_summary(workspace)["status"] == "gate_failed"
 
 
 def test_run_segments_collects_root_outputs_on_phits_failure(tmp_path):

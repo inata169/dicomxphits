@@ -45,9 +45,9 @@ Keep these values separate:
 
 ```powershell
 $PhitsRoot = "C:\path\to\phits"
-$PhitsExe = "C:\path\to\phits\bin\phits_win.exe"
+$PhitsExe = "C:\path\to\phits\bin\phits335_win_openmp.exe"
 $RtphitsRoot = "C:\path\to\phits\utility\RTphits"
-$Phits2DicomExe = "C:\path\to\phits\utility\RTphits\bin\phits2dicom.exe"
+$Phits2DicomExe = "C:\path\to\phits\utility\RTphits\bin\phits2dicom_win.exe"
 $SourceRtplan = "C:\outside-repo\non-patient-input\RTPLAN.dcm"
 $CtDicomRoot = "C:\outside-repo\non-patient-input\CT"
 $Ct2phitsWorkspace = "C:\path\to\phits\utility\RTphits\work\smoke-case"
@@ -113,6 +113,9 @@ dicomxphits-prepare-3dcrt-workspace `
   --phits-root-folder $PhitsRoot `
   --phits-executable-path $PhitsExe `
   --phits2dicom-executable-path $Phits2DicomExe `
+  --maxcas 1000000 `
+  --maxbch 10 `
+  --omp-threads 8 `
   --ct-datfiles-root $CtDatfilesRoot `
   --ct-reference-dicom $CtReferenceDicom `
   --confirm-non-patient-phantom
@@ -137,7 +140,11 @@ The runner follows the strict segment manifest and requires every active
 segment to produce its `expected_output_path`. Automated tests use mocked
 segment outputs instead of real PHITS. The runner passes `file = ...` to the
 PHITS executable and keeps the workspace root as the working directory so that
-`libpath.inp`, CT includes, and the public spectrum resolve correctly.
+`libpath.inp`, CT includes, and the public spectrum resolve correctly. The
+first input line `$OMP = 8` is PHITS's documented OpenMP command rather than a
+comment. The runner reads it and sets `OMP_NUM_THREADS=8` for the direct OpenMP
+executable; use the workspace-preparation options above to choose a different
+positive value.
 
 Generate all-active-segments totalfield Sumtally input:
 

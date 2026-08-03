@@ -67,9 +67,12 @@ from the frozen downstream snapshot.
 The GUI's standard profile checks only the approved PHITS 3.35-style Windows
 relative paths below an explicitly selected PHITS installation folder. It does
 not recursively search for external installations and does not run any tool
-during setup validation. A missing or ambiguous role keeps only its dependent
-stages disabled and is reported explicitly; a nonstandard or future layout can
-be entered through custom-layout controls.
+during setup validation. The standard executable is
+`bin/phits335_win_openmp.exe`, and the Windows converter is
+`utility/RTphits/bin/phits2dicom_win.exe`; adjacent Linux and macOS converter
+files are ignored. A missing role keeps only its dependent stages disabled and
+is reported explicitly; a nonstandard or future layout can be entered through
+custom-layout controls.
 
 In standard mode, selecting an RT Plan derives a new CT2PHITS case output below
 the effective RT-PHITS `work` directory. That output is derived state:
@@ -93,6 +96,12 @@ This adapter writes:
 It does not execute PHITS. GUI controls keep PHITS, Sumtally, and
 RTDOSE conversion as separate gated stages.
 
+Workspace preparation accepts positive `--maxcas`, `--maxbch`, and
+`--omp-threads` values, defaulting to `1000000`, `10`, and `8`. The effective
+values are written to every newly generated segment input and recorded in both
+preparation summaries. They do not alter existing workspaces or Sumtally
+inputs.
+
 ## PHITS Segment Execution
 
 `dicomxphits-run-segments` executes the active segment inputs from the strict
@@ -100,6 +109,10 @@ manifest and writes `analysis/segment_execution_summary.json`. Every active
 segment must produce its manifest `expected_output_path` before Sumtally. It
 uses PHITS's `file = ...` launcher input contract and runs from the workspace
 root so the generated include files resolve.
+Every generated segment begins with PHITS's documented `$OMP = N` command.
+Because the adapter directly invokes the OpenMP executable, it requires that
+directive and passes the same positive value as `OMP_NUM_THREADS=N`. `$` is
+part of the PHITS command syntax and must not be removed.
 
 ## Sumtally Adapter
 
