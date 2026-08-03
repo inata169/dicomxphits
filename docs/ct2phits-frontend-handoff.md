@@ -121,27 +121,28 @@ dicomxphits-prepare-3dcrt-workspace `
   --confirm-non-patient-phantom
 ```
 
-## Unverified item
+## Dev Container cross-check
 
-The workplace Dev Container cross-check has not run, so validation in that
-specific container environment must not be claimed until a human runs the
-following synthetic/mock checks there. This gap does not negate the completed
-`ubuntu-latest` Linux CI evidence recorded above:
+The human-authorized workplace Dev Container cross-check completed on
+2026-08-03. At the pull request #3 squash commit, the documented focused
+command completed with `64 passed, 1 skipped`:
 
 ```bash
 python -m pytest tests/test_run_ct2phits.py tests/test_ct2phits_datfiles.py -q -p no:cacheprovider
-python -m pytest -q -p no:cacheprovider
-python -m compileall src
-python tools/verify_public_tree.py
-git diff --check
-git status --short
 ```
 
-Do not mount or run RT-PHITS, CT2PHITS, PHITS, Sumtally, phits2dicom, GPR, or
-real DICOM in that container. Neither Linux CI nor a future Dev Container
-cross-check validates the real Windows RT-PHITS runtime. A future documentation
-update may record the container cross-check only after the human explicitly
-performs or authorizes it.
+The full pull request #3 suite passed `455` tests with the same one expected
+Windows-only process-tree test skipped. Compilation, the 85-file public-tree
+audit, and Git diff/status checks also passed. The same Dev Container procedure
+was repeated for every squash commit from pull request #1 through pull request
+#9; see the
+[dated Dev Container validation record](dev-container-validation-2026-08-03.md)
+for exact per-commit results.
+
+The container cross-check used only synthetic DICOM and fake or mock runners.
+It did not mount or run RT-PHITS, CT2PHITS, PHITS, Sumtally, phits2dicom, GPR,
+or real DICOM. Neither this cross-check nor Linux CI validates the real Windows
+RT-PHITS runtime.
 
 ## Restart checklist
 
@@ -153,8 +154,8 @@ At the next development session:
    and tags.
 3. Confirm that `main` still contains merge commit `f792d0ec7f1e` or a later
    descendant.
-4. Treat the Dev Container cross-check as unverified evidence, not an approved
-   implementation project.
+4. Treat the completed Dev Container cross-check as synthetic/mock Linux
+   evidence, not validation of the real Windows RT-PHITS runtime.
 5. Ask the human for one concrete next goal before creating another change,
    branch, Issue, pull request, or automation.
 
