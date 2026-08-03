@@ -504,6 +504,20 @@ def test_rtdose_state_treats_malformed_summary_as_unsuccessful(
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
 
 
+def test_stage_status_treats_summary_read_error_as_failure(tmp_path: Path) -> None:
+    result = StageResult(
+        stage_key="prepare_rtdose",
+        command=["dicomxphits-prepare-rtdose"],
+        return_code=0,
+        summary_path=tmp_path / "rtdose_conversion_prepare_summary.json",
+        summary={"summary_error": "JSONDecodeError: truncated summary"},
+        stdout="",
+        stderr="",
+    )
+
+    assert gui_module._stage_status(result) == "invalid_summary"
+
+
 def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
     workspace = write_dir(tmp_path / "workspace")
     write_file(

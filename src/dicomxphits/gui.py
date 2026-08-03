@@ -961,6 +961,8 @@ def _ct2phits_handoff_from_result(result: StageResult) -> dict[str, str]:
 
 def _stage_status(result: StageResult) -> str:
     if result.summary:
+        if result.summary.get("summary_error"):
+            return "invalid_summary"
         for key in ("stage_status", "status"):
             value = result.summary.get(key)
             if isinstance(value, str) and value:
