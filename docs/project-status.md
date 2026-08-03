@@ -9,6 +9,9 @@ For the detailed same-day record covering the merged CT2PHITS GUI baseline,
 the demonstrated non-patient Windows workflow, and the completed PR #8 RTDOSE
 provenance review cycle, see
 [`development-progress-2026-08-02.md`](development-progress-2026-08-02.md).
+For the later Dev Container cross-check of every squash commit from pull
+request #1 through pull request #9, see
+[`dev-container-validation-2026-08-03.md`](dev-container-validation-2026-08-03.md).
 
 ## Current baseline
 
@@ -18,7 +21,10 @@ provenance review cycle, see
 - Completion pull request:
   [#8](https://github.com/inata169/dicomxphits/pull/8)
 - Squash merge commit: `854e5e216f501403e725fc39a085abd3ddc2d2e2`
-- Status last reviewed: 2026-08-02
+- Main baseline validated through pull request
+  [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
+  `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
+- Status last reviewed: 2026-08-03
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,
@@ -83,10 +89,17 @@ GitHub's `ubuntu-latest` Linux runner. This is Linux CI evidence for pull
 request #3; it does not validate pull request #5 or the real Windows RT-PHITS
 runtime.
 
-The workplace Dev Container cross-check has not run. Validation in that
-specific container environment remains unverified synthetic/mock evidence and
-is not an automatically scheduled task. This is distinct from the completed
-Ubuntu GitHub Actions validation above.
+The human-authorized workplace Dev Container cross-check completed on
+2026-08-03 for every squash commit from pull request #1 through pull request
+#9. All nine commits passed package installation, Python compilation, the full
+synthetic/mock pytest suite, the public-tree audit, and Git diff/status checks.
+At pull request #9, the Linux result was 507 passed and one expected
+Windows-only process-tree test skipped, with 98 tracked files passing the
+public-tree audit. The CT2PHITS-focused pull request #3 check separately passed
+64 tests with the same expected Windows-only test skipped. See the
+[dated Dev Container validation record](dev-container-validation-2026-08-03.md)
+for the per-commit evidence and exact boundary. This is distinct from both the
+earlier Ubuntu GitHub Actions run and real Windows RT-PHITS execution.
 
 Pull request #8 changed fail-closed provenance validation, Sumtally/RTDOSE stage
 failure behavior, documentation, and the public RTDOSE semantic specification
@@ -110,7 +123,6 @@ other work items on its own.
 The following facts may inform a future human decision, but they are not
 approved work:
 
-- a Dev Container build has not yet been verified;
 - an optional external GPR comparison remains outside ordinary public
   development and requires an explicit, exact human request;
 - any change to the public fixed-field 3D-CRT scope, physics, geometry, dose,
@@ -129,7 +141,7 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains squash merge commit `854e5e216f50` or a later
+3. Confirm that `main` contains squash merge commit `ebcd53529e7f` or a later
    descendant.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the
