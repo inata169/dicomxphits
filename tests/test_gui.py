@@ -474,6 +474,14 @@ def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> No
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
     assert rtdose_action_enabled("prepare_rtdose", RTDOSE_PREPARED) is False
     assert rtdose_action_enabled("run_rtdose", RTDOSE_PREPARED) is True
+    assert (
+        rtdose_action_enabled(
+            "prepare_rtdose",
+            RTDOSE_PREPARED,
+            allow_overwrite=True,
+        )
+        is True
+    )
     assert validation_nav_status(
         "prepare_rtdose", rtdose_state=RTDOSE_PREPARED
     ) == "Prepared"
@@ -531,6 +539,14 @@ def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
 
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
     assert rtdose_action_enabled("prepare_rtdose", RTDOSE_COMPLETED) is False
+    assert (
+        rtdose_action_enabled(
+            "prepare_rtdose",
+            RTDOSE_COMPLETED,
+            allow_overwrite=True,
+        )
+        is False
+    )
     assert rtdose_action_enabled("run_rtdose", RTDOSE_COMPLETED) is False
     assert successful_nav_status("run_rtdose") == "Completed"
 

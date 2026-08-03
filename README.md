@@ -294,7 +294,10 @@ RTDOSE remains a two-step action. After **Prepare RTDOSE** succeeds, the GUI
 shows **Prepared**, disables the prepare action, and makes **Run RTDOSE** the
 next available action. Only **Run RTDOSE** invokes phits2dicom and creates the
 raw and coordinate-corrected DICOM outputs. A successful prepare summary must
-be reused rather than prepared again.
+be reused rather than prepared again. If an upstream Sumtally rerun invalidates
+that preparation, explicitly select **Allow overwrite of downstream stage
+summaries** to re-enable **Prepare RTDOSE**; the RTDOSE adapter still validates
+the new evidence and fails closed if it is inconsistent.
 
 For first-time standard setup, open **Tool settings**, select the licensed
 **PHITS installation folder**, and choose **Validate and save setup**. After

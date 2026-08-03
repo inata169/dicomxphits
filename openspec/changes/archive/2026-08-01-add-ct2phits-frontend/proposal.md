@@ -45,6 +45,8 @@ management and recording this still-unmerged feature as an active change.
 
 The implementation, focused and full Windows mock validation, public-boundary
 audit, and an explicitly authorized non-patient phantom smoke test completed on
-2026-08-01. Workplace Dev Container cross-validation remains a deferred,
-non-blocking handoff item. Draft PR 3 was created with the GitHub plugin on
-2026-08-01. The human maintainer approved promotion and archive on 2026-08-01.
+2026-08-01. Draft PR 3 was created with the GitHub plugin on 2026-08-01. The
+human maintainer approved promotion and archive on 2026-08-01. The deferred
+workplace Dev Container cross-validation later completed on 2026-08-03 for
+pull requests #1 through #9, as recorded in
+`docs/dev-container-validation-2026-08-03.md`.

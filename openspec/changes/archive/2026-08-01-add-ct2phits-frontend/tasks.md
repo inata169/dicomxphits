@@ -37,9 +37,11 @@
 
 - [x] 4.1 Run the optional real RT-PHITS smoke test only after explicit human
   authorization with a designated non-patient phantom outside the repository.
-- [ ] 4.2 Repeat pytest, compileall, and the public-tree audit in the workplace
-  Dev Container. Deferred as a non-blocking workplace cross-check; Linux
-  validation is not claimed.
+- [x] 4.2 Repeat pytest, compileall, and the public-tree audit in the workplace
+  Dev Container. The human-authorized cross-check completed on 2026-08-03 for
+  every squash commit from pull request #1 through pull request #9; see
+  `docs/dev-container-validation-2026-08-03.md`. This is synthetic/mock Linux
+  evidence, not real Windows-tool or clinical validation.
 - [x] 4.3 Open a Draft PR when GitHub tooling or connectivity is available.
   Draft PR 3 was created with the GitHub plugin on 2026-08-01.
 - [x] 4.4 At task completion, promote the accepted delta specification and move
