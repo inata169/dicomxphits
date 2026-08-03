@@ -89,6 +89,44 @@ def _path_text(path: Path) -> str:
     return str(path.expanduser().resolve())
 
 
+def _resolved_path_or_none(value: str | Path) -> Path | None:
+    try:
+        return Path(value).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    resolved = _resolved_path_or_none(path)
+    return resolved is not None and (resolved == root or root in resolved.parents)
+
+
+def _unresolved_standard_profile(
+    raw_root: str,
+    root_message: str,
+) -> ToolProfileResolution:
+    dependent_messages = (
+        (ROLE_RTPHITS_ROOT, "RT-PHITS root is unresolved."),
+        (ROLE_RTPHITS_BATCH, "RT-PHITS batch is unresolved."),
+        (ROLE_HU_TABLE, "CT2PHITS HU table is unresolved."),
+        (ROLE_PHITS_EXECUTABLE, "PHITS executable is unresolved."),
+        (ROLE_PHITS2DICOM_EXECUTABLE, "phits2dicom is unresolved."),
+    )
+    return ToolProfileResolution(
+        mode=TOOL_PROFILE_STANDARD,
+        layout_id=STANDARD_WINDOWS_LAYOUT_ID,
+        phits_installation_folder=raw_root,
+        phits_root_folder="",
+        rtphits_root="",
+        phits_executable_path="",
+        phits2dicom_executable_path="",
+        issues=(
+            ToolProfileIssue(ROLE_PHITS_ROOT, root_message),
+            *(ToolProfileIssue(role, message) for role, message in dependent_messages),
+        ),
+    )
+
+
 def _phits2dicom_candidates(directory: Path) -> tuple[Path, ...]:
     try:
         children = tuple(directory.iterdir())
@@ -113,47 +151,23 @@ def resolve_standard_tool_profile(
 ) -> ToolProfileResolution:
     raw_root = str(phits_installation_folder).strip()
     if not raw_root:
-        return ToolProfileResolution(
-            mode=TOOL_PROFILE_STANDARD,
-            layout_id=STANDARD_WINDOWS_LAYOUT_ID,
-            phits_installation_folder="",
-            phits_root_folder="",
-            rtphits_root="",
-            phits_executable_path="",
-            phits2dicom_executable_path="",
-            issues=(
-                ToolProfileIssue(
-                    ROLE_PHITS_ROOT,
-                    "Select the PHITS installation folder.",
-                ),
-                ToolProfileIssue(
-                    ROLE_RTPHITS_ROOT,
-                    "RT-PHITS cannot be resolved until a PHITS folder is selected.",
-                ),
-                ToolProfileIssue(
-                    ROLE_RTPHITS_BATCH,
-                    "RT-PHITS batch cannot be resolved until a PHITS folder is selected.",
-                ),
-                ToolProfileIssue(
-                    ROLE_HU_TABLE,
-                    "CT2PHITS HU table cannot be resolved until a PHITS folder is selected.",
-                ),
-                ToolProfileIssue(
-                    ROLE_PHITS_EXECUTABLE,
-                    "PHITS executable cannot be resolved until a PHITS folder is selected.",
-                ),
-                ToolProfileIssue(
-                    ROLE_PHITS2DICOM_EXECUTABLE,
-                    "phits2dicom cannot be resolved until a PHITS folder is selected.",
-                ),
-            ),
+        return _unresolved_standard_profile(
+            "",
+            "Select the PHITS installation folder.",
         )
 
-    root = Path(raw_root).expanduser().resolve()
+    root = _resolved_path_or_none(raw_root)
+    if root is None:
+        return _unresolved_standard_profile(
+            raw_root,
+            "PHITS installation folder contains an invalid filesystem path.",
+        )
     rtphits_root = root / RTPHITS_ROOT_RELATIVE
     phits_executable = root / PHITS_EXECUTABLE_RELATIVE
     phits2dicom_path = ""
     issues: list[ToolProfileIssue] = []
+    phits_executable_within_root = _is_within(phits_executable, root)
+    rtphits_within_root = _is_within(rtphits_root, root)
 
     if not root.is_dir():
         issues.append(
@@ -162,14 +176,34 @@ def resolve_standard_tool_profile(
                 f"PHITS installation folder does not exist: {root}",
             )
         )
-    if not phits_executable.is_file():
+    if not phits_executable_within_root:
+        issues.append(
+            ToolProfileIssue(
+                ROLE_PHITS_EXECUTABLE,
+                "Standard PHITS executable escapes the selected installation folder.",
+            )
+        )
+    elif not phits_executable.is_file():
         issues.append(
             ToolProfileIssue(
                 ROLE_PHITS_EXECUTABLE,
                 f"Missing standard PHITS executable: {PHITS_EXECUTABLE_RELATIVE.as_posix()}",
             )
         )
-    if not rtphits_root.is_dir():
+    if not rtphits_within_root:
+        issues.append(
+            ToolProfileIssue(
+                ROLE_RTPHITS_ROOT,
+                "Standard RT-PHITS folder escapes the selected installation folder.",
+            )
+        )
+        issues.append(
+            ToolProfileIssue(
+                ROLE_PHITS2DICOM_EXECUTABLE,
+                "Cannot resolve phits2dicom outside the selected installation folder.",
+            )
+        )
+    elif not rtphits_root.is_dir():
         issues.append(
             ToolProfileIssue(
                 ROLE_RTPHITS_ROOT,
@@ -185,7 +219,14 @@ def resolve_standard_tool_profile(
         )
     else:
         batch = rtphits_root / RTPHITS_BATCH_RELATIVE
-        if not batch.is_file():
+        if not _is_within(batch, root):
+            issues.append(
+                ToolProfileIssue(
+                    ROLE_RTPHITS_BATCH,
+                    "RT-PHITS batch escapes the selected installation folder.",
+                )
+            )
+        elif not batch.is_file():
             issues.append(
                 ToolProfileIssue(
                     ROLE_RTPHITS_BATCH,
@@ -193,7 +234,14 @@ def resolve_standard_tool_profile(
                 )
             )
         table = rtphits_root / RTPHITS_HU_TABLE_RELATIVE
-        if not table.is_file():
+        if not _is_within(table, root):
+            issues.append(
+                ToolProfileIssue(
+                    ROLE_HU_TABLE,
+                    "CT2PHITS HU table escapes the selected installation folder.",
+                )
+            )
+        elif not table.is_file():
             issues.append(
                 ToolProfileIssue(
                     ROLE_HU_TABLE,
@@ -202,33 +250,54 @@ def resolve_standard_tool_profile(
                 )
             )
         bin_directory = rtphits_root / PHITS2DICOM_BIN_RELATIVE
-        candidates = _phits2dicom_candidates(bin_directory)
-        if len(candidates) == 1:
-            phits2dicom_path = _path_text(candidates[0])
-        elif not candidates:
+        if not _is_within(bin_directory, root):
             issues.append(
                 ToolProfileIssue(
                     ROLE_PHITS2DICOM_EXECUTABLE,
-                    "No phits2dicom*.exe file was found directly below "
-                    + (RTPHITS_ROOT_RELATIVE / PHITS2DICOM_BIN_RELATIVE).as_posix(),
+                    "phits2dicom bin folder escapes the selected installation folder.",
                 )
             )
         else:
-            rendered = ", ".join(path.name for path in candidates)
-            issues.append(
-                ToolProfileIssue(
-                    ROLE_PHITS2DICOM_EXECUTABLE,
-                    f"Multiple phits2dicom executables were found: {rendered}",
+            candidates = _phits2dicom_candidates(bin_directory)
+            escaped = tuple(path for path in candidates if not _is_within(path, root))
+            if escaped:
+                rendered = ", ".join(path.name for path in escaped)
+                issues.append(
+                    ToolProfileIssue(
+                        ROLE_PHITS2DICOM_EXECUTABLE,
+                        f"phits2dicom candidate escapes the installation: {rendered}",
+                    )
                 )
-            )
+            elif len(candidates) == 1:
+                phits2dicom_path = _path_text(candidates[0])
+            elif not candidates:
+                issues.append(
+                    ToolProfileIssue(
+                        ROLE_PHITS2DICOM_EXECUTABLE,
+                        "No phits2dicom*.exe file was found directly below "
+                        + (
+                            RTPHITS_ROOT_RELATIVE / PHITS2DICOM_BIN_RELATIVE
+                        ).as_posix(),
+                    )
+                )
+            else:
+                rendered = ", ".join(path.name for path in candidates)
+                issues.append(
+                    ToolProfileIssue(
+                        ROLE_PHITS2DICOM_EXECUTABLE,
+                        f"Multiple phits2dicom executables were found: {rendered}",
+                    )
+                )
 
     return ToolProfileResolution(
         mode=TOOL_PROFILE_STANDARD,
         layout_id=STANDARD_WINDOWS_LAYOUT_ID,
         phits_installation_folder=_path_text(root),
         phits_root_folder=_path_text(root),
-        rtphits_root=_path_text(rtphits_root),
-        phits_executable_path=_path_text(phits_executable),
+        rtphits_root=_path_text(rtphits_root) if rtphits_within_root else "",
+        phits_executable_path=(
+            _path_text(phits_executable) if phits_executable_within_root else ""
+        ),
         phits2dicom_executable_path=phits2dicom_path,
         issues=tuple(issues),
     )
@@ -237,16 +306,18 @@ def resolve_standard_tool_profile(
 def validate_custom_tool_profile(
     values: Mapping[str, str],
 ) -> ToolProfileResolution:
-    paths = {
-        name: Path(str(values.get(name, "")).strip()).expanduser().resolve()
-        for name in (
-            "phits_root_folder",
-            "rtphits_root",
-            "phits_executable_path",
-            "phits2dicom_executable_path",
-        )
-        if str(values.get(name, "")).strip()
-    }
+    paths: dict[str, Path] = {}
+    for name in (
+        "phits_root_folder",
+        "rtphits_root",
+        "phits_executable_path",
+        "phits2dicom_executable_path",
+    ):
+        raw_value = str(values.get(name, "")).strip()
+        if raw_value:
+            resolved = _resolved_path_or_none(raw_value)
+            if resolved is not None:
+                paths[name] = resolved
     issues: list[ToolProfileIssue] = []
 
     phits_root = paths.get("phits_root_folder")
@@ -336,12 +407,13 @@ def standard_profile_matches_values(values: Mapping[str, str]) -> bool:
     if not resolution.ready:
         return False
     expected = resolution.values()
-    return all(
-        _path_text(Path(str(values.get(name, "")).strip())) == expected[name]
-        for name in (
-            "phits_root_folder",
-            "rtphits_root",
-            "phits_executable_path",
-            "phits2dicom_executable_path",
-        )
-    )
+    for name in (
+        "phits_root_folder",
+        "rtphits_root",
+        "phits_executable_path",
+        "phits2dicom_executable_path",
+    ):
+        resolved = _resolved_path_or_none(str(values.get(name, "")).strip())
+        if resolved is None or str(resolved) != expected[name]:
+            return False
+    return True

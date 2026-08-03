@@ -47,6 +47,7 @@ from dicomxphits.gui_tool_profile import (
     TOOL_PROFILE_CUSTOM,
     TOOL_PROFILE_STANDARD,
     resolve_standard_tool_profile,
+    resolve_tool_profile,
     validate_custom_tool_profile,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
@@ -195,6 +196,28 @@ def test_unselected_standard_folder_disables_all_dependent_stages() -> None:
     ):
         assert resolution.ready_for_stage(stage_key) is False
     assert resolution.ready_for_stage("prepare_rtdose") is True
+
+
+def test_standard_profile_rejects_rtphits_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    root = write_dir(tmp_path / "selected-phits")
+    write_file(root / "bin" / "phits_win.exe")
+    utility = write_dir(root / "utility")
+    outside = write_standard_tool_layout(tmp_path / "outside-phits")["rtphits"]
+    try:
+        (utility / "RTphits").symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+
+    resolution = resolve_standard_tool_profile(root)
+
+    assert resolution.ready is False
+    assert resolution.rtphits_root == ""
+    assert resolution.phits2dicom_executable_path == ""
+    assert "escapes the selected installation" in "\n".join(
+        issue.message for issue in resolution.issues
+    )
 
 
 def test_custom_tool_profile_uses_same_rtphits_markers(tmp_path: Path) -> None:
@@ -992,6 +1015,8 @@ def test_profile_mode_switch_preserves_explicit_custom_paths() -> None:
         "custom_phits_root_folder": "",
         "custom_phits_executable_path": "",
         "custom_phits2dicom_executable_path": "",
+        "ct2phits_workspace_root": "custom-workspace",
+        "custom_ct2phits_workspace_root": "",
     }
 
     standard_values = preserve_tool_profile_mode_values(
@@ -1005,6 +1030,7 @@ def test_profile_mode_switch_preserves_explicit_custom_paths() -> None:
             "phits_root_folder": "standard-phits",
             "phits_executable_path": "standard-phits.exe",
             "phits2dicom_executable_path": "standard-phits2dicom.exe",
+            "ct2phits_workspace_root": "standard-derived-workspace",
         }
     )
     restored = preserve_tool_profile_mode_values(
@@ -1017,6 +1043,24 @@ def test_profile_mode_switch_preserves_explicit_custom_paths() -> None:
     assert restored["phits_root_folder"] == "custom-phits"
     assert restored["phits_executable_path"] == "custom-phits.exe"
     assert restored["phits2dicom_executable_path"] == "custom-phits2dicom.exe"
+    assert restored["ct2phits_workspace_root"] == "custom-workspace"
+
+
+def test_filesystem_invalid_legacy_paths_fall_back_without_crashing(
+    tmp_path: Path,
+) -> None:
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+    defaults_path.write_text(
+        json.dumps({"phits_root_folder": "invalid\u0000path"}),
+        encoding="utf-8",
+    )
+
+    values = _default_values(defaults_path)
+    resolution = resolve_tool_profile(values)
+
+    assert values["tool_profile_mode"] == TOOL_PROFILE_CUSTOM
+    assert resolution.ready is False
+    assert resolution.ready_for_stage("prepare_workspace") is False
 
 
 def test_standard_settings_round_trip_keeps_custom_profile_state(

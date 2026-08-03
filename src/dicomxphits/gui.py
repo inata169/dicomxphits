@@ -38,6 +38,7 @@ CUSTOM_TOOL_PATH_FIELDS = (
 CUSTOM_TOOL_SETTING_FIELDS = {
     name: f"custom_{name}" for name in CUSTOM_TOOL_PATH_FIELDS
 }
+CUSTOM_WORKSPACE_SETTING_FIELD = "custom_ct2phits_workspace_root"
 TOOL_PROFILE_EDITABLE_FIELDS = (
     "phits_installation_folder",
     *CUSTOM_TOOL_PATH_FIELDS,
@@ -544,6 +545,7 @@ def _base_default_values() -> dict[str, str]:
         "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
     }
     values.update({name: "" for name in CUSTOM_TOOL_SETTING_FIELDS.values()})
+    values[CUSTOM_WORKSPACE_SETTING_FIELD] = ""
     return values
 
 
@@ -620,9 +622,15 @@ def preserve_tool_profile_mode_values(
     if previous_mode == TOOL_PROFILE_CUSTOM:
         for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
             updated[custom_name] = str(current_values.get(name, ""))
+        updated[CUSTOM_WORKSPACE_SETTING_FIELD] = str(
+            current_values.get("ct2phits_workspace_root", "")
+        )
     if selected_mode == TOOL_PROFILE_CUSTOM:
         for name, custom_name in CUSTOM_TOOL_SETTING_FIELDS.items():
             updated[name] = str(updated.get(custom_name, ""))
+        updated["ct2phits_workspace_root"] = str(
+            updated.get(CUSTOM_WORKSPACE_SETTING_FIELD, "")
+        )
     updated["tool_profile_mode"] = selected_mode
     return updated
 
@@ -1601,6 +1609,8 @@ def _build_gui() -> int:
             for name in (
                 *CUSTOM_TOOL_PATH_FIELDS,
                 *CUSTOM_TOOL_SETTING_FIELDS.values(),
+                "ct2phits_workspace_root",
+                CUSTOM_WORKSPACE_SETTING_FIELD,
             ):
                 values[name].set(transitioned[name])
         finally:
