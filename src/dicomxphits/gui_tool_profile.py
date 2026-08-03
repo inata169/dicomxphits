@@ -156,6 +156,13 @@ def resolve_standard_tool_profile(
                 f"Missing standard RT-PHITS folder: {RTPHITS_ROOT_RELATIVE.as_posix()}",
             )
         )
+        issues.append(
+            ToolProfileIssue(
+                ROLE_PHITS2DICOM_EXECUTABLE,
+                "Cannot resolve phits2dicom because the standard RT-PHITS "
+                "folder is missing.",
+            )
+        )
     else:
         batch = rtphits_root / RTPHITS_BATCH_RELATIVE
         if not batch.is_file():

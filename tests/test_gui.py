@@ -165,6 +165,22 @@ def test_standard_tool_profile_reports_missing_and_ambiguous_roles(
     assert resolution.ready_for_stage("run_rtdose") is False
 
 
+def test_missing_rtphits_folder_disables_ct2phits_and_rtdose(
+    tmp_path: Path,
+) -> None:
+    root = write_dir(tmp_path / "phits")
+    write_file(root / "bin" / "phits_win.exe")
+
+    resolution = resolve_standard_tool_profile(root)
+
+    assert resolution.ready_for_stage("run_ct2phits") is False
+    assert resolution.ready_for_stage("run_rtdose") is False
+    assert any(
+        issue.role == ROLE_PHITS2DICOM_EXECUTABLE
+        for issue in resolution.issues
+    )
+
+
 def test_custom_tool_profile_uses_same_rtphits_markers(tmp_path: Path) -> None:
     layout = write_standard_tool_layout(tmp_path / "nonstandard")
     values = {
