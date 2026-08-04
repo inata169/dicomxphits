@@ -13,6 +13,7 @@ RELATIVE_DOSE_NORMALIZATION_RULE = "phits_per_source_history_no_totfact"
 RELATIVE_SUMTALLY_WEIGHTING_RULE = (
     "segment_mu_weighted_sum_divided_by_dose_normalization_mu"
 )
+ABSOLUTE_SUMTALLY_WEIGHTING_RULE = "active_segment_mu_weighted_sum"
 RELATIVE_COMPARISON_RULE = (
     "both_operands_relative_no_rescaling_reference_global_max_denominator"
 )
@@ -47,7 +48,7 @@ _ABSOLUTE_DOSE_SEMANTICS: dict[str, Any] = {
     "totfact_per_mu": PUBLIC_MODEL_TOTFACT_PER_MU_TEXT,
     "phits2dicom_factor": 1.0,
     "normalization_rule": ABSOLUTE_DOSE_NORMALIZATION_RULE,
-    "sumtally_weighting_rule": RELATIVE_SUMTALLY_WEIGHTING_RULE,
+    "sumtally_weighting_rule": ABSOLUTE_SUMTALLY_WEIGHTING_RULE,
     "comparison_rule": (
         "public_reference_model_absolute_dose_no_clinical_commissioning_claim"
     ),
@@ -67,14 +68,8 @@ def require_absolute_units(
     input_dose_unit: str,
     output_dicom_dose_unit: str,
 ) -> None:
-    if str(input_dose_unit).strip().lower() not in {
-        "gy_per_mu",
-        "gy/mu",
-        "absolute",
-    }:
-        raise ValueError(
-            "Public calibrated RTDOSE input_dose_unit must be gy_per_mu"
-        )
+    if str(input_dose_unit).strip().upper() != "GY":
+        raise ValueError("Public calibrated RTDOSE input_dose_unit must be GY")
     if str(output_dicom_dose_unit).strip().upper() != "GY":
         raise ValueError(
             "Public calibrated RTDOSE output_dicom_dose_unit must be GY"

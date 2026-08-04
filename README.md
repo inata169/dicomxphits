@@ -297,7 +297,10 @@ raw and coordinate-corrected DICOM outputs. A successful prepare summary must
 be reused rather than prepared again. If an upstream Sumtally rerun invalidates
 that preparation, explicitly select **Allow overwrite of downstream stage
 summaries** to re-enable **Prepare RTDOSE**; the RTDOSE adapter still validates
-the new evidence and fails closed if it is inconsistent.
+the new evidence and fails closed if it is inconsistent. The GUI reports
+`Completed` only when the Prepare summary is bound to the current Sumtally
+evidence and the Run summary records the exact current Prepare-summary digest.
+Stale success summaries are retained for audit but do not enable **Run RTDOSE**.
 
 For first-time standard setup, open **Tool settings**, select the licensed
 **PHITS installation folder**, and choose **Validate and save setup**. After
@@ -466,7 +469,10 @@ manifest retains them as skipped, zero-segment-MU evidence; they are excluded
 from active treatment coverage. The existing full-plan total and normalization
 MU values continue to include every fraction-group referenced beam. Their
 referenced beam meterset may be zero, but must be finite and nonnegative.
-Template plan references are not accepted as provenance.
+Only active treatment-segment MU contributes to Sumtally file weights and
+`sumfactor`; complete MU totals must reconcile as active treatment MU plus
+validated skipped non-treatment BeamMeterset. Template plan references are not
+accepted as provenance.
 
 Sumtally Generate and Sumtally Run record the canonical SHA-256 of that segment
 manifest and the SHA-256 values of the generated PHITS wrapper and
@@ -480,9 +486,12 @@ expected dose output to be newly created or byte-changed by that invocation,
 records its SHA-256, and
 RTDOSE Prepare verifies that digest before applying its documented
 ImagePositionPatient title patch. RTDOSE Run then verifies the prepared dose
-digest. For a workspace created before this evidence was added, rerun Sumtally
-Generate and Sumtally Run before rerunning RTDOSE Prepare and RTDOSE Run.
-Existing segment PHITS outputs remain reusable when their content is unchanged.
+digest. For a workspace with stale or factor-one weighted-average evidence, select
+**Allow overwrite of downstream stage summaries**, then rerun **Sumtally
+Generate**, **Sumtally Run**, **Prepare RTDOSE**, and **Run RTDOSE**. Existing
+digest-bound segment PHITS outputs remain reusable; PHITS transport does not
+need to be rerun solely for this normalization correction. Old Sumtally or
+DICOM outputs must not be repaired with an empirical scale factor.
 
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
 slash-normalized paths and records its SHA-256 during RTDOSE Prepare. RTDOSE Run
@@ -491,10 +500,13 @@ the SHA-256 of every file named by that input: the workspace template, CT
 reference, prepared Sumtally dose, and companion `phits.out`. Run revalidates
 all four files immediately before conversion. The converter output must also
 be new or have a changed SHA-256; a timestamp-only change fails before plan
-reference synchronization. The approved
-public-model `totfact_per_MU` has already
-been applied in each PHITS input, so PHITS2DICOM uses Factor `1.0` and the
-generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its summaries record
+reference synchronization. For PHITS `isumtally = 2`, `X = F * sum((r_j / sum(r)) * X_j)`. The
+workflow uses active treatment-segment MU as `r_j` and their sum as `F`, so the
+Sumtally result is `sum(active_segment_mu * segment_dose_per_mu)` in `GY`.
+The approved public-model `totfact_per_MU` is applied in each PHITS segment and
+the treatment MU is applied once by Sumtally. PHITS2DICOM therefore keeps
+Factor `1.0` and the generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its
+summaries record
 `approved_public_model_totfact_per_mu_applied_in_phits` and the exact factor.
 After conversion, `dicomxphits-run-rtdose` synchronizes the output to
 `DoseSummationType = PLAN` with exactly one reference to the validated frozen

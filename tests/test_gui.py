@@ -72,6 +72,60 @@ def write_dir(path: Path) -> Path:
     return path
 
 
+def write_current_sumtally_binding(
+    workspace: Path,
+    *,
+    token: str = "current",
+) -> dict[str, object]:
+    normalization_contract = (
+        "active_treatment_segments_totalfield_segment_mu_sum"
+    )
+    normalization = {
+        "schema_version": "synthetic_active_treatment_mu_sum_v1",
+        "sumfactor": 700.0,
+    }
+    segment_evidence = [
+        {"path": f"segment-{token}.out", "sha256": f"segment-{token}"}
+    ]
+    wrapper_evidence = [
+        {"path": f"wrapper-{token}.inp", "sha256": f"wrapper-{token}"}
+    ]
+    generation = {
+        "stage_status": "success",
+        "manifest_sha256": f"manifest-{token}",
+        "sum_input_sha256": f"sum-input-{token}",
+        "sumtally_input_sha256": f"sumtally-input-{token}",
+        "sumtally_normalization": normalization_contract,
+        "sumtally_normalization_evidence": normalization,
+        "segment_output_evidence": segment_evidence,
+        "wrapper_include_evidence": wrapper_evidence,
+    }
+    execution = {
+        **generation,
+        "expected_sumtally_output_sha256": f"sumtally-output-{token}",
+        "expected_sumtally_output_updated_by_run": True,
+    }
+    analysis = workspace / "analysis"
+    write_file(
+        analysis / "sumtally_generation_summary.json",
+        json.dumps(generation),
+    )
+    write_file(
+        analysis / "sumtally_execution_summary.json",
+        json.dumps(execution),
+    )
+    return {
+        "manifest_sha256": generation["manifest_sha256"],
+        "sum_input_sha256": generation["sum_input_sha256"],
+        "sumtally_input_sha256": generation["sumtally_input_sha256"],
+        "segment_output_evidence": segment_evidence,
+        "wrapper_include_evidence": wrapper_evidence,
+        "sumtally_normalization": normalization_contract,
+        "sumtally_output_sha256": execution["expected_sumtally_output_sha256"],
+        "sumtally_normalization_evidence": normalization,
+    }
+
+
 def write_standard_tool_layout(root: Path) -> dict[str, Path]:
     rtphits_root = write_dir(root / "utility" / "RTphits")
     return {
@@ -463,12 +517,19 @@ def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> No
 
     assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
     assert successful_nav_status("prepare_rtdose") == "Prepared"
+    assert successful_nav_status("generate_sumtally") == "Generated"
     assert rtdose_action_enabled("prepare_rtdose", RTDOSE_NOT_PREPARED) is True
     assert rtdose_action_enabled("run_rtdose", RTDOSE_NOT_PREPARED) is False
 
+    current_binding = write_current_sumtally_binding(workspace)
     write_file(
         workspace / stage_by_key("prepare_rtdose").summary_relative_path,
-        json.dumps({"stage_status": "success"}),
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": current_binding,
+            }
+        ),
     )
 
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
@@ -506,9 +567,140 @@ def test_rtdose_state_treats_malformed_summary_as_unsuccessful(
 
     assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
 
-    write_file(prepare_summary, json.dumps({"stage_status": "success"}))
+    current_binding = write_current_sumtally_binding(workspace)
+    write_file(
+        prepare_summary,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": current_binding,
+            }
+        ),
+    )
     write_file(run_summary, "{truncated")
 
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+
+def test_rtdose_state_rejects_prepare_bound_to_stale_sumtally(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    current_binding = write_current_sumtally_binding(workspace)
+    stale_binding = dict(current_binding)
+    stale_binding["sumtally_input_sha256"] = "sumtally-input-stale"
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": stale_binding,
+            }
+        ),
+    )
+    write_file(
+        workspace / stage_by_key("run_rtdose").summary_relative_path,
+        json.dumps({"stage_status": "success"}),
+    )
+
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+    assert rtdose_action_enabled("prepare_rtdose", RTDOSE_NOT_PREPARED) is True
+    assert rtdose_action_enabled("run_rtdose", RTDOSE_NOT_PREPARED) is False
+
+
+def test_rtdose_state_rejects_changed_phits_dependency_before_sumtally_run(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    current_binding = write_current_sumtally_binding(workspace)
+    generation_path = workspace / "analysis" / "sumtally_generation_summary.json"
+    generation = json.loads(generation_path.read_text(encoding="utf-8"))
+    generation["segment_output_evidence"] = [
+        {"path": "segment-new.out", "sha256": "segment-new"}
+    ]
+    write_file(generation_path, json.dumps(generation))
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": current_binding,
+            }
+        ),
+    )
+
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+
+
+def test_rtdose_state_rejects_sumtally_run_without_output_update(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    current_binding = write_current_sumtally_binding(workspace)
+    execution_path = workspace / "analysis" / "sumtally_execution_summary.json"
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution["expected_sumtally_output_updated_by_run"] = False
+    write_file(execution_path, json.dumps(execution))
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": current_binding,
+            }
+        ),
+    )
+
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+
+
+def test_rtdose_state_requires_execution_to_match_current_prepare(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    current_binding = write_current_sumtally_binding(workspace)
+    prepare_path = (
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    )
+    write_file(
+        prepare_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": current_binding,
+            }
+        ),
+    )
+    execution_path = (
+        workspace / stage_by_key("run_rtdose").summary_relative_path
+    )
+    write_file(execution_path, json.dumps({"stage_status": "success"}))
+
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+    write_file(
+        execution_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "rtdose_prepare_summary_sha256": gui_module.file_sha256(
+                    prepare_path
+                ),
+            }
+        ),
+    )
+    assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+
+    write_file(
+        prepare_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": current_binding,
+                "new_prepare": True,
+            }
+        ),
+    )
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
 
 
@@ -526,7 +718,9 @@ def test_stage_status_treats_summary_read_error_as_failure(tmp_path: Path) -> No
     assert gui_module._stage_status(result) == "invalid_summary"
 
 
-def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
+def test_legacy_unbound_rtdose_summaries_do_not_report_completed(
+    tmp_path: Path,
+) -> None:
     workspace = write_dir(tmp_path / "workspace")
     write_file(
         workspace / stage_by_key("prepare_rtdose").summary_relative_path,
@@ -537,6 +731,38 @@ def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
         json.dumps({"stage_status": "success"}),
     )
 
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+    assert rtdose_action_enabled("prepare_rtdose", RTDOSE_NOT_PREPARED) is True
+    assert rtdose_action_enabled("run_rtdose", RTDOSE_NOT_PREPARED) is False
+
+
+def test_completed_rtdose_requires_explicit_overwrite_to_reprepare(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    current_binding = write_current_sumtally_binding(workspace)
+    prepare_path = workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    write_file(
+        prepare_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "sumtally_manifest_binding": current_binding,
+            }
+        ),
+    )
+    write_file(
+        workspace / stage_by_key("run_rtdose").summary_relative_path,
+        json.dumps(
+            {
+                "stage_status": "success",
+                "rtdose_prepare_summary_sha256": gui_module.file_sha256(
+                    prepare_path
+                ),
+            }
+        ),
+    )
+
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
     assert rtdose_action_enabled("prepare_rtdose", RTDOSE_COMPLETED) is False
     assert (
@@ -545,7 +771,7 @@ def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
             RTDOSE_COMPLETED,
             allow_overwrite=True,
         )
-        is False
+        is True
     )
     assert rtdose_action_enabled("run_rtdose", RTDOSE_COMPLETED) is False
     assert successful_nav_status("run_rtdose") == "Completed"

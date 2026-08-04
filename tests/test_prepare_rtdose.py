@@ -26,7 +26,13 @@ from dicomxphits.prepare_rtdose import (
     run_rtdose,
     select_ct_reference,
 )
-from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
+from dicomxphits.sumtally_inputs import (
+    ACTIVE_TREATMENT_INPUT_DOSE_STATE,
+    ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
+    file_sha256,
+    manifest_sha256,
+    plan_mu_normalization_evidence,
+)
 
 
 def required_tag_value(tag: tuple[int, int], vr: str):
@@ -176,7 +182,7 @@ def paths(phits2dicom: str | None = None) -> ExternalToolPaths:
     )
 
 
-def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy") -> tuple[Path, dict]:
+def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "GY") -> tuple[Path, dict]:
     workspace = tmp_path / "workspace"
     analysis = workspace / "analysis"
     analysis.mkdir(parents=True)
@@ -197,6 +203,9 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
                 "beam_number": 1,
                 "beam_meterset_mu": 100.0,
                 "segment_mu": 100.0,
+                "mu_weight": 100.0,
+                "mu_weight_unit": "MU",
+                "delivery_type": "3dcrt_static",
                 "skip_reason": None,
                 "expected_output_path": "segments/seg_b0001_s0000/deposit-target-3D.out",
             }
@@ -206,13 +215,28 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     bound_manifest_sha256 = manifest_sha256(manifest)
+    normalization_evidence = plan_mu_normalization_evidence(manifest)
     sumtally_output = workspace / "sumtally" / "deposit-target-3D_sum_all_active_segments_totalfield.out"
     sumtally_output.parent.mkdir(parents=True)
     sumtally_output.write_text("merged dose", encoding="utf-8")
     sum_input = workspace / "sumtally" / "segment_sum.inp"
     sum_input.write_text("generated wrapper", encoding="utf-8")
     sumtally_input = workspace / "sumtally" / "sumtally.inp"
-    sumtally_input.write_text("generated aggregation input", encoding="utf-8")
+    sumtally_input.write_text(
+        "\n".join(
+            [
+                "sumtally start",
+                "  isumtally = 2",
+                "  sfile = deposit-target-3D_sum_all_active_segments_totalfield.out",
+                f"  sumfactor = {normalization_evidence['sumfactor']:.12g}",
+                "  nfile = 1",
+                "  segments/seg_b0001_s0000/deposit-target-3D.out  100",
+                "sumtally end",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     segment_output = (
         workspace / "segments" / "seg_b0001_s0000" / "deposit-target-3D.out"
     )
@@ -240,11 +264,25 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
             "sum_input": str(sum_input),
             "sumtally_input": str(sumtally_input),
         },
-        "rt_dose_conversion_hint": {
-            "input_dose_state": "sumtally_mu_weighted",
-            "sumtally_normalization": "beamMU" if beam_mu else "all_segments_totalfield_segment_mu",
-            "is_beam_mu_output": beam_mu,
-        },
+        "sumtally_normalization": (
+            "beamMU" if beam_mu else ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION
+        ),
+        "sumtally_normalization_evidence": normalization_evidence,
+        "rt_dose_conversion_hint": (
+            {
+                "input_dose_state": "beam_mu",
+                "sumtally_normalization": "beamMU",
+                "is_beam_mu_output": True,
+            }
+            if beam_mu
+            else {
+                "input_dose_state": ACTIVE_TREATMENT_INPUT_DOSE_STATE,
+                "input_dose_unit": "GY",
+                "sumtally_normalization": ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
+                "is_beam_mu_output": False,
+                "phits2dicom_factor": 1.0,
+            }
+        ),
     }
     execution = {
         "stage_status": "success",
@@ -253,6 +291,9 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
         "sumtally_input_sha256": sumtally_input_sha256,
         "segment_output_evidence": segment_output_evidence,
         "wrapper_include_evidence": wrapper_include_evidence,
+        "sumtally_normalization": generation["sumtally_normalization"],
+        "sumtally_normalization_evidence": normalization_evidence,
+        "rt_dose_conversion_hint": generation["rt_dose_conversion_hint"],
         "expected_sumtally_output": str(sumtally_output),
         "expected_sumtally_output_updated_by_run": True,
         "expected_sumtally_output_sha256": file_sha256(sumtally_output),
@@ -323,6 +364,9 @@ def add_non_treatment_setup_beam(
             "beam_number": 2,
             "beam_meterset_mu": setup_mu,
             "segment_mu": setup_mu if active else 0.0,
+            "mu_weight": setup_mu if active else 0.0,
+            "mu_weight_unit": "MU",
+            "delivery_type": "unsupported",
             "skip_reason": (
                 None
                 if active
@@ -332,6 +376,16 @@ def add_non_treatment_setup_beam(
     )
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     rewrite_sumtally_manifest_digests(workspace, manifest)
+    if not active and setup_mu >= 0.0:
+        evidence = plan_mu_normalization_evidence(manifest)
+        for name in (
+            "sumtally_generation_summary.json",
+            "sumtally_execution_summary.json",
+        ):
+            summary_path = workspace / "analysis" / name
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["sumtally_normalization_evidence"] = evidence
+            summary_path.write_text(json.dumps(summary), encoding="utf-8")
 
 
 def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
@@ -352,10 +406,12 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     )
 
     assert summary["stage_status"] == "success"
-    assert summary["input_dose_state"] == "sumtally_mu_weighted"
-    assert summary["sumtally_normalization"] == "all_segments_totalfield_segment_mu"
+    assert summary["input_dose_state"] == "sumtally_active_treatment_mu_sum"
+    assert summary["sumtally_normalization"] == (
+        "active_treatment_segments_totalfield_segment_mu_sum"
+    )
     assert summary["is_beam_mu_output"] is False
-    assert summary["input_dose_unit"] == "gy_per_mu"
+    assert summary["input_dose_unit"] == "GY"
     assert summary["output_dicom_dose_unit"] == "GY"
     assert summary["factor"] == 1.0
     assert len(summary["phits_dose_sha256_after_prepare"]) == 64
@@ -386,6 +442,109 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert summary["path_config"]["phits2dicom_executable_path"] is None
     assert summary["image_position_patient_patch"]["image_position_patient"] == [1.0, 2.0, 3.0]
     assert summary["template_dicom_preflight"]["missing_tag_count"] == 0
+
+
+def test_prepare_rejects_legacy_sumtally_normalization_before_conversion(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    for name in (
+        "sumtally_generation_summary.json",
+        "sumtally_execution_summary.json",
+    ):
+        summary_path = workspace / "analysis" / name
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary.pop("sumtally_normalization_evidence")
+        summary["sumtally_normalization"] = "all_segments_totalfield_segment_mu"
+        summary["rt_dose_conversion_hint"] = {
+            "input_dose_state": "sumtally_mu_weighted",
+            "sumtally_normalization": "all_segments_totalfield_segment_mu",
+            "is_beam_mu_output": False,
+        }
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(ValueError, match="normalization evidence") as exc_info:
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+    message = str(exc_info.value)
+    assert "Allow overwrite of downstream stage summaries" in message
+    assert "PHITS does not need to be rerun" in message
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        (
+            "sumtally_normalization",
+            "all_segments_totalfield_segment_mu",
+            "Run normalization contract",
+        ),
+        (
+            "rt_dose_conversion_hint",
+            {"input_dose_state": "sumtally_mu_weighted"},
+            "Run RTDOSE conversion hint",
+        ),
+    ],
+)
+def test_prepare_rejects_stale_sumtally_run_contract(
+    tmp_path,
+    field,
+    value,
+    error,
+):
+    workspace, files = write_workspace(tmp_path)
+    execution_path = workspace / "analysis" / "sumtally_execution_summary.json"
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution[field] = value
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(ValueError, match=error):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+
+def test_prepare_rejects_execution_normalization_evidence_mismatch(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    execution_path = workspace / "analysis" / "sumtally_execution_summary.json"
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution["sumtally_normalization_evidence"]["sumfactor"] = 1.0
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(ValueError, match="Run normalization evidence"):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_prepare_rejects_sumtally_output_replaced_after_run(tmp_path):
@@ -834,7 +993,7 @@ def test_prepare_rejects_beammu_or_unit_mismatch(tmp_path):
         )
 
     workspace, files = write_workspace(tmp_path / "absolute")
-    with pytest.raises(ValueError, match="must be gy_per_mu"):
+    with pytest.raises(ValueError, match="must be GY"):
         prepare_rtdose(
             workspace_root=workspace,
             paths=paths(),
@@ -842,7 +1001,7 @@ def test_prepare_rejects_beammu_or_unit_mismatch(tmp_path):
             template_dicom=template,
             ct_reference_dicom=ct,
             phits_out=files["phits_out"],
-            input_dose_unit="Gy",
+            input_dose_unit="gy_per_mu",
             output_dicom_dose_unit="Gy",
             command_argv=["prepare"],
         )
@@ -1013,6 +1172,9 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert calls["input"].startswith("PHITS2DICOM")
     assert summary["returncode"] == 0
     assert summary["phits2dicom_execution_started"] is True
+    assert summary["rtdose_prepare_summary_sha256"] == file_sha256(
+        workspace / "analysis" / "rtdose_conversion_prepare_summary.json"
+    )
     assert summary["new_dicom_outputs"][0]["path"].endswith("deposit-target-3D_sum_all_active_segments_totalfield.dcm")
     assert summary["expected_rtdose_output"].endswith("deposit-target-3D_sum_all_active_segments_totalfield.dcm")
     assert summary["expected_rtdose_output_exists"] is True
@@ -1282,7 +1444,7 @@ def test_prepare_legacy_plan_binding_reconstructs_segment_geometry(
     ("manifest_update", "error"),
     [
         ({"workflow_mode": "selected_beam"}, "requires workflow_mode full_plan"),
-        ({"included_total_mu": 90.0}, "included_total_mu does not match"),
+        ({"included_total_mu": 90.0}, "included_total_mu does not reconcile"),
     ],
 )
 def test_prepare_rejects_incomplete_full_plan_evidence(

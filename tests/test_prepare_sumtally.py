@@ -32,8 +32,8 @@ def active_segment(index=0, **overrides):
         "segment_index": index,
         "delivery_type": "3dcrt",
         "beam_meterset_mu": 100.0,
-        "segment_mu": 50.0,
-        "mu_weight": 50.0,
+        "segment_mu": 100.0,
+        "mu_weight": 100.0,
         "mu_weight_unit": "MU",
         "phits_input_path": f"segments/seg_{index + 1:03d}/phits.inp",
         "expected_output_path": f"segments/seg_{index + 1:03d}/deposit-target-3D.out",
@@ -44,12 +44,23 @@ def active_segment(index=0, **overrides):
 
 def write_workspace(tmp_path, *segments, metadata=None):
     workspace = tmp_path / "workspace"
+    manifest_segments = list(segments) or [
+        active_segment(0, segment_mu=40.0, mu_weight=40.0),
+        active_segment(1, segment_mu=60.0, mu_weight=60.0),
+    ]
+    beam_metersets = {
+        int(segment["beam_number"]): float(segment["beam_meterset_mu"])
+        for segment in manifest_segments
+    }
+    complete_mu = sum(beam_metersets.values())
     manifest = {
         "schema_version": "segment_manifest_v2",
         "case_id": "synthetic",
         "workflow_mode": "full_plan",
-        "dose_normalization_mu": 100.0,
-        "segments": list(segments) or [active_segment(0), active_segment(1)],
+        "plan_total_mu": complete_mu,
+        "included_total_mu": complete_mu,
+        "dose_normalization_mu": complete_mu,
+        "segments": manifest_segments,
     }
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest_path.parent.mkdir(parents=True)
@@ -97,7 +108,7 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert summary["sumtally_scope"] == "all_active_segments"
     assert summary["sumtally_mode"] == "totalfield"
     assert summary["weight_field"] == "segment_mu"
-    assert summary["sumtally_normalization"] == "all_segments_totalfield_segment_mu"
+    assert summary["sumtally_normalization"] == "active_treatment_segments_totalfield_segment_mu_sum"
     assert len(summary["manifest_sha256"]) == 64
     assert len(summary["sum_input_sha256"]) == 64
     assert len(summary["sumtally_input_sha256"]) == 64
@@ -108,10 +119,20 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     )
     assert summary["wrapper_include_evidence"]
     assert summary["rt_dose_conversion_hint"] == {
-        "input_dose_state": "sumtally_mu_weighted",
-        "sumtally_normalization": "all_segments_totalfield_segment_mu",
+        "input_dose_state": "sumtally_active_treatment_mu_sum",
+        "input_dose_unit": "GY",
+        "sumtally_normalization": "active_treatment_segments_totalfield_segment_mu_sum",
         "is_beam_mu_output": False,
+        "phits2dicom_factor": 1.0,
     }
+    evidence = summary["sumtally_normalization_evidence"]
+    assert evidence["active_segment_mu_sum"] == 100.0
+    assert evidence["active_treatment_beam_meterset_sum"] == 100.0
+    assert evidence["skipped_non_treatment_beam_meterset_sum"] == 0.0
+    assert evidence["sumfactor"] == 100.0
+    assert evidence["input_segment_dose_unit"] == "GY/MU"
+    assert evidence["output_dose_unit"] == "GY"
+    assert evidence["reconciled"] is True
     assert (workspace / "sumtally" / "sumtally.inp").is_file()
     assert Path(summary["outputs"]["sum_input"]).is_file()
     assert summary["outputs"]["sumtally_output"].endswith(DEFAULT_SUMTALLY_OUTPUT_NAME)
@@ -121,7 +142,38 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert summary["sumtally_segment_paths"][0]["sumtally_written_output_path"] == "../segments/seg_001/deposit-target-3D.out"
     content = (workspace / "sumtally" / "sumtally.inp").read_text(encoding="utf-8")
     assert "isumtally = 2" in content
-    assert "seg_001/deposit-target-3D.out  50" in content
+    assert "sumfactor = 100" in content
+    assert "seg_001/deposit-target-3D.out  40" in content
+    assert "seg_002/deposit-target-3D.out  60" in content
+
+
+def test_generate_sumtally_factor_reproduces_analytic_active_treatment_dose(
+    tmp_path,
+):
+    workspace, _ = write_workspace(tmp_path)
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    segment_mu = [40.0, 60.0]
+    segment_dose_per_mu = [0.01, 0.02]
+    expected_plan_dose = sum(
+        mu * dose for mu, dose in zip(segment_mu, segment_dose_per_mu)
+    )
+    weighted_average = sum(
+        (mu / sum(segment_mu)) * dose
+        for mu, dose in zip(segment_mu, segment_dose_per_mu)
+    )
+    observed_from_contract = (
+        summary["sumtally_normalization_evidence"]["sumfactor"]
+        * weighted_average
+    )
+
+    assert expected_plan_dose == pytest.approx(1.6)
+    assert observed_from_contract == pytest.approx(expected_plan_dose)
 
 
 def test_generate_sumtally_keeps_segment_runtime_controls_out_of_wrapper(tmp_path):
@@ -177,6 +229,82 @@ def test_generate_sumtally_accepts_zero_mu_skipped_non_treatment_beam(tmp_path):
 
     assert summary["stage_status"] == "success"
     assert [item["beam_number"] for item in summary["sumtally_segment_paths"]] == [1]
+    assert summary["sumtally_normalization_evidence"]["sumfactor"] == 100.0
+
+
+def test_generate_sumtally_excludes_positive_meterset_skipped_setup_beam(
+    tmp_path,
+):
+    active = active_segment(0, beam_number=1)
+    skipped = active_segment(
+        1,
+        beam_number=2,
+        delivery_type="unsupported",
+        beam_meterset_mu=10.0,
+        segment_mu=0.0,
+        mu_weight=0.0,
+        skip_reason="SETUP is not treatment-eligible",
+    )
+    workspace, _ = write_workspace(tmp_path, active, skipped)
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    evidence = summary["sumtally_normalization_evidence"]
+    assert evidence["active_segment_mu_sum"] == 100.0
+    assert evidence["skipped_non_treatment_beam_meterset_sum"] == 10.0
+    assert evidence["plan_total_mu"] == 110.0
+    assert evidence["sumfactor"] == 100.0
+    assert evidence["skipped_non_treatment_beams"] == [
+        {"beam_number": 2, "beam_meterset_mu": 10.0, "segment_mu": 0.0}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ("unreconciled_plan_total", "plan_total_mu does not reconcile"),
+        ("nonzero_skipped_segment", "skipped segment_mu must be zero"),
+        ("active_beam_total_mismatch", "active segment MU does not match"),
+    ],
+)
+def test_generate_sumtally_rejects_invalid_mu_reconciliation(
+    tmp_path,
+    mutation,
+    error,
+):
+    active = active_segment(0, beam_number=1)
+    skipped = active_segment(
+        1,
+        beam_number=2,
+        delivery_type="unsupported",
+        beam_meterset_mu=10.0,
+        segment_mu=0.0,
+        mu_weight=0.0,
+        skip_reason="SETUP is not treatment-eligible",
+    )
+    workspace, manifest = write_workspace(tmp_path, active, skipped)
+    if mutation == "unreconciled_plan_total":
+        manifest["plan_total_mu"] = 111.0
+    elif mutation == "nonzero_skipped_segment":
+        manifest["segments"][1]["segment_mu"] = 1.0
+    else:
+        manifest["segments"][0]["segment_mu"] = 90.0
+        manifest["segments"][0]["mu_weight"] = 90.0
+    (workspace / "segments" / "segment_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=error):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
 
 
 def test_generate_sumtally_is_standalone_without_project_root(tmp_path):
@@ -707,6 +835,87 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         summary["wrapper_include_evidence"]
         == generation["wrapper_include_evidence"]
     )
+    assert (
+        summary["sumtally_normalization_evidence"]
+        == generation["sumtally_normalization_evidence"]
+    )
+
+
+def test_run_sumtally_rejects_legacy_normalization_before_execution(tmp_path):
+    workspace, _ = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    generation_path = workspace / "analysis" / "sumtally_generation_summary.json"
+    legacy = json.loads(generation_path.read_text(encoding="utf-8"))
+    legacy.pop("sumtally_normalization_evidence")
+    legacy["sumtally_normalization"] = "all_segments_totalfield_segment_mu"
+    legacy["rt_dose_conversion_hint"] = {
+        "input_dose_state": "sumtally_mu_weighted",
+        "sumtally_normalization": "all_segments_totalfield_segment_mu",
+        "is_beam_mu_output": False,
+    }
+    generation_path.write_text(json.dumps(legacy), encoding="utf-8")
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(ValueError, match="normalization evidence"):
+        run_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            sum_input=Path(generation["outputs"]["sum_input"]),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+
+
+def test_run_sumtally_rejects_tampered_sumfactor_before_execution(tmp_path):
+    workspace, _ = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    sumtally_input = Path(generation["outputs"]["sumtally_input"])
+    sumtally_input.write_text(
+        sumtally_input.read_text(encoding="utf-8").replace(
+            "sumfactor = 100",
+            "sumfactor = 1",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    changed_sha256 = file_sha256(sumtally_input)
+    generation_path = workspace / "analysis" / "sumtally_generation_summary.json"
+    tampered = json.loads(generation_path.read_text(encoding="utf-8"))
+    tampered["sumtally_input_sha256"] = changed_sha256
+    for record in tampered["wrapper_include_evidence"]:
+        if Path(record["path"]).resolve() == sumtally_input.resolve():
+            record["sha256"] = changed_sha256
+    generation_path.write_text(json.dumps(tampered), encoding="utf-8")
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(ValueError, match="sumfactor does not match"):
+        run_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            sum_input=Path(generation["outputs"]["sum_input"]),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
 
 
 def test_run_sumtally_invalid_omp_records_execution_not_started(tmp_path):
