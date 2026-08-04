@@ -581,6 +581,13 @@ def _current_sumtally_binding(
         or execution.get("stage_status") != "success"
     ):
         return None
+    manifest_path = workspace_root / "segments" / "segment_manifest.json"
+    try:
+        current_manifest_sha256 = file_sha256(manifest_path)
+    except OSError:
+        return None
+    if generation.get("manifest_sha256") != current_manifest_sha256:
+        return None
     matching_fields = (
         "manifest_sha256",
         "sum_input_sha256",
