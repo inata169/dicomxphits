@@ -186,6 +186,31 @@ result is the path recorded as `coordinate_corrected_rtdose_output` in
 `analysis/rtdose_conversion_execution_summary.json`, normally the
 `sumtally/*_all_active_segments_totalfield.fixed.dcm` file. RTDOSE Run reports
 failure if this final file is not a PLAN dose referencing that frozen RT Plan.
+The GUI shows `Completed` only after the final file is reopened and its
+plan-and-tally-derived patient coordinates pass. Verify the execution evidence
+without copying the DICOM or workspace into the repository:
+
+```powershell
+$RunSummary = Get-Content -Raw "$Workspace\analysis\rtdose_conversion_execution_summary.json" |
+  ConvertFrom-Json
+
+[pscustomobject]@{
+  StageStatus = $RunSummary.stage_status
+  CoordinateValidated = $RunSummary.coordinate_placement_validation.validated
+  MaxResidualMm = $RunSummary.coordinate_placement_validation.maximum_absolute_component_residual_mm
+  OutputExists = Test-Path -LiteralPath $RunSummary.coordinate_corrected_rtdose_output
+}
+```
+
+Expected values are `success`, `True`, a residual no greater than
+`0.000001 mm`, and `True`. This is research workflow evidence, not clinical
+validation.
+
+Legacy RTDOSE Prepare/Run success summaries without coordinate-placement proof
+return the GUI to `Not run`. Explicit Prepare and Run clicks may replace only
+those legacy successful summaries without enabling general overwrite. Failed
+summaries and current placement evidence keep the normal overwrite guards.
+
 RTDOSE preparation also requires matching manifest and generated-input SHA-256
 evidence from Sumtally Generate and Sumtally Run. Sumtally Run accepts only the
 wrapper path recorded by Generate and rejects a changed wrapper or
@@ -193,10 +218,18 @@ wrapper path recorded by Generate and rejects a changed wrapper or
 resolved wrapper `infl` file; Run verifies the same dependency set and digests
 before PHITS launch. Run must create or byte-change the expected dose output and
 records its SHA-256; a timestamp-only change is rejected. RTDOSE Prepare
-verifies the Generate/Run evidence before the IPP title
-patch, and RTDOSE Run verifies the prepared digest. If either summary predates
-this evidence, rerun both Sumtally stages using the existing unchanged segment
-outputs first.
+verifies the Generate/Run evidence, copies the Sumtally dose and phits.out into
+rtdose/DATfiles, and applies the IPP title patch only to those private copies.
+Prepare proves the upstream files remained byte-for-byte unchanged, and Run
+revalidates both source and prepared-copy digests.
+A workspace changed by the historical in-place IPP title patch can be reused
+without rerunning Sumtally only when reversing that title from the hash-bound
+segment evidence, including LF/CRLF normalization, exactly reproduces the
+Sumtally Run SHA-256. Recovered bytes are written only to the private copy;
+every other mismatch fails. An older handoff without explicit mesh fields can
+otherwise be reused when segment and Sumtally outputs match their digests and
+contain one consistent mesh. Failed reconstruction requires rerunning both
+Sumtally stages, but not PHITS segment transport.
 Referenced non-treatment beams are accepted only as skipped, zero-segment-MU
 manifest entries; active coverage remains limited to treatment-eligible beams,
 while the existing full referenced-beam normalization MU is preserved. A
@@ -205,7 +238,7 @@ non-finite.
 The frozen RT Plan is bound by the completed CT2PHITS manifest SHA-256, with
 exact segment-geometry reconstruction as the legacy fallback. The generated
 `phits2dicom.inp` digest is also checked between RTDOSE Prepare and Run, along
-with the digests of its template, CT, prepared dose, and `phits.out` inputs.
+with the digests of its template, CT, staged dose, and staged `phits.out` inputs.
 The converter must create or byte-change its expected RTDOSE; merely touching a
 stale output fails before plan-reference synchronization.
 

@@ -138,6 +138,85 @@ def _referenced_plan_beams(
     return treatment_metersets, non_treatment_metersets, fraction_group_numbers
 
 
+def _beam_isocenter_dicom_mm(
+    beam: Dataset,
+    *,
+    beam_number: int,
+) -> tuple[float, float, float]:
+    control_points = list(getattr(beam, "ControlPointSequence", []) or [])
+    isocenters: list[tuple[float, float, float]] = []
+    for control_point in control_points:
+        value = getattr(control_point, "IsocenterPosition", None)
+        if value is None:
+            continue
+        try:
+            result = tuple(float(item) for item in value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"RT Plan BeamNumber {beam_number} IsocenterPosition must be numeric"
+            ) from exc
+        if len(result) != 3 or not all(math.isfinite(item) for item in result):
+            raise ValueError(
+                f"RT Plan BeamNumber {beam_number} IsocenterPosition must contain three finite values"
+            )
+        isocenters.append(result)  # type: ignore[arg-type]
+    if not isocenters:
+        raise ValueError(
+            f"RT Plan BeamNumber {beam_number} has no control-point IsocenterPosition"
+        )
+    shared = isocenters[0]
+    for candidate in isocenters[1:]:
+        if any(
+            not math.isclose(
+                actual,
+                expected,
+                rel_tol=0.0,
+                abs_tol=MU_TOLERANCE,
+            )
+            for actual, expected in zip(candidate, shared)
+        ):
+            raise ValueError(
+                f"RT Plan BeamNumber {beam_number} has inconsistent "
+                "control-point IsocenterPosition values"
+            )
+    return shared
+
+
+def _shared_treatment_isocenter_dicom_mm(
+    rtplan: Dataset,
+    *,
+    treatment_beam_numbers: set[int],
+) -> tuple[float, float, float]:
+    beams: dict[int, Dataset] = {}
+    for index, beam in enumerate(getattr(rtplan, "BeamSequence", []) or [], start=1):
+        number = _positive_int(
+            getattr(beam, "BeamNumber", None),
+            label=f"RT Plan BeamSequence item {index} BeamNumber",
+        )
+        beams[number] = beam
+    isocenters = [
+        _beam_isocenter_dicom_mm(beams[number], beam_number=number)
+        for number in sorted(treatment_beam_numbers)
+    ]
+    if not isocenters:
+        raise ValueError("RT Plan has no treatment isocenter evidence")
+    shared = isocenters[0]
+    for candidate in isocenters[1:]:
+        if any(
+            not math.isclose(
+                actual,
+                expected,
+                rel_tol=0.0,
+                abs_tol=MU_TOLERANCE,
+            )
+            for actual, expected in zip(candidate, shared)
+        ):
+            raise ValueError(
+                "referenced treatment RT Plan beams do not share one IsocenterPosition"
+            )
+    return shared
+
+
 def _reconstructed_geometry_binding(
     *,
     rtplan: Dataset,
@@ -312,6 +391,10 @@ def validate_full_plan_context(
         non_treatment_metersets,
         fraction_group_numbers,
     ) = _referenced_plan_beams(rtplan)
+    rtplan_isocenter_dicom_mm = _shared_treatment_isocenter_dicom_mm(
+        rtplan,
+        treatment_beam_numbers=set(expected_metersets),
+    )
     all_referenced_metersets = {
         **expected_metersets,
         **non_treatment_metersets,
@@ -414,6 +497,7 @@ def validate_full_plan_context(
         "referenced_sop_class_uid": sop_class_uid,
         "referenced_sop_instance_uid": sop_instance_uid,
         "frame_of_reference_uid": frame_uid,
+        "rtplan_isocenter_dicom_mm": list(rtplan_isocenter_dicom_mm),
         "fraction_group_numbers": fraction_group_numbers,
         "referenced_beam_numbers": sorted(expected_metersets),
         "referenced_beam_metersets": {

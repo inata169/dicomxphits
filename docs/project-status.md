@@ -102,9 +102,10 @@ directories. Each archived change was also copied individually to an isolated
 temporary OpenSpec root, validated there as an active change in strict mode,
 and removed after all three validations passed.
 
-The repository now contains four current specifications, six archived
-changes, and zero active change directories. The PHITS runtime-control delta
-from pull request #15 was promoted into the current specification and archived
+The repository contains four current specifications and six archived changes;
+new approved work is represented by active change proposals. The PHITS
+runtime-control delta from pull request #15 was promoted into the current
+specification and archived
 as part of that task. The guided RTDOSE state and explicit reprepare recovery
 from pull request #17 are also recorded in the current guided GUI specification
 and archived. The previously deferred CT2PHITS workplace Dev Container task is
@@ -156,20 +157,38 @@ boundary described above.
 
 ## Current development plan
 
-The next approved goal is a human-operated Windows GUI diagnostic session using
-the two designated external test workspaces. Confirm again that the selected
-inputs are non-patient phantom data before any real-tool execution. Exercise
-the guided stages, record reproducible steps, timestamps, relevant GUI log
-messages, expected behavior, and actual behavior, and identify bugs or usability
-failures. Keep the absolute workstation paths, DICOM, licensed-tool files, and
-generated results outside the repository.
+The Windows GUI diagnostic completed the designated non-patient phantom
+workflow through RTDOSE, but external research comparison showed a gross
+three-dimensional translation and zero pass rate. Read-only diagnosis found
+that the final coordinate correction preserved a volume centre inherited from
+the converter CT slice position instead of deriving placement from the frozen
+RT Plan isocenter and PHITS tally mesh. Dose/MU normalization is a separate
+observation and remains outside the coordinate correction.
 
-This goal authorizes testing and diagnosis, not an unspecified implementation
-branch. Each confirmed defect must be checked against the documented behavior
-and safety boundary before deciding whether it is a bug fix or requires an
-OpenSpec change and separate human approval. An LLM must not turn optional
-improvements or unconfirmed observations into new Issues, branches, pull
-requests, automations, or other work items on its own.
+The approved `fix-rtdose-isocenter-translation` change implements the exact
+bin-centre mapping `I + 10 * (-x, z, y)`, binds the mesh and frozen-plan
+isocenter, and requires independent final-DICOM coordinate validation before
+the GUI reports RTDOSE Completed. Automated validation remains synthetic-only:
+nonzero isocenters, asymmetric bounds, unequal dimensions, anisotropic
+spacing, and fake converter runners write only under temporary test folders.
+No PHITS, Sumtally, phits2dicom, GPR, real DICOM, or calculation result is
+executed or added by those tests.
+
+The separately approved coordinate-only manual reprepare then exposed a
+fail-closed digest mismatch: historical RTDOSE Prepare had patched the accepted
+Sumtally output in place after Sumtally Run recorded its SHA-256. The approved
+correction stages private converter copies and proves the upstream Sumtally and
+companion PHITS files remain unchanged. A historical in-place IPP title patch
+is reusable only when reversing that exact patch, including LF/CRLF newline
+normalization, reproduces the recorded Sumtally Run SHA-256; all other changes
+remain failures.
+
+After repository checks pass, the next proportional step is the already
+approved coordinate-only reprepare/run using the existing designated
+non-patient phantom PHITS and Sumtally results. Keep workstation paths, DICOM,
+licensed tools, and generated results outside Git. Do not repeat PHITS
+transport or change Factor, MU, normalization, or physics for this coordinate
+validation.
 
 ## Human-decision queue
 

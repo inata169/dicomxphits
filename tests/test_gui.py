@@ -458,6 +458,13 @@ def test_prepare_rtdose_stage_passes_default_phits_out(tmp_path: Path) -> None:
     assert result.summary == {"stage_status": "success"}
 
 
+def successful_rtdose_prepare_summary() -> dict[str, object]:
+    return {
+        "stage_status": "success",
+        "rtdose_placement": {"schema_version": "synthetic-placement-v1"},
+    }
+
+
 def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> None:
     workspace = write_dir(tmp_path / "workspace")
 
@@ -466,11 +473,19 @@ def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> No
     assert rtdose_action_enabled("prepare_rtdose", RTDOSE_NOT_PREPARED) is True
     assert rtdose_action_enabled("run_rtdose", RTDOSE_NOT_PREPARED) is False
 
+    prepare_summary_path = (
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    )
     write_file(
-        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        prepare_summary_path,
         json.dumps({"stage_status": "success"}),
     )
 
+    assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
+    config = base_config(tmp_path, workspace=workspace)
+    assert validate_stage(config, stage_by_key("prepare_rtdose")) == workspace.resolve()
+
+    write_file(prepare_summary_path, json.dumps(successful_rtdose_prepare_summary()))
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
     assert rtdose_action_enabled("prepare_rtdose", RTDOSE_PREPARED) is False
     assert rtdose_action_enabled("run_rtdose", RTDOSE_PREPARED) is True
@@ -506,7 +521,7 @@ def test_rtdose_state_treats_malformed_summary_as_unsuccessful(
 
     assert rtdose_stage_state(workspace) == RTDOSE_NOT_PREPARED
 
-    write_file(prepare_summary, json.dumps({"stage_status": "success"}))
+    write_file(prepare_summary, json.dumps(successful_rtdose_prepare_summary()))
     write_file(run_summary, "{truncated")
 
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
@@ -530,11 +545,16 @@ def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
     workspace = write_dir(tmp_path / "workspace")
     write_file(
         workspace / stage_by_key("prepare_rtdose").summary_relative_path,
-        json.dumps({"stage_status": "success"}),
+        json.dumps(successful_rtdose_prepare_summary()),
     )
     write_file(
         workspace / stage_by_key("run_rtdose").summary_relative_path,
-        json.dumps({"stage_status": "success"}),
+        json.dumps(
+            {
+                "stage_status": "success",
+                "coordinate_placement_validation": {"validated": True},
+            }
+        ),
     )
 
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
@@ -551,6 +571,36 @@ def test_completed_rtdose_disables_both_actions(tmp_path: Path) -> None:
     assert successful_nav_status("run_rtdose") == "Completed"
 
 
+@pytest.mark.parametrize(
+    "execution",
+    [
+        {"stage_status": "success"},
+        {
+            "stage_status": "success",
+            "coordinate_placement_validation": {"validated": False},
+        },
+    ],
+)
+def test_rtdose_success_without_coordinate_proof_remains_prepared(
+    tmp_path: Path,
+    execution: dict[str, object],
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    config = base_config(tmp_path, workspace=workspace)
+    write_file(
+        workspace / stage_by_key("prepare_rtdose").summary_relative_path,
+        json.dumps(successful_rtdose_prepare_summary()),
+    )
+    write_file(
+        workspace / stage_by_key("run_rtdose").summary_relative_path,
+        json.dumps(execution),
+    )
+
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+    assert rtdose_action_enabled("run_rtdose", RTDOSE_PREPARED) is True
+    assert validate_stage(config, stage_by_key("run_rtdose")) == workspace.resolve()
+
+
 def test_duplicate_successful_rtdose_prepare_guides_user_to_run(
     tmp_path: Path,
 ) -> None:
@@ -558,7 +608,7 @@ def test_duplicate_successful_rtdose_prepare_guides_user_to_run(
     config = base_config(tmp_path, workspace=workspace)
     write_file(
         workspace / stage_by_key("prepare_rtdose").summary_relative_path,
-        json.dumps({"stage_status": "success"}),
+        json.dumps(successful_rtdose_prepare_summary()),
     )
 
     with pytest.raises(

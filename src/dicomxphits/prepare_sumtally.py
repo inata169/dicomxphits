@@ -20,6 +20,10 @@ from dicomxphits.prepare_3dcrt_workspace import (
     write_json,
 )
 from dicomxphits.run_segments import phits_environment
+from dicomxphits.rtdose_geometry import (
+    segment_tally_geometry_binding,
+    sumtally_output_geometry_evidence,
+)
 from dicomxphits.sumtally_inputs import (
     TARGET_TALLY_PATTERNS,
     build_sumtally,
@@ -435,6 +439,9 @@ def generate_sumtally(
         segment_output_evidence = file_digest_evidence(
             expected_segment_outputs(workspace_root, manifest)
         )
+        tally_geometry_binding = segment_tally_geometry_binding(
+            expected_segment_outputs(workspace_root, manifest)
+        )
         wrapper_include_evidence = file_digest_evidence(
             transitive_phits_include_paths(
                 sum_input_path,
@@ -461,6 +468,7 @@ def generate_sumtally(
             "sum_input_sha256": sum_input_sha256,
             "sumtally_input_sha256": sumtally_input_sha256,
             "segment_output_evidence": segment_output_evidence,
+            "tally_geometry_binding": tally_geometry_binding,
             "wrapper_include_evidence": wrapper_include_evidence,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,
@@ -664,6 +672,22 @@ def run_sumtally(
             ),
             label="wrapper include",
         )
+        current_tally_geometry_binding = segment_tally_geometry_binding(
+            expected_segment_outputs(workspace_root, manifest)
+        )
+        recorded_tally_geometry_binding = generation_summary.get(
+            "tally_geometry_binding"
+        )
+        if not isinstance(recorded_tally_geometry_binding, dict):
+            raise ValueError(
+                "Sumtally generation summary is missing tally geometry evidence; "
+                "rerun Sumtally Generate"
+            )
+        if current_tally_geometry_binding != recorded_tally_geometry_binding:
+            raise ValueError(
+                "Active segment tally geometry changed after Sumtally Generate; "
+                "rerun Sumtally Generate"
+            )
         expected_output = resolve_workspace_path(
             workspace_root,
             str(outputs["sumtally_output"]),
@@ -691,6 +715,12 @@ def run_sumtally(
             output_before is None
             or output_after["sha256"] != output_before["sha256"]
         )
+        sumtally_geometry_evidence = None
+        if result.returncode == 0 and output_updated and output_non_empty:
+            sumtally_geometry_evidence = sumtally_output_geometry_evidence(
+                expected_output,
+                expected_geometry=current_tally_geometry_binding["mesh_geometry"],
+            )
         summary = {
             "schema_version": "dicomxphits_public_sumtally_execution_v1",
             "stage": "run_sumtally",
@@ -729,6 +759,8 @@ def run_sumtally(
             "sumtally_input_sha256": current_sumtally_input_sha256,
             "segment_output_evidence": current_segment_output_evidence,
             "wrapper_include_evidence": current_wrapper_include_evidence,
+            "tally_geometry_binding": current_tally_geometry_binding,
+            "sumtally_output_geometry_evidence": sumtally_geometry_evidence,
         }
         write_json(execution_summary_path, summary)
         return summary

@@ -115,6 +115,9 @@ def write_synthetic_rtplan(path: Path) -> None:
         beam = Dataset()
         beam.BeamNumber = number
         beam.TreatmentDeliveryType = "TREATMENT"
+        control_point = Dataset()
+        control_point.IsocenterPosition = [10.0, -20.0, 30.0]
+        beam.ControlPointSequence = [control_point]
         ds.BeamSequence.append(beam)
         reference = Dataset()
         reference.ReferencedBeamNumber = number
@@ -125,6 +128,22 @@ def write_synthetic_rtplan(path: Path) -> None:
     fraction_group.ReferencedBeamSequence = referenced_beams
     ds.FractionGroupSequence = [fraction_group]
     ds.save_as(str(path))
+
+
+def tally_output_text(body: str = "") -> str:
+    return (
+        "[ T-Deposit ]\n"
+        "  xmin = -0.7\n"
+        "  xmax = 0.5\n"
+        "  nx = 4\n"
+        "  ymin = -0.3\n"
+        "  ymax = 0.1\n"
+        "  ny = 2\n"
+        "  zmin = -0.9\n"
+        "  zmax = 0.3\n"
+        "  nz = 3\n"
+        f"{body}"
+    )
 
 
 def write_coordinate_rtdose(path: Path) -> None:
@@ -269,7 +288,9 @@ def create_segment_outputs(workspace: Path, manifest: dict[str, Any]) -> None:
     for segment in manifest["segments"]:
         output_path = workspace / str(segment["expected_output_path"])
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text("synthetic segment dose", encoding="utf-8")
+        output_path.write_text(
+            tally_output_text("synthetic segment dose\n"), encoding="utf-8"
+        )
 
 
 def create_successful_sumtally_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, Path]]:
@@ -286,7 +307,9 @@ def create_successful_sumtally_workspace(tmp_path: Path) -> tuple[Path, dict[str
     def fake_phits_runner(cmd, **kwargs):
         assert kwargs["shell"] is False
         assert kwargs["env"]["OMP_NUM_THREADS"] == "8"
-        sumtally_output.write_text("synthetic merged dose", encoding="utf-8")
+        sumtally_output.write_text(
+            tally_output_text("synthetic merged dose\n"), encoding="utf-8"
+        )
         phits_out.write_text("synthetic phits companion", encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="synthetic sumtally ok", stderr="")
 
@@ -327,7 +350,7 @@ def test_manual_smoke_happy_path_uses_tmp_path_only(tmp_path):
 
             def communicate(self, input):
                 assert input.startswith("PHITS2DICOM")
-                write_coordinate_rtdose(files["sumtally_output"].with_suffix(".dcm"))
+                write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
                 return "synthetic phits2dicom ok", None
 
         assert cmd == [str(phits2dicom.resolve())]
@@ -345,6 +368,13 @@ def test_manual_smoke_happy_path_uses_tmp_path_only(tmp_path):
     assert execution["stage_status"] == "success"
     assert execution["expected_rtdose_output_exists"] is True
     assert execution["coordinate_corrected_rtdose_output_exists"] is True
+    assert execution["coordinate_placement_validation"]["validated"] is True
+    assert (
+        execution["coordinate_placement_validation"][
+            "maximum_absolute_component_residual_mm"
+        ]
+        <= 1.0e-6
+    )
     assert execution["new_dicom_outputs"]
     for summary in (prepare, execution):
         assert_summary_paths_under_tmp(summary, tmp_path)

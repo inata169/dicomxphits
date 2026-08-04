@@ -8,6 +8,10 @@ import pytest
 from pydicom.dataset import Dataset, FileDataset
 
 from dicomxphits.fix_coordinates import fix_coordinates
+from dicomxphits.rtdose_geometry import (
+    derive_rtdose_placement,
+    parse_tally_mesh_geometry,
+)
 
 
 def write_rtdose(
@@ -94,5 +98,82 @@ def test_unsupported_geometry_fails_without_output(
 
     with pytest.raises(ValueError, match=message):
         fix_coordinates(source_path, output_path)
+
+    assert not output_path.exists()
+
+
+def write_tally_geometry(path: Path) -> None:
+    path.write_text(
+        "[ T-Deposit ]\n"
+        " xmin = -0.7\n"
+        " xmax = 0.5\n"
+        " nx = 4\n"
+        " ymin = -0.3\n"
+        " ymax = 0.1\n"
+        " ny = 2\n"
+        " zmin = -0.9\n"
+        " zmax = 0.3\n"
+        " nz = 3\n",
+        encoding="utf-8",
+    )
+
+
+def test_plan_and_tally_affine_replaces_converter_inherited_translation(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "raw.dcm"
+    output_path = tmp_path / "fixed.dcm"
+    tally_path = tmp_path / "dose.out"
+    source = write_rtdose(source_path)
+    write_tally_geometry(tally_path)
+    placement = derive_rtdose_placement(
+        parse_tally_mesh_geometry(tally_path),
+        rtplan_isocenter_dicom_mm=[10.0, -20.0, 30.0],
+    )
+
+    summary = fix_coordinates(
+        source_path,
+        output_path,
+        expected_placement=placement,
+    )
+
+    fixed = pydicom.dcmread(str(output_path))
+    np.testing.assert_array_equal(fixed.pixel_array, source.transpose(1, 0, 2))
+    assert [float(value) for value in fixed.ImagePositionPatient] == pytest.approx(
+        [6.5, -27.0, 28.0]
+    )
+    assert summary["source_geometry"]["volume_center"] == [0.5, -4.0, -2.0]
+    assert summary["output_geometry"]["volume_center"] == pytest.approx(
+        [11.0, -23.0, 29.0]
+    )
+    assert summary["center_mode"] == "plan_and_tally_affine"
+    assert summary["applied_translation_dicom_mm"] == pytest.approx(
+        [10.5, -19.0, 31.0]
+    )
+    assert summary["target_override_translation_dicom_mm"] == [0.0, 0.0, 0.0]
+    assert len(summary["input_sha256"]) == 64
+    assert len(summary["output_sha256"]) == 64
+    assert summary["placement_validation"]["validated"] is True
+    assert summary["invariants"]["physical_dose_values_preserved"] is True
+
+
+def test_bound_tally_geometry_mismatch_fails_before_output(tmp_path: Path) -> None:
+    source_path = tmp_path / "raw.dcm"
+    output_path = tmp_path / "fixed.dcm"
+    tally_path = tmp_path / "dose.out"
+    write_rtdose(source_path)
+    write_tally_geometry(tally_path)
+    placement = derive_rtdose_placement(
+        parse_tally_mesh_geometry(tally_path),
+        rtplan_isocenter_dicom_mm=[10.0, -20.0, 30.0],
+    )
+    placement["output_shape_frames_rows_columns"] = [2, 3, 5]
+
+    with pytest.raises(ValueError, match="dimensions do not match"):
+        fix_coordinates(
+            source_path,
+            output_path,
+            expected_placement=placement,
+        )
 
     assert not output_path.exists()

@@ -24,6 +24,21 @@ from dicomxphits.prepare_sumtally import (
 )
 from dicomxphits.sumtally_inputs import file_sha256
 
+def tally_output_text() -> str:
+    return (
+        "[ T-Deposit ]\n"
+        " xmin = -0.7\n"
+        " xmax = 0.5\n"
+        " nx = 4\n"
+        " ymin = -0.3\n"
+        " ymax = 0.1\n"
+        " ny = 2\n"
+        " zmin = -0.9\n"
+        " zmax = 0.3\n"
+        " nz = 3\n"
+    )
+
+
 
 def active_segment(index=0, **overrides):
     segment = {
@@ -72,7 +87,7 @@ def write_workspace(tmp_path, *segments, metadata=None):
         if not segment.get("skip_reason"):
             output_path = workspace / segment["expected_output_path"]
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text("segment dose", encoding="utf-8")
+            output_path.write_text(tally_output_text(), encoding="utf-8")
     if metadata is not None:
         summary_path = workspace / "analysis" / "public_preparation_workspace_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -488,7 +503,7 @@ def test_run_sumtally_rejects_manifest_changed_after_generation(tmp_path):
     for segment in manifest["segments"]:
         output = workspace / segment["expected_output_path"]
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text("segment dose", encoding="utf-8")
+        output.write_text(tally_output_text(), encoding="utf-8")
     manifest["case_id"] = "changed-after-generation"
     (workspace / "segments" / "segment_manifest.json").write_text(
         json.dumps(manifest),
@@ -535,7 +550,7 @@ def test_run_sumtally_rejects_generated_input_changed_after_generation(
     for segment in manifest["segments"]:
         output = workspace / segment["expected_output_path"]
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text("segment dose", encoding="utf-8")
+        output.write_text(tally_output_text(), encoding="utf-8")
     changed_input = Path(generation["outputs"][output_key])
     changed_input.write_text(
         changed_input.read_text(encoding="utf-8") + "\n$ changed\n",
@@ -564,7 +579,7 @@ def test_run_sumtally_rejects_different_sum_input_override(tmp_path):
     for segment in manifest["segments"]:
         output = workspace / segment["expected_output_path"]
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text("segment dose", encoding="utf-8")
+        output.write_text(tally_output_text(), encoding="utf-8")
     generated_wrapper = Path(generation["outputs"]["sum_input"])
     alternate_wrapper = generated_wrapper.with_name("alternate_sum.inp")
     alternate_wrapper.write_bytes(generated_wrapper.read_bytes())
@@ -592,7 +607,7 @@ def test_run_sumtally_rejects_unchanged_preexisting_output(tmp_path):
     for segment in manifest["segments"]:
         output = workspace / segment["expected_output_path"]
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text("segment dose", encoding="utf-8")
+        output.write_text(tally_output_text(), encoding="utf-8")
     expected_output = Path(generation["outputs"]["sumtally_output"])
     expected_output.write_text("stale merged dose", encoding="utf-8")
 
@@ -623,7 +638,7 @@ def test_run_sumtally_rejects_mtime_only_preexisting_output_update(tmp_path):
     for segment in manifest["segments"]:
         output = workspace / segment["expected_output_path"]
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text("segment dose", encoding="utf-8")
+        output.write_text(tally_output_text(), encoding="utf-8")
     expected_output = Path(generation["outputs"]["sumtally_output"])
     expected_output.write_text("stale merged dose", encoding="utf-8")
     stale_mtime_ns = expected_output.stat().st_mtime_ns
@@ -652,7 +667,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     workspace, _ = write_workspace(tmp_path)
     generation = generate_sumtally(workspace_root=workspace, paths=paths(), command_argv=["generate"])
     for dose_path in [workspace / "segments" / "seg_001" / "deposit-target-3D.out", workspace / "segments" / "seg_002" / "deposit-target-3D.out"]:
-        dose_path.write_text("segment dose", encoding="utf-8")
+        dose_path.write_text(tally_output_text(), encoding="utf-8")
     expected_output = Path(generation["outputs"]["sumtally_output"])
 
     calls = {}
@@ -665,7 +680,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         calls["text"] = kwargs["text"]
         calls["shell"] = kwargs["shell"]
         calls["env"] = kwargs["env"]
-        expected_output.write_text("merged dose", encoding="utf-8")
+        expected_output.write_text(tally_output_text(), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="sum warn")
 
     summary = run_sumtally(
@@ -686,7 +701,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     assert summary["returncode"] == 0
     assert summary["phits_execution_started"] is True
     assert summary["expected_sumtally_output_exists"] is True
-    assert summary["expected_sumtally_output_size"] == len("merged dose")
+    assert summary["expected_sumtally_output_size"] == len(tally_output_text())
     assert summary["expected_sumtally_output_non_empty"] is True
     assert summary["expected_sumtally_output_updated_by_run"] is True
     assert len(summary["expected_sumtally_output_sha256"]) == 64
@@ -756,7 +771,7 @@ def test_relative_workspace_root_round_trips_generated_paths(
     for segment in manifest["segments"]:
         output = workspace / segment["expected_output_path"]
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text("segment dose", encoding="utf-8")
+        output.write_text(tally_output_text(), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     relative_workspace = workspace.relative_to(tmp_path)
 
@@ -768,7 +783,7 @@ def test_relative_workspace_root_round_trips_generated_paths(
     expected_output = Path(generation["outputs"]["sumtally_output"])
 
     def fake_runner(cmd, **kwargs):
-        expected_output.write_text("merged dose", encoding="utf-8")
+        expected_output.write_text(tally_output_text(), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="")
 
     execution = run_sumtally(

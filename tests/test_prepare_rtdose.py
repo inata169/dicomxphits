@@ -111,6 +111,9 @@ def write_rtplan(
         beam.BeamNumber = number
         if treatment_delivery_type is not None:
             beam.TreatmentDeliveryType = treatment_delivery_type
+        control_point = Dataset()
+        control_point.IsocenterPosition = [10.0, -20.0, 30.0]
+        beam.ControlPointSequence = [control_point]
         ds.BeamSequence.append(beam)
         reference = Dataset()
         reference.ReferencedBeamNumber = number
@@ -134,6 +137,22 @@ def write_rtplan_snapshot_evidence(rtplan_path: Path) -> None:
         },
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def tally_output_text(body: str = "") -> str:
+    return (
+        "[ T-Deposit ]\n"
+        "  xmin = -0.7\n"
+        "  xmax = 0.5\n"
+        "  nx = 4\n"
+        "  ymin = -0.3\n"
+        "  ymax = 0.1\n"
+        "  ny = 2\n"
+        "  zmin = -0.9\n"
+        "  zmax = 0.3\n"
+        "  nz = 3\n"
+        f"{body}"
+    )
 
 
 def write_coordinate_rtdose(path: Path) -> None:
@@ -208,7 +227,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
     bound_manifest_sha256 = manifest_sha256(manifest)
     sumtally_output = workspace / "sumtally" / "deposit-target-3D_sum_all_active_segments_totalfield.out"
     sumtally_output.parent.mkdir(parents=True)
-    sumtally_output.write_text("merged dose", encoding="utf-8")
+    sumtally_output.write_text(tally_output_text("merged dose\n"), encoding="utf-8")
     sum_input = workspace / "sumtally" / "segment_sum.inp"
     sum_input.write_text("generated wrapper", encoding="utf-8")
     sumtally_input = workspace / "sumtally" / "sumtally.inp"
@@ -217,7 +236,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
         workspace / "segments" / "seg_b0001_s0000" / "deposit-target-3D.out"
     )
     segment_output.parent.mkdir(parents=True)
-    segment_output.write_text("segment dose", encoding="utf-8")
+    segment_output.write_text(tally_output_text("segment dose\n"), encoding="utf-8")
     sum_input_sha256 = file_sha256(sum_input)
     sumtally_input_sha256 = file_sha256(sumtally_input)
     segment_output_evidence = [
@@ -269,12 +288,51 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "Gy")
 
 
 def rewrite_sumtally_output_evidence(workspace: Path, output: Path) -> None:
+    text = output.read_text(encoding="utf-8")
+    if "xmin" not in text.lower():
+        output.write_text(tally_output_text(text), encoding="utf-8")
     execution_path = workspace / "analysis" / "sumtally_execution_summary.json"
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution["expected_sumtally_output"] = str(output)
     execution["expected_sumtally_output_updated_by_run"] = True
     execution["expected_sumtally_output_sha256"] = file_sha256(output)
     execution_path.write_text(json.dumps(execution), encoding="utf-8")
+
+
+def simulate_legacy_in_place_ipp_patch(
+    workspace: Path,
+    files: dict,
+    *,
+    newline: str,
+) -> bytes:
+    original_text = tally_output_text("  title = Synthetic legacy merged dose\n")
+    if newline == "crlf":
+        original_text = original_text.replace("\n", "\r\n")
+    original = original_text.encode("utf-8")
+    files["sumtally_output"].write_bytes(original)
+
+    generation_path = workspace / "analysis" / "sumtally_generation_summary.json"
+    execution_path = workspace / "analysis" / "sumtally_execution_summary.json"
+    generation = json.loads(generation_path.read_text(encoding="utf-8"))
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    segment_path = Path(generation["segment_output_evidence"][0]["path"])
+    segment_path.write_bytes(original)
+    segment_sha256 = file_sha256(segment_path)
+    for summary in (generation, execution):
+        summary["segment_output_evidence"][0]["sha256"] = segment_sha256
+    execution["expected_sumtally_output"] = str(files["sumtally_output"])
+    execution["expected_sumtally_output_updated_by_run"] = True
+    execution["expected_sumtally_output_sha256"] = file_sha256(
+        files["sumtally_output"]
+    )
+    generation_path.write_text(json.dumps(generation), encoding="utf-8")
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+
+    prepare_rtdose_module.patch_deposit_title_ipp(
+        files["sumtally_output"],
+        ipp=[1.0, 2.0, 3.0],
+    )
+    return files["sumtally_output"].read_bytes()
 
 
 def rewrite_sumtally_manifest_digests(
@@ -370,8 +428,17 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert summary["dose_semantics"]["comparison_rule"] == (
         "public_reference_model_absolute_dose_no_clinical_commissioning_claim"
     )
-    assert summary["phits_dose"] == str(files["sumtally_output"])
-    assert summary["phits_out"] == str(files["phits_out"])
+    assert summary["phits_dose_source_path"] == str(files["sumtally_output"].resolve())
+    assert summary["phits_out_source_path"] == str(files["phits_out"].resolve())
+    assert Path(summary["phits_dose"]).parent.name == "DATfiles"
+    assert Path(summary["phits_out"]).parent.name == "DATfiles"
+    assert summary["phits2dicom_inputs_are_workspace_copies"] is True
+    assert summary["upstream_sources_unchanged"] is True
+    assert all(
+        record["unchanged_by_prepare"]
+        for record in summary["upstream_source_evidence"].values()
+        if isinstance(record, dict) and "unchanged_by_prepare" in record
+    )
     assert summary["phits2dicom_input_path"].endswith("phits2dicom.inp")
     assert len(summary["phits2dicom_input_sha256"]) == 64
     referenced_inputs = summary["phits2dicom_referenced_input_evidence"]
@@ -538,8 +605,92 @@ def test_prepare_patches_workspace_deposit_titles_and_records_file_sizes(tmp_pat
         assert item["skipped_existing_ipp"] == 0
         assert item["file_size_after"] >= item["file_size_before"]
         assert item["content_changed"] is True
-    assert "ImagePositionPatient  1.00000  2.00000  3.00000 mm" in files["sumtally_output"].read_text(encoding="utf-8")
-    assert "ImagePositionPatient  1.00000  2.00000  3.00000 mm" in files["phits_out"].read_text(encoding="utf-8")
+    assert "Synthetic merged dose" in files["sumtally_output"].read_text(encoding="utf-8")
+    assert "Synthetic companion dose" in files["phits_out"].read_text(encoding="utf-8")
+    assert "ImagePositionPatient  1.00000  2.00000  3.00000 mm" in Path(
+        summary["phits_dose"]
+    ).read_text(encoding="utf-8")
+    assert "ImagePositionPatient  1.00000  2.00000  3.00000 mm" in Path(
+        summary["phits_out"]
+    ).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("newline", ["lf", "crlf"])
+def test_prepare_recovers_only_known_legacy_ipp_patch_without_sumtally_rerun(
+    tmp_path,
+    newline,
+):
+    workspace, files = write_workspace(tmp_path)
+    current_legacy_bytes = simulate_legacy_in_place_ipp_patch(
+        workspace,
+        files,
+        newline=newline,
+    )
+    execution = json.loads(
+        (
+            workspace / "analysis" / "sumtally_execution_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert file_sha256(files["sumtally_output"]) != execution[
+        "expected_sumtally_output_sha256"
+    ]
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    integrity = summary["sumtally_manifest_binding"]["sumtally_output_integrity"]
+    assert summary["stage_status"] == "success"
+    assert integrity["status"] == "legacy_in_place_ipp_title_patch_recovered"
+    assert integrity["recovery_applied"] is True
+    assert integrity["recovered_sha256"] == execution[
+        "expected_sumtally_output_sha256"
+    ]
+    assert files["sumtally_output"].read_bytes() == current_legacy_bytes
+    assert summary["upstream_sources_unchanged"] is True
+    assert "ImagePositionPatient  1.00000  2.00000  3.00000 mm" in Path(
+        summary["phits_dose"]
+    ).read_text(encoding="utf-8")
+
+
+def test_prepare_rejects_legacy_ipp_patch_with_any_additional_change(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    current_legacy_bytes = simulate_legacy_in_place_ipp_patch(
+        workspace,
+        files,
+        newline="crlf",
+    )
+    files["sumtally_output"].write_bytes(
+        current_legacy_bytes + b"unexpected additional change\n"
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="Sumtally output content does not match Sumtally Run evidence",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_prepare_rejects_workspace_external_phits_dose_or_out(tmp_path):
@@ -616,7 +767,11 @@ def test_prepare_patches_only_t_deposit_titles(tmp_path):
     out_text = files["phits_out"].read_text(encoding="utf-8")
     assert "title = Track title must remain" in dose_text
     assert "title = Companion track title" in out_text
-    assert "Dose title changes" not in dose_text
+    assert "Dose title changes" in dose_text
+    staged_dose_text = Path(summary["phits_dose"]).read_text(encoding="utf-8")
+    assert "title = Track title must remain" in staged_dose_text
+    assert "Dose title changes" not in staged_dose_text
+    assert "ImagePositionPatient" in staged_dose_text
     assert summary["image_position_patient_patch"]["files"][0]["patched_title_count"] == 1
     assert summary["image_position_patient_patch"]["files"][1]["patched_title_count"] == 0
 
@@ -988,7 +1143,7 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
 
         def communicate(self, input):
             calls["input"] = input
-            write_coordinate_rtdose(files["sumtally_output"].with_suffix(".dcm"))
+            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
             return "ok", None
 
     def fake_runner(cmd, **kwargs):
@@ -1011,6 +1166,16 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert calls["cwd"] == str(Path(prepare["dat_dir"]).absolute())
     assert calls["text"] is True
     assert calls["input"].startswith("PHITS2DICOM")
+    assert prepare["rtdose_placement"]["rtplan_isocenter_dicom_mm"] == [
+        10.0,
+        -20.0,
+        30.0,
+    ]
+    assert prepare["rtdose_placement"]["image_position_patient_mm"] == pytest.approx(
+        [6.5, -27.0, 28.0],
+        rel=0.0,
+        abs=1.0e-6,
+    )
     assert summary["returncode"] == 0
     assert summary["phits2dicom_execution_started"] is True
     assert summary["new_dicom_outputs"][0]["path"].endswith("deposit-target-3D_sum_all_active_segments_totalfield.dcm")
@@ -1045,6 +1210,20 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     )
     assert sorted(corrected.pixel_array.ravel().tolist()) == list(range(24))
     assert float(corrected.DoseGridScaling) == 0.125
+    assert [float(value) for value in corrected.ImagePositionPatient] == pytest.approx(
+        [6.5, -27.0, 28.0],
+        rel=0.0,
+        abs=1.0e-6,
+    )
+    assert summary["rtdose_placement"][
+        "output_volume_center_dicom_mm"
+    ] == pytest.approx(
+        [11.0, -23.0, 29.0],
+        rel=0.0,
+        abs=1.0e-6,
+    )
+    assert summary["coordinate_placement_validation"]["validated"] is True
+    assert summary["coordinate_placement_validation"]["maximum_absolute_component_residual_mm"] <= 1.0e-6
     assert summary["dose_semantics"]["absolute_calibration_approved"] is True
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
 
@@ -1074,7 +1253,7 @@ def test_run_rejects_phits_dose_changed_after_prepare(tmp_path):
 
     with pytest.raises(
         ValueError,
-        match="changed after RTDOSE Prepare",
+        match="Upstream phits_dose changed after RTDOSE Prepare",
     ):
         run_rtdose(
             workspace_root=workspace,
@@ -1084,6 +1263,43 @@ def test_run_rejects_phits_dose_changed_after_prepare(tmp_path):
         )
 
     assert calls == []
+
+def test_run_rejects_upstream_phits_out_changed_after_prepare(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    files["phits_out"].write_text(
+        "changed after RTDOSE Prepare",
+        encoding="utf-8",
+    )
+    calls = []
+
+    with pytest.raises(
+        ValueError,
+        match="Upstream phits_out changed after RTDOSE Prepare",
+    ):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: calls.append(cmd),
+        )
+
+    assert calls == []
+
 
 
 def test_run_rejects_phits2dicom_input_changed_after_prepare(tmp_path):
@@ -1421,6 +1637,42 @@ def test_prepare_accepts_existing_supported_treatment_delivery_types(
     assert summary["sumtally_manifest_binding"]["validated"] is True
 
 
+def test_prepare_rejects_inconsistent_control_point_isocenters(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    plan = pydicom.dcmread(str(files["rtplan"]))
+    conflicting_control_point = Dataset()
+    conflicting_control_point.IsocenterPosition = [11.0, -20.0, 30.0]
+    plan.BeamSequence[0].ControlPointSequence.append(conflicting_control_point)
+    plan.save_as(str(files["rtplan"]))
+    write_rtplan_snapshot_evidence(files["rtplan"])
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="inconsistent control-point IsocenterPosition values",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+    failure = json.loads(
+        (workspace / "analysis" / "rtdose_conversion_prepare_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "gate_failed"
+    assert failure["phits2dicom_execution_started"] is False
+
+
 def test_prepare_accepts_skipped_non_treatment_setup_beam(tmp_path):
     workspace, files = write_workspace(tmp_path)
     add_non_treatment_setup_beam(workspace, files["rtplan"])
@@ -1534,7 +1786,7 @@ def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkey
     write_dicom(template, modality="RTDOSE")
     write_dicom(ct, modality="CT")
     exe.write_text("exe", encoding="utf-8")
-    prepare_rtdose(
+    prepare = prepare_rtdose(
         workspace_root=workspace,
         paths=paths(phits2dicom="relative_phits2dicom"),
         paths_config={},
@@ -1551,7 +1803,7 @@ def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkey
         returncode = 0
 
         def communicate(self, input):
-            write_coordinate_rtdose(files["sumtally_output"].with_suffix(".dcm"))
+            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
             return "ok", None
 
     def fake_runner(cmd, **kwargs):
@@ -1582,7 +1834,7 @@ def test_run_fails_when_final_plan_reference_is_corrupted(
     write_dicom(template, modality="RTDOSE")
     write_dicom(ct, modality="CT")
     exe.write_text("exe", encoding="utf-8")
-    prepare_rtdose(
+    prepare = prepare_rtdose(
         workspace_root=workspace,
         paths=paths(phits2dicom=str(exe)),
         paths_config={},
@@ -1596,7 +1848,7 @@ def test_run_fails_when_final_plan_reference_is_corrupted(
         returncode = 0
 
         def communicate(self, input):
-            write_coordinate_rtdose(files["sumtally_output"].with_suffix(".dcm"))
+            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
             return "ok", None
 
     original_fix_coordinates = prepare_rtdose_module.fix_coordinates
@@ -1617,6 +1869,71 @@ def test_run_fails_when_final_plan_reference_is_corrupted(
     )
 
     with pytest.raises(ValueError, match="wrong RT Plan SOP Instance UID"):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: FakeProc(),
+        )
+
+    failure = json.loads(
+        (workspace / "analysis" / "rtdose_conversion_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "failed"
+    assert failure["phits2dicom_execution_started"] is True
+
+
+def test_run_fails_when_final_coordinate_placement_is_corrupted(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
+            return "ok", None
+
+    original_fix_coordinates = prepare_rtdose_module.fix_coordinates
+
+    def corrupting_fix_coordinates(input_path, output_path, **kwargs):
+        summary = original_fix_coordinates(input_path, output_path, **kwargs)
+        output = pydicom.dcmread(str(output_path))
+        position = [float(value) for value in output.ImagePositionPatient]
+        position[0] += 0.01
+        output.ImagePositionPatient = position
+        output.save_as(str(output_path))
+        return summary
+
+    monkeypatch.setattr(
+        prepare_rtdose_module,
+        "fix_coordinates",
+        corrupting_fix_coordinates,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="patient-coordinate residual exceeds 1e-6 mm",
+    ):
         run_rtdose(
             workspace_root=workspace,
             paths=paths(phits2dicom=str(exe)),
@@ -1661,7 +1978,7 @@ def test_run_rejects_stale_preexisting_rtdose_output(tmp_path):
     write_dicom(template, modality="RTDOSE")
     write_dicom(ct, modality="CT")
     exe.write_text("exe", encoding="utf-8")
-    prepare_rtdose(
+    prepare = prepare_rtdose(
         workspace_root=workspace,
         paths=paths(phits2dicom=str(exe)),
         paths_config={},
@@ -1670,7 +1987,7 @@ def test_run_rejects_stale_preexisting_rtdose_output(tmp_path):
         phits_out=files["phits_out"],
         command_argv=["prepare"],
     )
-    stale_output = files["sumtally_output"].with_suffix(".dcm")
+    stale_output = Path(prepare["phits_dose"]).with_suffix(".dcm")
     stale_output.write_text("stale dose dicom", encoding="utf-8")
 
     class FakeProc:
@@ -1702,7 +2019,7 @@ def test_run_rejects_mtime_only_preexisting_rtdose_update(tmp_path):
     write_dicom(template, modality="RTDOSE")
     write_dicom(ct, modality="CT")
     exe.write_text("exe", encoding="utf-8")
-    prepare_rtdose(
+    prepare = prepare_rtdose(
         workspace_root=workspace,
         paths=paths(phits2dicom=str(exe)),
         paths_config={},
@@ -1711,7 +2028,7 @@ def test_run_rejects_mtime_only_preexisting_rtdose_update(tmp_path):
         phits_out=files["phits_out"],
         command_argv=["prepare"],
     )
-    stale_output = files["sumtally_output"].with_suffix(".dcm")
+    stale_output = Path(prepare["phits_dose"]).with_suffix(".dcm")
     stale_output.write_text("stale dose dicom", encoding="utf-8")
     stale_mtime_ns = stale_output.stat().st_mtime_ns
 

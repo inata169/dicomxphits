@@ -138,7 +138,13 @@ The RTDOSE stage is split into `dicomxphits-prepare-rtdose` and
 
 In the guided GUI, a successful Prepare summary changes the RTDOSE state to
 `Prepared`, disables **Prepare RTDOSE**, and enables **Run RTDOSE**. The Run
-action is the step that invokes phits2dicom and creates the DICOM output.
+action is the step that invokes phits2dicom and creates the DICOM output. The
+GUI changes the state to `Completed` only when the execution summary contains
+a successful independent final coordinate-placement validation. Legacy
+Prepare/Run success summaries without placement proof are not accepted. The
+GUI returns to `Not run` and permits explicit Prepare/Run actions to replace
+only those legacy successful summaries; failed summaries and current evidence
+retain the normal overwrite guards.
 Selecting a workspace with a successful Prepare summary restores that state;
 repeating Prepare is not required and does not replace the successful state
 with a validation failure. If upstream Sumtally evidence is regenerated after
@@ -184,14 +190,22 @@ recursively resolved `infl` file consumed by the wrapper; Run revalidates the
 dependency set and digests before PHITS execution. Missing or mismatched
 evidence fails before RTDOSE conversion. The expected Sumtally dose output must
 be newly created or have a changed SHA-256 from the recorded Run; timestamp-only
-updates are rejected. Its SHA-256 is verified by RTDOSE Prepare before the IPP
-title patch, and the post-patch SHA-256 is verified by RTDOSE Run.
-Legacy workspaces regenerate and rerun Sumtally using their existing unchanged
-segment PHITS outputs before RTDOSE preparation.
-RTDOSE Prepare also records the generated `phits2dicom.inp` SHA-256; RTDOSE Run
-verifies it immediately before launching the converter. The workspace template,
-CT reference, prepared Sumtally dose, and companion `phits.out` referenced by
-that input are also hashed during Prepare and revalidated before launch.
+updates are rejected. RTDOSE Prepare verifies the recorded SHA-256, copies the
+dose and companion phits.out into rtdose/DATfiles, and applies the IPP title
+patch only to those private copies. It records source hashes before and after
+Prepare and fails if an upstream file changes. Run revalidates both source and
+prepared-copy evidence.
+For a workspace changed by the historical in-place IPP title patch, Prepare
+may recover the pre-patch bytes only when the hash-bound segment T-Deposit
+title and historical LF/CRLF normalization exactly reproduce the Sumtally Run
+SHA-256. It writes recovered bytes only to the private copy and rejects every
+additional or ambiguous difference. Older handoffs without explicit mesh
+fields may otherwise reconstruct the mesh from digest-bound, unchanged segment
+outputs and accepted Sumtally output. Unproven reconstruction requires rerunning
+Sumtally Generate and Run with the existing segment PHITS outputs.
+RTDOSE Prepare also records the generated phits2dicom.inp SHA-256; Run verifies
+it before converter launch. The template, CT reference, staged dose, and staged
+phits.out referenced by that input are hashed and revalidated before launch.
 The produced RTDOSE must likewise be new or have a different SHA-256 from any
 preexisting expected output. A timestamp-only change fails before plan-reference
 synchronization.
@@ -215,14 +229,23 @@ agreement with a physical Elekta unit.
 
 The conversion stage then creates the accepted separate `.fixed.dcm` file next
 to the Sumtally dose output. The execution summary identifies it as
-`coordinate_corrected_rtdose_output`. It transposes
-the supported PHITS2DICOM voxel layout from `[frames, rows, columns]` to
-`[rows, frames, columns]`, updates `PixelSpacing`,
-`GridFrameOffsetVector`, and `ImagePositionPatient`, and preserves the physical
-volume center and dose values. The final file is reopened and its PLAN
-summation, frozen-plan reference, Frame of Reference, and GY units are checked
-before success is reported. Ambiguous frame offsets, unsupported orientation,
-or stale plan references fail before a corrected output is accepted.
+`coordinate_corrected_rtdose_output`. Final placement is derived from the
+hash-bound frozen-plan isocenter and tally mesh, not from the converter CT
+slice's `ImagePositionPatient`. Tally bounds are bin edges and output
+`(frame, row, column)` maps to PHITS `(y, z, reversed x)` bin centres through
+`I + 10 * (-x, z, y)` in DICOM millimetres. The CT position written into the
+converter input is compatibility metadata only.
+
+The corrected output uses shape `(ny, nz, nx)`, identity axial
+`ImageOrientationPatient`, `PixelSpacing = [10*dz, 10*dx]`, and relative
+`GridFrameOffsetVector[f] = 10*f*dy`. Stored dose values and
+`DoseGridScaling` are preserved. The final file is reopened and its first,
+centre, edge, and final voxel positions are independently checked with zero
+relative tolerance and `1e-6 mm` absolute component tolerance. PLAN summation,
+frozen-plan reference, Frame of Reference, and GY units are also checked before
+success is reported. Missing or inconsistent mesh evidence, unsupported
+orientation, placement residuals, or stale plan references fail before a
+corrected output is accepted.
 
 ## GPR-comparing Boundary
 
