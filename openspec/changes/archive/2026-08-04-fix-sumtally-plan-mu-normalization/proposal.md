@@ -68,6 +68,7 @@ The human approved creation of this proposal and then approved the clarified
 contract that `sumfactor` includes active treatment-segment MU only, while
 validated skipped SETUP beam evidence remains outside PHITS and Sumtally dose
 calculation. The human approved repository runtime implementation, synthetic
-tests, and documentation on a dedicated feature branch. External Sumtally,
-RTDOSE, GPR, or additional PHITS execution and specification promotion remain
-unapproved until separate human decisions.
+tests, documentation, and completion of the required OpenSpec promotion and archive
+cleanup on a dedicated feature branch. External Sumtally, RTDOSE, GPR, or
+additional PHITS execution remains outside that repository approval and
+requires a separate human decision.
