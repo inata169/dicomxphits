@@ -25,6 +25,11 @@ from dicomxphits.prepare_3dcrt_workspace import (
     DEFAULT_SEGMENT_MAXCAS,
     DEFAULT_SEGMENT_OMP_THREADS,
 )
+from dicomxphits.sumtally_inputs import (
+    ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
+    file_sha256,
+    manifest_sha256,
+)
 
 
 PUBLIC_ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +42,7 @@ DEFAULT_CT2PHITS_TIMEOUT_SECONDS = 300.0
 RTDOSE_NOT_PREPARED = "not_prepared"
 RTDOSE_PREPARED = "prepared"
 RTDOSE_COMPLETED = "completed"
+RTDOSE_PREPARE_SUMMARY_SHA256_FIELD = "rtdose_prepare_summary_sha256"
 RUNTIME_SETTING_DEFAULTS = {
     "maxcas": str(DEFAULT_SEGMENT_MAXCAS),
     "maxbch": str(DEFAULT_SEGMENT_MAXBCH),
@@ -560,18 +566,128 @@ def summary_succeeded(summary: Mapping[str, object] | None) -> bool:
     return False
 
 
+def _current_sumtally_binding(
+    workspace_root: Path,
+) -> dict[str, object] | None:
+    generation = read_summary(
+        workspace_root / stage_by_key("generate_sumtally").summary_relative_path
+    )
+    execution = read_summary(
+        workspace_root / stage_by_key("run_sumtally").summary_relative_path
+    )
+    if (
+        not isinstance(generation, Mapping)
+        or not isinstance(execution, Mapping)
+        or generation.get("stage_status") != "success"
+        or execution.get("stage_status") != "success"
+    ):
+        return None
+    manifest_path = workspace_root / "segments" / "segment_manifest.json"
+    current_manifest = read_summary(manifest_path)
+    if (
+        not isinstance(current_manifest, dict)
+        or "summary_error" in current_manifest
+    ):
+        return None
+    if generation.get("manifest_sha256") != manifest_sha256(current_manifest):
+        return None
+    matching_fields = (
+        "manifest_sha256",
+        "sum_input_sha256",
+        "sumtally_input_sha256",
+    )
+    if any(
+        not generation.get(field)
+        or generation.get(field) != execution.get(field)
+        for field in matching_fields
+    ):
+        return None
+    if (
+        generation.get("sumtally_normalization")
+        != ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION
+        or execution.get("sumtally_normalization")
+        != generation.get("sumtally_normalization")
+    ):
+        return None
+    generation_normalization = generation.get("sumtally_normalization_evidence")
+    if (
+        not isinstance(generation_normalization, Mapping)
+        or execution.get("sumtally_normalization_evidence")
+        != generation_normalization
+    ):
+        return None
+    dependency_evidence: dict[str, object] = {}
+    for field in ("segment_output_evidence", "wrapper_include_evidence"):
+        generation_evidence = generation.get(field)
+        if (
+            not isinstance(generation_evidence, list)
+            or execution.get(field) != generation_evidence
+        ):
+            return None
+        dependency_evidence[field] = generation_evidence
+    if execution.get("expected_sumtally_output_updated_by_run") is not True:
+        return None
+    output_sha256 = execution.get("expected_sumtally_output_sha256")
+    if not isinstance(output_sha256, str) or not output_sha256:
+        return None
+    return {
+        "manifest_sha256": generation["manifest_sha256"],
+        "sum_input_sha256": generation["sum_input_sha256"],
+        "sumtally_input_sha256": generation["sumtally_input_sha256"],
+        **dependency_evidence,
+        "sumtally_normalization": generation["sumtally_normalization"],
+        "sumtally_output_sha256": output_sha256,
+        "sumtally_normalization_evidence": generation_normalization,
+    }
+
+
+def _prepare_matches_current_sumtally(
+    workspace_root: Path,
+    preparation: Mapping[str, object],
+) -> bool:
+    recorded = preparation.get("sumtally_manifest_binding")
+    if not isinstance(recorded, Mapping):
+        return False
+    current = _current_sumtally_binding(workspace_root)
+    if current is None:
+        return False
+    return all(recorded.get(field) == value for field, value in current.items())
+
+
+def _execution_matches_prepare(
+    prepare_path: Path,
+    execution: Mapping[str, object],
+) -> bool:
+    recorded_sha256 = execution.get(RTDOSE_PREPARE_SUMMARY_SHA256_FIELD)
+    if not isinstance(recorded_sha256, str) or not recorded_sha256:
+        return False
+    try:
+        return recorded_sha256 == file_sha256(prepare_path)
+    except OSError:
+        return False
+
+
 def rtdose_stage_state(workspace_root: Path) -> str:
+    prepare_path = (
+        workspace_root / stage_by_key("prepare_rtdose").summary_relative_path
+    )
+    preparation = read_summary(prepare_path)
+    if not summary_succeeded(preparation):
+        return RTDOSE_NOT_PREPARED
+    assert isinstance(preparation, Mapping)
+    if not _prepare_matches_current_sumtally(workspace_root, preparation):
+        return RTDOSE_NOT_PREPARED
+
     execution = read_summary(
         workspace_root / stage_by_key("run_rtdose").summary_relative_path
     )
-    if summary_succeeded(execution):
+    if (
+        summary_succeeded(execution)
+        and isinstance(execution, Mapping)
+        and _execution_matches_prepare(prepare_path, execution)
+    ):
         return RTDOSE_COMPLETED
-    preparation = read_summary(
-        workspace_root / stage_by_key("prepare_rtdose").summary_relative_path
-    )
-    if summary_succeeded(preparation):
-        return RTDOSE_PREPARED
-    return RTDOSE_NOT_PREPARED
+    return RTDOSE_PREPARED
 
 
 def rtdose_action_enabled(
@@ -582,7 +698,8 @@ def rtdose_action_enabled(
 ) -> bool:
     if stage_key == "prepare_rtdose":
         return state == RTDOSE_NOT_PREPARED or (
-            state == RTDOSE_PREPARED and allow_overwrite
+            state in {RTDOSE_PREPARED, RTDOSE_COMPLETED}
+            and allow_overwrite
         )
     if stage_key == "run_rtdose":
         return state == RTDOSE_PREPARED
@@ -590,7 +707,11 @@ def rtdose_action_enabled(
 
 
 def successful_nav_status(stage_key: str) -> str:
-    return "Prepared" if stage_key == "prepare_rtdose" else "Completed"
+    if stage_key == "prepare_rtdose":
+        return "Prepared"
+    if stage_key == "generate_sumtally":
+        return "Generated"
+    return "Completed"
 
 
 def rtdose_nav_status(state: str) -> str:
@@ -2159,6 +2280,13 @@ def _build_gui() -> int:
             append(geometry_mode_guidance(geometry_mode_value(config_from_entries())))
         if result.stderr:
             append(result.stderr.strip(), "warning")
+        if spec.key in {
+            "generate_sumtally",
+            "run_sumtally",
+            "prepare_rtdose",
+            "run_rtdose",
+        }:
+            refresh_rtdose_workflow_state()
         set_busy(None)
         if spec.key == "prepare_rtdose":
             append("RTDOSE is prepared. Next: click Run RTDOSE.", "info")

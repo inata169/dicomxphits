@@ -12,6 +12,15 @@ TARGET_TALLY_PATTERNS = ["deposit-target-3D", "deposit_target"]
 DEFAULT_SUMTALLY_MAXCAS = 1_000_000
 DEFAULT_SUMTALLY_MAXBCH = 10
 DEFAULT_SUMTALLY_OMP_THREADS = 8
+MU_TOLERANCE = 1.0e-6
+PLAN_MU_NORMALIZATION_SCHEMA = "dicomxphits_active_treatment_mu_sum_v1"
+ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION = (
+    "active_treatment_segments_totalfield_segment_mu_sum"
+)
+ACTIVE_TREATMENT_INPUT_DOSE_STATE = "sumtally_active_treatment_mu_sum"
+ACTIVE_TREATMENT_SUMMATION_RULE = (
+    "sum(active_segment_mu * segment_dose_per_mu)"
+)
 
 
 def file_sha256(path: Path) -> str:
@@ -81,6 +90,206 @@ def active_segments(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return [segment for segment in segments if isinstance(segment, dict) and not segment.get("skip_reason")]
 
 
+def _finite_number(
+    value: Any,
+    *,
+    label: str,
+    positive: bool = False,
+) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be a finite {'positive' if positive else 'nonnegative'} number")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label} must be a finite {'positive' if positive else 'nonnegative'} number"
+        ) from exc
+    invalid = not math.isfinite(result) or result < 0.0 or (positive and result <= 0.0)
+    if invalid:
+        raise ValueError(
+            f"{label} must be a finite {'positive' if positive else 'nonnegative'} number"
+        )
+    return result
+
+
+def _positive_beam_number(value: Any, *, label: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be a positive integer")
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a positive integer") from exc
+    if number <= 0 or str(value).strip() not in {str(number), f"{number}.0"}:
+        raise ValueError(f"{label} must be a positive integer")
+    return number
+
+
+def _close_mu(actual: float, expected: float) -> bool:
+    return math.isclose(actual, expected, rel_tol=0.0, abs_tol=MU_TOLERANCE)
+
+
+def plan_mu_normalization_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
+    if manifest.get("workflow_mode") != "full_plan":
+        raise ValueError(
+            "Active-treatment-MU Sumtally normalization requires workflow_mode full_plan"
+        )
+    segments = manifest.get("segments")
+    if not isinstance(segments, list) or not segments:
+        raise ValueError("Manifest must contain a non-empty segments list")
+
+    active_mu_by_beam: dict[int, float] = {}
+    active_beam_metersets: dict[int, float] = {}
+    skipped_beam_metersets: dict[int, float] = {}
+    active_segment_mu_sum = 0.0
+
+    for index, segment in enumerate(segments, start=1):
+        if not isinstance(segment, dict):
+            raise ValueError(f"Manifest segment {index} must be an object")
+        label = str(segment.get("segment_id") or f"manifest segment {index}")
+        beam_number = _positive_beam_number(
+            segment.get("beam_number"),
+            label=f"{label} beam_number",
+        )
+        skipped = bool(segment.get("skip_reason"))
+        if skipped:
+            if str(segment.get("delivery_type") or "").lower() != "unsupported":
+                raise ValueError(
+                    f"{label}: only unsupported non-treatment beams may be skipped"
+                )
+            segment_mu = _finite_number(
+                segment.get("segment_mu"),
+                label=f"{label} skipped segment_mu",
+            )
+            mu_weight = _finite_number(
+                segment.get("mu_weight"),
+                label=f"{label} skipped mu_weight",
+            )
+            if not _close_mu(segment_mu, 0.0):
+                raise ValueError(f"{label}: skipped segment_mu must be zero")
+            if not _close_mu(mu_weight, 0.0):
+                raise ValueError(f"{label}: skipped mu_weight must be zero")
+            beam_meterset = _finite_number(
+                segment.get("beam_meterset_mu"),
+                label=f"{label} skipped beam_meterset_mu",
+            )
+            if beam_number in active_mu_by_beam:
+                raise ValueError(
+                    f"BeamNumber {beam_number} cannot be both active and skipped"
+                )
+            previous = skipped_beam_metersets.get(beam_number)
+            if previous is not None and not _close_mu(previous, beam_meterset):
+                raise ValueError(
+                    f"Skipped BeamNumber {beam_number} has inconsistent beam_meterset_mu"
+                )
+            skipped_beam_metersets[beam_number] = beam_meterset
+            continue
+
+        if beam_number in skipped_beam_metersets:
+            raise ValueError(f"BeamNumber {beam_number} cannot be both active and skipped")
+        if str(segment.get("delivery_type") or "").lower() not in {
+            "3dcrt",
+            "3dcrt_static",
+        }:
+            raise ValueError(
+                f"Active segment references non-treatment BeamNumber {beam_number}"
+            )
+        segment_mu = _finite_number(
+            segment.get("segment_mu"),
+            label=f"{label} active segment_mu",
+            positive=True,
+        )
+        mu_weight = _finite_number(
+            segment.get("mu_weight"),
+            label=f"{label} active mu_weight",
+            positive=True,
+        )
+        if not _close_mu(mu_weight, segment_mu):
+            raise ValueError(f"{label}: active mu_weight does not match segment_mu")
+        beam_meterset = _finite_number(
+            segment.get("beam_meterset_mu"),
+            label=f"{label} active beam_meterset_mu",
+            positive=True,
+        )
+        previous = active_beam_metersets.get(beam_number)
+        if previous is not None and not _close_mu(previous, beam_meterset):
+            raise ValueError(
+                f"Active BeamNumber {beam_number} has inconsistent beam_meterset_mu"
+            )
+        active_beam_metersets[beam_number] = beam_meterset
+        active_mu_by_beam[beam_number] = (
+            active_mu_by_beam.get(beam_number, 0.0) + segment_mu
+        )
+        active_segment_mu_sum += segment_mu
+
+    if not active_mu_by_beam:
+        raise ValueError("At least one active treatment segment is required")
+    for beam_number, beam_meterset in active_beam_metersets.items():
+        if not _close_mu(active_mu_by_beam[beam_number], beam_meterset):
+            raise ValueError(
+                f"BeamNumber {beam_number} active segment MU does not match beam_meterset_mu"
+            )
+
+    active_treatment_beam_meterset_sum = sum(active_beam_metersets.values())
+    if not _close_mu(active_segment_mu_sum, active_treatment_beam_meterset_sum):
+        raise ValueError(
+            "Active segment MU sum does not match active treatment beam meterset sum"
+        )
+    skipped_non_treatment_beam_meterset_sum = sum(
+        skipped_beam_metersets.values()
+    )
+    reconciled_complete_mu = (
+        active_segment_mu_sum + skipped_non_treatment_beam_meterset_sum
+    )
+    complete_totals: dict[str, float] = {}
+    for key in ("plan_total_mu", "included_total_mu", "dose_normalization_mu"):
+        value = _finite_number(
+            manifest.get(key),
+            label=f"Manifest {key}",
+            positive=True,
+        )
+        if not _close_mu(value, reconciled_complete_mu):
+            raise ValueError(
+                f"Manifest {key} does not reconcile active treatment and skipped non-treatment MU"
+            )
+        complete_totals[key] = value
+
+    return {
+        "schema_version": PLAN_MU_NORMALIZATION_SCHEMA,
+        "isumtally": 2,
+        "weight_field": "segment_mu",
+        "sumfactor": active_segment_mu_sum,
+        "sumfactor_unit": "MU",
+        "active_segment_mu_sum": active_segment_mu_sum,
+        "active_treatment_beam_meterset_sum": active_treatment_beam_meterset_sum,
+        "active_treatment_beams": [
+            {
+                "beam_number": number,
+                "beam_meterset_mu": active_beam_metersets[number],
+                "segment_mu_sum": active_mu_by_beam[number],
+            }
+            for number in sorted(active_mu_by_beam)
+        ],
+        "skipped_non_treatment_beam_meterset_sum": (
+            skipped_non_treatment_beam_meterset_sum
+        ),
+        "skipped_non_treatment_beams": [
+            {
+                "beam_number": number,
+                "beam_meterset_mu": skipped_beam_metersets[number],
+                "segment_mu": 0.0,
+            }
+            for number in sorted(skipped_beam_metersets)
+        ],
+        **complete_totals,
+        "reconciled_complete_mu": reconciled_complete_mu,
+        "summation_rule": ACTIVE_TREATMENT_SUMMATION_RULE,
+        "input_segment_dose_unit": "GY/MU",
+        "output_dose_state": ACTIVE_TREATMENT_INPUT_DOSE_STATE,
+        "output_dose_unit": "GY",
+        "reconciled": True,
+    }
+
+
 def segment_weight(segment: dict[str, Any], *, weight_field: str) -> float:
     value = segment.get(weight_field)
     try:
@@ -107,15 +316,25 @@ def sumfactor_for(
     *,
     mode: str,
     weight_field: str,
-    total_weight: float,
-) -> tuple[float, str]:
+    raw_total_weight: float,
+) -> tuple[float, str, dict[str, Any] | None]:
     if mode == "totalfield" and weight_field == "segment_mu":
-        normalization_mu = dose_normalization_mu(manifest)
+        evidence = plan_mu_normalization_evidence(manifest)
+        expected = float(evidence["active_segment_mu_sum"])
+        if not _close_mu(raw_total_weight, expected):
+            raise ValueError(
+                "Sumtally active segment weights do not match validated active treatment MU"
+            )
         return (
-            total_weight / normalization_mu,
-            "totalfield segment_mu weights normalized by total_segment_mu / dose_normalization_mu",
+            expected,
+            "isumtally=2 normalizes segment_mu weights; sumfactor restores the active treatment MU sum",
+            evidence,
         )
-    return 1.0, "no additional Sumtally normalization for this mode and weight field"
+    return (
+        1.0,
+        "no additional Sumtally normalization for this mode and weight field",
+        None,
+    )
 
 
 def build_sumtally(
@@ -153,19 +372,12 @@ def build_sumtally(
             }
         )
 
-    if weight_normalization_mu is not None:
-        sumfactor = 1.0
-        sumfactor_reason = (
-            f"{weight_field} values divided by weight_normalization_mu={weight_normalization_mu:g}; "
-            "Sumtally weights are coefficients and PHITS2DICOM applies the Beam MU factor later."
-        )
-    else:
-        sumfactor, sumfactor_reason = sumfactor_for(
-            manifest,
-            mode=mode,
-            weight_field=weight_field,
-            total_weight=total_weight,
-        )
+    sumfactor, sumfactor_reason, normalization_evidence = sumfactor_for(
+        manifest,
+        mode=mode,
+        weight_field=weight_field,
+        raw_total_weight=raw_total_weight,
+    )
 
     lines = [
         "sumtally start",
@@ -193,10 +405,105 @@ def build_sumtally(
         "dose_normalization_mu": manifest.get("dose_normalization_mu"),
         "sumfactor": sumfactor,
         "sumfactor_reason": sumfactor_reason,
+        "sumtally_normalization_evidence": normalization_evidence,
         "phits_execution_performed": False,
         "segments": rows,
     }
     return "\n".join(lines), summary
+
+
+def _single_sumtally_assignment(text: str, name: str) -> str:
+    matches = re.findall(
+        rf"(?im)^\s*{re.escape(name)}\s*=\s*([^\s$]+)",
+        text,
+    )
+    if len(matches) != 1:
+        raise ValueError(f"Generated sumtally.inp must contain exactly one {name} assignment")
+    return matches[0]
+
+
+def validate_sumtally_normalization_input(
+    path: Path,
+    *,
+    manifest: dict[str, Any],
+    recorded_evidence: Any,
+) -> dict[str, Any]:
+    expected = plan_mu_normalization_evidence(manifest)
+    if recorded_evidence != expected:
+        raise ValueError(
+            "Sumtally normalization evidence is missing or does not match the current manifest; "
+            "rerun Sumtally Generate"
+        )
+    text = path.read_text(encoding="utf-8", errors="strict")
+    try:
+        isumtally = int(_single_sumtally_assignment(text, "isumtally"))
+        nfile = int(_single_sumtally_assignment(text, "nfile"))
+        sumfactor = float(_single_sumtally_assignment(text, "sumfactor"))
+    except ValueError as exc:
+        raise ValueError(
+            "Generated sumtally.inp has invalid normalization controls; rerun Sumtally Generate"
+        ) from exc
+    if isumtally != 2:
+        raise ValueError(
+            "Generated sumtally.inp isumtally does not match the active treatment MU contract"
+        )
+    if not _close_mu(sumfactor, float(expected["sumfactor"])):
+        raise ValueError(
+            "Generated sumtally.inp sumfactor does not match validated active treatment MU"
+        )
+
+    block_match = re.search(
+        r"(?ims)^\s*sumtally\s+start\s*$([\s\S]*?)^\s*sumtally\s+end\s*$",
+        text,
+    )
+    if block_match is None:
+        raise ValueError("Generated sumtally.inp is missing its Sumtally block")
+    assignment_names = {"isumtally", "sfile", "sumfactor", "nfile"}
+    weights: list[float] = []
+    for raw_line in block_match.group(1).splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("$"):
+            continue
+        assignment = re.match(r"^([A-Za-z0-9_]+)\s*=", line)
+        if assignment is not None and assignment.group(1).lower() in assignment_names:
+            continue
+        parts = line.rsplit(None, 1)
+        if len(parts) != 2:
+            raise ValueError(
+                "Generated sumtally.inp has an invalid weighted-file row; rerun Sumtally Generate"
+            )
+        try:
+            weight = float(parts[1])
+        except ValueError as exc:
+            raise ValueError(
+                "Generated sumtally.inp has an invalid segment weight; rerun Sumtally Generate"
+            ) from exc
+        if not math.isfinite(weight):
+            raise ValueError(
+                "Generated sumtally.inp has a non-finite segment weight; rerun Sumtally Generate"
+            )
+        weights.append(weight)
+
+    expected_weights = [
+        _finite_number(
+            segment.get("segment_mu"),
+            label="Active segment_mu",
+            positive=True,
+        )
+        for segment in active_segments(manifest)
+    ]
+    if nfile != len(expected_weights) or len(weights) != len(expected_weights):
+        raise ValueError(
+            "Generated sumtally.inp nfile does not match active treatment segments"
+        )
+    if any(
+        not _close_mu(actual, expected_weight)
+        for actual, expected_weight in zip(weights, expected_weights)
+    ):
+        raise ValueError(
+            "Generated sumtally.inp weights do not match active segment MU"
+        )
+    return expected
 
 
 def resolve_relative_path_for_phits(path: str | Path, base_dir: Path) -> str:
