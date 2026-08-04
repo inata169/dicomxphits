@@ -28,6 +28,7 @@ from dicomxphits.prepare_3dcrt_workspace import (
 from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
     file_sha256,
+    manifest_sha256,
 )
 
 
@@ -582,11 +583,13 @@ def _current_sumtally_binding(
     ):
         return None
     manifest_path = workspace_root / "segments" / "segment_manifest.json"
-    try:
-        current_manifest_sha256 = file_sha256(manifest_path)
-    except OSError:
+    current_manifest = read_summary(manifest_path)
+    if (
+        not isinstance(current_manifest, dict)
+        or "summary_error" in current_manifest
+    ):
         return None
-    if generation.get("manifest_sha256") != current_manifest_sha256:
+    if generation.get("manifest_sha256") != manifest_sha256(current_manifest):
         return None
     matching_fields = (
         "manifest_sha256",

@@ -90,13 +90,14 @@ def write_current_sumtally_binding(
     wrapper_evidence = [
         {"path": f"wrapper-{token}.inp", "sha256": f"wrapper-{token}"}
     ]
-    manifest_path = write_file(
+    manifest = {"token": token}
+    write_file(
         workspace / "segments" / "segment_manifest.json",
-        json.dumps({"token": token}),
+        json.dumps(manifest, indent=2) + "\n",
     )
     generation = {
         "stage_status": "success",
-        "manifest_sha256": gui_module.file_sha256(manifest_path),
+        "manifest_sha256": gui_module.manifest_sha256(manifest),
         "sum_input_sha256": f"sum-input-{token}",
         "sumtally_input_sha256": f"sumtally-input-{token}",
         "sumtally_normalization": normalization_contract,
