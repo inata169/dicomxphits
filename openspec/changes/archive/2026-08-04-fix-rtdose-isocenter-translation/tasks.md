@@ -55,10 +55,13 @@
   without adding external paths, DICOM identifiers, or calculation results.
 - [x] 5.2 Obtain separate approval before reprocessing any existing designated
   non-patient phantom evidence.
-- [ ] 5.3 Reuse existing PHITS and Sumtally results for coordinate-only manual
-  validation unless a separately approved change requires recalculation.
-- [x] 5.4 Record remaining dose-normalization work as outside this coordinate
-  change without changing its factor or MU semantics.
+- [x] 5.3 Reuse existing PHITS and Sumtally results for coordinate-only manual
+  validation unless a separately approved change requires recalculation. The
+  approved non-patient check completed without rerunning PHITS or Sumtally; all external inputs, tools, and generated artifacts remained outside the
+  repository.
+- [x] 5.4 Keep dose-normalization work outside this coordinate change. It was
+  completed separately by pull request #18 without changing factor or MU
+  semantics in this coordinate implementation.
 
 ## 6. Validation and Completion
 
@@ -67,5 +70,5 @@
   verification, and Git diff/status checks.
 - [x] 6.3 Run strict OpenSpec validation and inspect the complete proposal
   diff.
-- [ ] 6.4 After all approved criteria pass, promote the delta, archive the
+- [x] 6.4 After all approved criteria pass, promote the delta, archive the
   change, and validate the resulting specification tree before completion.

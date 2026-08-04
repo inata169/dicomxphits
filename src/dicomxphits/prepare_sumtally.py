@@ -25,11 +25,14 @@ from dicomxphits.rtdose_geometry import (
     sumtally_output_geometry_evidence,
 )
 from dicomxphits.sumtally_inputs import (
+    ACTIVE_TREATMENT_INPUT_DOSE_STATE,
+    ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
     TARGET_TALLY_PATTERNS,
     build_sumtally,
     file_sha256,
     generate_sum_inp,
     manifest_sha256,
+    validate_sumtally_normalization_input,
     write_libpath_file,
     write_text,
 )
@@ -39,11 +42,13 @@ DEFAULT_SUMTALLY_OUTPUT_NAME = "deposit-target-3D_sum_all_active_segments_totalf
 SUMTALLY_SCOPE = "all_active_segments"
 SUMTALLY_MODE = "totalfield"
 WEIGHT_FIELD = "segment_mu"
-SUMTALLY_NORMALIZATION = "all_segments_totalfield_segment_mu"
+SUMTALLY_NORMALIZATION = ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION
 RT_DOSE_CONVERSION_HINT = {
-    "input_dose_state": "sumtally_mu_weighted",
+    "input_dose_state": ACTIVE_TREATMENT_INPUT_DOSE_STATE,
+    "input_dose_unit": "GY",
     "sumtally_normalization": SUMTALLY_NORMALIZATION,
     "is_beam_mu_output": False,
+    "phits2dicom_factor": 1.0,
 }
 PHITS_INCLUDE_PATTERN = re.compile(
     r"^\s*infl:\s*\{\s*([^}]+?)\s*\}",
@@ -422,6 +427,11 @@ def generate_sumtally(
             sumtally_dir=sumtally_dir,
         )
         write_text(sumtally_path, content)
+        normalization_evidence = validate_sumtally_normalization_input(
+            sumtally_path,
+            manifest=manifest,
+            recorded_evidence=helper_summary["sumtally_normalization_evidence"],
+        )
         write_libpath_file(libpath_path, paths.phits_root_folder)
         generate_sum_inp(
             selection.path,
@@ -462,6 +472,7 @@ def generate_sumtally(
             "weight_field": WEIGHT_FIELD,
             "sumtally_normalization": SUMTALLY_NORMALIZATION,
             "rt_dose_conversion_hint": dict(RT_DOSE_CONVERSION_HINT),
+            "sumtally_normalization_evidence": normalization_evidence,
             "strict_gate": strict_gate,
             "manifest_path": str(manifest_path),
             "manifest_sha256": bound_manifest_sha256,
@@ -659,6 +670,21 @@ def run_sumtally(
                 "Generated sumtally.inp changed after Sumtally Generate; "
                 "rerun Sumtally Generate"
             )
+        normalization_evidence = validate_sumtally_normalization_input(
+            generated_sumtally_input,
+            manifest=manifest,
+            recorded_evidence=generation_summary.get(
+                "sumtally_normalization_evidence"
+            ),
+        )
+        if generation_summary.get("sumtally_normalization") != SUMTALLY_NORMALIZATION:
+            raise ValueError(
+                "Sumtally normalization contract is stale; rerun Sumtally Generate"
+            )
+        if generation_summary.get("rt_dose_conversion_hint") != RT_DOSE_CONVERSION_HINT:
+            raise ValueError(
+                "Sumtally RTDOSE conversion hint is stale; rerun Sumtally Generate"
+            )
         current_segment_output_evidence = validate_file_digest_evidence(
             generation_summary.get("segment_output_evidence"),
             current_paths=expected_segment_outputs(workspace_root, manifest),
@@ -754,6 +780,7 @@ def run_sumtally(
             "weight_field": generation_summary.get("weight_field"),
             "sumtally_normalization": generation_summary.get("sumtally_normalization"),
             "rt_dose_conversion_hint": generation_summary.get("rt_dose_conversion_hint"),
+            "sumtally_normalization_evidence": normalization_evidence,
             "manifest_sha256": current_manifest_sha256,
             "sum_input_sha256": current_sum_input_sha256,
             "sumtally_input_sha256": current_sumtally_input_sha256,

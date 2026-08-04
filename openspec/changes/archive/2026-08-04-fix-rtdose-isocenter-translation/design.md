@@ -187,9 +187,11 @@ full repository implementation on a dedicated feature branch, including
 runtime code, synthetic/mock tests, and documentation. The human later
 separately approved coordinate-only RTDOSE Prepare/Run and research comparison
 for one designated non-patient phantom while reusing its existing PHITS and
-Sumtally results. PHITS/Sumtally recalculation, Factor/MU/normalization work,
-additional external data, and promotion or archival remain outside that
-limited approval.
+Sumtally results. PHITS/Sumtally recalculation, Factor/MU/normalization work, and additional
+external data remained outside that limited approval. Dose normalization was
+completed separately by pull request #18; the current completion instruction
+authorizes promotion and archival after the coordinate acceptance criteria
+pass.
 
 The contract is derived from the existing reviewed DICOM-to-IEC transform and
 independently bound plan-and-tally geometry. It does not encode a target chosen

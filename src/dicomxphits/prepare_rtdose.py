@@ -42,15 +42,27 @@ from dicomxphits.rtdose_geometry import (
     sumtally_output_geometry_evidence,
     validate_rtdose_placement,
 )
-from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
+from dicomxphits.sumtally_inputs import (
+    ACTIVE_TREATMENT_INPUT_DOSE_STATE,
+    ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
+    file_sha256,
+    manifest_sha256,
+    plan_mu_normalization_evidence,
+    validate_sumtally_normalization_input,
+)
 
 
-INPUT_DOSE_STATE = "sumtally_mu_weighted"
-SUMTALLY_NORMALIZATION = "all_segments_totalfield_segment_mu"
+INPUT_DOSE_STATE = ACTIVE_TREATMENT_INPUT_DOSE_STATE
+SUMTALLY_NORMALIZATION = ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION
 IS_BEAM_MU_OUTPUT = False
-DEFAULT_INPUT_DOSE_UNIT = "gy_per_mu"
+DEFAULT_INPUT_DOSE_UNIT = "GY"
 DEFAULT_OUTPUT_DICOM_DOSE_UNIT = "GY"
 NORM_MODE_FACTOR = "2"
+SUMTALLY_NORMALIZATION_RECOVERY = (
+    "In the GUI, select 'Allow overwrite of downstream stage summaries', "
+    "then rerun Sumtally Generate, Sumtally Run, RTDOSE Prepare, and RTDOSE "
+    "Run. PHITS does not need to be rerun."
+)
 PHITS2DICOM_REFERENCED_INPUT_FIELDS = {
     "template_dicom": "template_dicom_workspace_copy_path",
     "ct_reference": "ct_reference_workspace_copy_path",
@@ -345,6 +357,49 @@ def validate_sumtally_manifest_binding(
 ) -> dict[str, Any]:
     manifest_path = workspace_root / "segments" / "segment_manifest.json"
     manifest = load_json_object(manifest_path)
+    expected_normalization_evidence = plan_mu_normalization_evidence(manifest)
+    generation_normalization_evidence = generation.get(
+        "sumtally_normalization_evidence"
+    )
+    if generation_normalization_evidence != expected_normalization_evidence:
+        raise ValueError(
+            "Sumtally normalization evidence is missing or does not match the "
+            f"current manifest. {SUMTALLY_NORMALIZATION_RECOVERY}"
+        )
+    execution_normalization_evidence = execution.get(
+        "sumtally_normalization_evidence"
+    )
+    if execution_normalization_evidence != generation_normalization_evidence:
+        raise ValueError(
+            "Sumtally Run normalization evidence does not match Sumtally "
+            f"Generate or the current manifest. {SUMTALLY_NORMALIZATION_RECOVERY}"
+        )
+    generation_hint = generation.get("rt_dose_conversion_hint")
+    if not isinstance(generation_hint, dict):
+        raise ValueError(
+            "Sumtally Generate RTDOSE conversion hint is missing. "
+            f"{SUMTALLY_NORMALIZATION_RECOVERY}"
+        )
+    if bool(generation_hint.get("is_beam_mu_output")):
+        raise ValueError(
+            "RTDOSE does not accept per-beam beamMU Sumtally output. "
+            f"{SUMTALLY_NORMALIZATION_RECOVERY}"
+        )
+    if generation.get("sumtally_normalization") != SUMTALLY_NORMALIZATION:
+        raise ValueError(
+            "Sumtally Generate normalization contract is stale. "
+            f"{SUMTALLY_NORMALIZATION_RECOVERY}"
+        )
+    if execution.get("sumtally_normalization") != SUMTALLY_NORMALIZATION:
+        raise ValueError(
+            "Sumtally Run normalization contract does not match Sumtally "
+            f"Generate. {SUMTALLY_NORMALIZATION_RECOVERY}"
+        )
+    if execution.get("rt_dose_conversion_hint") != generation_hint:
+        raise ValueError(
+            "Sumtally Run RTDOSE conversion hint does not match Sumtally "
+            f"Generate. {SUMTALLY_NORMALIZATION_RECOVERY}"
+        )
     current_sha256 = manifest_sha256(manifest)
     generation_sha256 = str(generation.get("manifest_sha256") or "")
     execution_sha256 = str(execution.get("manifest_sha256") or "")
@@ -399,6 +454,30 @@ def validate_sumtally_manifest_binding(
     generation_outputs = generation.get("outputs")
     if not isinstance(generation_outputs, dict):
         raise ValueError("Sumtally Generate evidence is missing outputs")
+    sumtally_input_value = str(generation_outputs.get("sumtally_input") or "")
+    if not sumtally_input_value:
+        raise ValueError(
+            "Sumtally Generate evidence is missing outputs.sumtally_input"
+        )
+    sumtally_input = resolve_workspace_path(
+        workspace_root,
+        sumtally_input_value,
+    ).resolve()
+    require_existing_file(
+        sumtally_input,
+        label="Generated Sumtally normalization input",
+        non_empty=True,
+    )
+    try:
+        validated_normalization_evidence = validate_sumtally_normalization_input(
+            sumtally_input,
+            manifest=manifest,
+            recorded_evidence=generation_normalization_evidence,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"{exc}. {SUMTALLY_NORMALIZATION_RECOVERY}"
+        ) from exc
     generation_output_value = str(generation_outputs.get("sumtally_output") or "")
     execution_output_value = str(execution.get("expected_sumtally_output") or "")
     if not generation_output_value or not execution_output_value:
@@ -517,6 +596,9 @@ def validate_sumtally_manifest_binding(
         "execution_manifest_sha256": execution_sha256,
         **input_digests,
         **dependency_evidence,
+        "sumtally_input_path": str(sumtally_input),
+        "sumtally_normalization": SUMTALLY_NORMALIZATION,
+        "sumtally_normalization_evidence": validated_normalization_evidence,
         "sumtally_output_path": str(generation_output),
         "sumtally_output_sha256": execution_output_sha256,
         "sumtally_output_integrity": output_integrity,
@@ -536,21 +618,33 @@ def validate_sumtally_contract(
     hint = generation.get("rt_dose_conversion_hint")
     if not isinstance(hint, dict):
         raise ValueError("Sumtally generation summary is missing rt_dose_conversion_hint")
-    if hint.get("input_dose_state") != INPUT_DOSE_STATE:
-        raise ValueError("Unsupported input_dose_state for PR E")
     if bool(hint.get("is_beam_mu_output")) is not IS_BEAM_MU_OUTPUT:
         raise ValueError("PR E does not accept per-beam beamMU Sumtally output")
+    if hint.get("input_dose_state") != INPUT_DOSE_STATE:
+        raise ValueError("Unsupported input_dose_state for PR E")
     if hint.get("sumtally_normalization") != SUMTALLY_NORMALIZATION:
         raise ValueError("Unsupported sumtally_normalization for PR E")
+    if generation.get("sumtally_normalization") != SUMTALLY_NORMALIZATION:
+        raise ValueError("Unsupported Sumtally generation normalization for PR E")
+    if str(hint.get("input_dose_unit") or "").strip().upper() != "GY":
+        raise ValueError("Sumtally RTDOSE hint input_dose_unit must be GY")
+    try:
+        hinted_factor = float(hint.get("phits2dicom_factor"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "Sumtally RTDOSE hint phits2dicom_factor must be 1.0"
+        ) from exc
+    if hinted_factor != 1.0:
+        raise ValueError("Sumtally RTDOSE hint phits2dicom_factor must be 1.0")
     require_absolute_units(
         input_dose_unit=input_dose_unit,
         output_dicom_dose_unit=output_dicom_dose_unit,
     )
     return (
         1.0,
-        "Factor 1.0 selected because the approved public-model "
-        "totfact_per_MU was already applied in each PHITS input before "
-        "all-active-segments totalfield Sumtally.",
+        "Factor 1.0 selected because approved public-model totfact_per_MU "
+        "was applied in each PHITS segment and active treatment MU was "
+        "already applied by Sumtally sumfactor.",
     )
 
 
@@ -1174,6 +1268,9 @@ def prepare_rtdose(
             "input_dose_unit": input_dose_unit,
             "output_dicom_dose_unit": output_dicom_dose_unit,
             "sumtally_normalization": SUMTALLY_NORMALIZATION,
+            "sumtally_normalization_evidence": sumtally_manifest_binding[
+                "sumtally_normalization_evidence"
+            ],
             "is_beam_mu_output": IS_BEAM_MU_OUTPUT,
             "factor": factor,
             "factor_selection_reason": factor_reason,
@@ -1294,7 +1391,9 @@ def run_rtdose(
         exe = Path(paths.phits2dicom_executable_path)
         require_existing_file(exe, label="phits2dicom executable")
         resolved_exe = exe.resolve()
-        prepare_summary = load_json_object(prepare_summary_path(workspace_root))
+        recorded_prepare_summary_path = prepare_summary_path(workspace_root)
+        prepare_summary_sha256 = file_sha256(recorded_prepare_summary_path)
+        prepare_summary = load_json_object(recorded_prepare_summary_path)
         if prepare_summary.get("stage_status") != "success":
             raise ValueError("RTDOSE prepare summary is not successful")
         validate_phits2dicom_referenced_input_evidence(prepare_summary)
@@ -1504,6 +1603,7 @@ def run_rtdose(
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
             "phits2dicom_execution_started": execution_started,
+            "rtdose_prepare_summary_sha256": prepare_summary_sha256,
             "dat_dir": str(dat_dir),
             "output_snapshot_dirs": [str(path) for path in output_dirs],
             "output_snapshot_before": before,
@@ -1528,6 +1628,9 @@ def run_rtdose(
             "coordinate_placement_validation": coordinate_placement_validation,
             "input_dose_state": prepare_summary.get("input_dose_state"),
             "sumtally_normalization": prepare_summary.get("sumtally_normalization"),
+            "sumtally_normalization_evidence": prepare_summary.get(
+                "sumtally_normalization_evidence"
+            ),
             "is_beam_mu_output": prepare_summary.get("is_beam_mu_output"),
             "factor": prepare_summary.get("factor"),
             "dose_semantics": prepare_summary.get("dose_semantics"),

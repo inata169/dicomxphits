@@ -125,11 +125,18 @@ this fixed contract:
 - `sumtally_scope = all_active_segments`
 - `sumtally_mode = totalfield`
 - `weight_field = segment_mu`
-- `sumtally_normalization = all_segments_totalfield_segment_mu`
+- `sumtally_normalization = active_treatment_segments_totalfield_segment_mu_sum`
+- `sumfactor = sum(active treatment segment_mu)`
 - `rt_dose_conversion_hint.is_beam_mu_output = false`
 
-This output must not be treated as a per-beam `beamMU` RTDOSE input by later
-stages.
+For PHITS `isumtally = 2`, the external-tool equation is
+`X = F * sum((r_j / sum(r)) * X_j)`. The public workflow sets each `r_j` to
+the active treatment segment MU and `F` (`sumfactor`) to their finite positive
+sum. The result is therefore
+`sum(active_segment_mu * segment_dose_per_mu)`, in `GY`. A validated skipped
+`SETUP` or other non-treatment beam remains in complete plan provenance but
+has zero segment MU and contributes no file weight or `sumfactor`. This output
+must not be treated as a per-beam `beamMU` RTDOSE input.
 
 ## RTDOSE Adapter
 
@@ -151,15 +158,18 @@ with a validation failure. If upstream Sumtally evidence is regenerated after
 Prepare, select **Allow overwrite of downstream stage summaries** to re-enable
 Prepare and generate a new binding before Run. This permission is not persisted,
 and the RTDOSE adapter remains responsible for validating the replacement
-evidence.
+evidence. The GUI reports `Completed` only when the Prepare summary matches
+the current Sumtally binding and the execution summary records the exact current
+Prepare-summary SHA-256. Stale successful summaries remain auditable but return
+the GUI to `Not run` or `Prepared` and cannot enable a stale Run.
 
 It consumes the preceding all-active-segments totalfield Sumtally output and
 records the conversion contract:
 
-- `input_dose_state = sumtally_mu_weighted`
-- `sumtally_normalization = all_segments_totalfield_segment_mu`
+- `input_dose_state = sumtally_active_treatment_mu_sum`
+- `sumtally_normalization = active_treatment_segments_totalfield_segment_mu_sum`
 - `is_beam_mu_output = false`
-- `input_dose_unit = gy_per_mu`
+- `input_dose_unit = GY`
 - `output_dicom_dose_unit = GY`
 - `factor = 1.0`
 - `totfact_per_MU = 8.7608E+11 source/MU` is already applied in PHITS
@@ -178,9 +188,11 @@ policy must reproduce the stored segments exactly.
 Fraction-group referenced non-treatment beams such as `SETUP` are excluded from
 active treatment coverage only when the manifest preserves them as skipped,
 zero-segment-MU entries. Their referenced beam meterset may be zero but must be
-finite and nonnegative. The manifest's plan, included, and normalization MU
-totals remain the full referenced-beam totals, so this validation does not
-alter the existing Sumtally normalization.
+finite and nonnegative. The manifest's plan, included, and normalization MU totals remain the full
+referenced-beam totals. Their difference from the active treatment-segment MU
+sum must be explained exactly by validated skipped non-treatment BeamMeterset
+values. Only the active treatment-segment MU sum is used as Sumtally
+`sumfactor`.
 Sumtally Generate and Sumtally Run must also contain the same canonical
 segment-manifest SHA-256 as the current workspace and matching SHA-256 values
 for the generated PHITS wrapper and `sumtally.inp`. Sumtally Run executes only
@@ -206,6 +218,12 @@ Sumtally Generate and Run with the existing segment PHITS outputs.
 RTDOSE Prepare also records the generated phits2dicom.inp SHA-256; Run verifies
 it before converter launch. The template, CT reference, staged dose, and staged
 phits.out referenced by that input are hashed and revalidated before launch.
+For a legacy factor-one weighted-average workspace, select **Allow overwrite
+of downstream stage summaries**, then rerun **Sumtally Generate**, **Sumtally
+Run**, **Prepare RTDOSE**, and **Run RTDOSE**. Existing digest-bound segment
+PHITS outputs are reused; PHITS transport does not need to be rerun solely for
+this normalization correction. Do not empirically rescale an old Sumtally or
+DICOM output.
 The produced RTDOSE must likewise be new or have a different SHA-256 from any
 preexisting expected output. A timestamp-only change fails before plan-reference
 synchronization.

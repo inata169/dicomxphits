@@ -230,11 +230,24 @@ every other mismatch fails. An older handoff without explicit mesh fields can
 otherwise be reused when segment and Sumtally outputs match their digests and
 contain one consistent mesh. Failed reconstruction requires rerunning both
 Sumtally stages, but not PHITS segment transport.
+If either summary predates the current normalization or binding evidence,
+select **Allow overwrite of
+downstream stage summaries**, then rerun **Sumtally Generate**, **Sumtally
+Run**, **Prepare RTDOSE**, and **Run RTDOSE** using the existing unchanged
+segment outputs. PHITS transport is not rerun solely for this correction.
+The GUI must report RTDOSE `Completed` only when the current Sumtally binding,
+Prepare summary, and Run summary digest agree. A stale success summary remains
+on disk for audit but must return the workflow to `Not run` or `Prepared`;
+it must not enable a stale **Run RTDOSE** action.
 Referenced non-treatment beams are accepted only as skipped, zero-segment-MU
 manifest entries; active coverage remains limited to treatment-eligible beams,
-while the existing full referenced-beam normalization MU is preserved. A
-non-treatment referenced beam meterset may be zero but must not be negative or
-non-finite.
+while complete plan, included, and normalization MU provenance remains bound
+to every referenced beam. A non-treatment referenced beam meterset may be zero
+but must not be negative or non-finite; it contributes no Sumtally weight or
+`sumfactor`. With `isumtally = 2`, Sumtally evaluates
+`X = F * sum((r_j / sum(r)) * X_j)`. The workflow uses active segment MU as
+`r_j` and their sum as `F`, giving
+`sum(active_segment_mu * segment_dose_per_mu)` in `GY`.
 The frozen RT Plan is bound by the completed CT2PHITS manifest SHA-256, with
 exact segment-geometry reconstruction as the legacy fallback. The generated
 `phits2dicom.inp` digest is also checked between RTDOSE Prepare and Run, along
@@ -279,7 +292,9 @@ The Sumtally output contract must remain:
 - `sumtally_scope = all_active_segments`
 - `sumtally_mode = totalfield`
 - `weight_field = segment_mu`
-- `sumtally_normalization = all_segments_totalfield_segment_mu`
+- `sumtally_normalization = active_treatment_segments_totalfield_segment_mu_sum`
+- `sumfactor = sum(active treatment segment_mu)`
+- `rt_dose_conversion_hint.input_dose_unit = GY`
 - `rt_dose_conversion_hint.is_beam_mu_output = false`
 
 RTDOSE conversion must not treat this output as per-beam `beamMU`.

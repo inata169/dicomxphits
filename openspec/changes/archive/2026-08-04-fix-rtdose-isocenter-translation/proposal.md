@@ -76,4 +76,6 @@ research comparison for one already designated non-patient phantom, reusing
 its existing PHITS and Sumtally results. That limited approval does not permit
 PHITS or Sumtally recalculation, Factor/MU/normalization changes, additional
 external data, or repository inclusion of paths, DICOM, tools, or results.
-Dose-factor work and OpenSpec promotion or archival remain separate decisions.
+Dose-normalization work remained a separate decision and was completed by pull
+request #18. The current completion instruction authorizes OpenSpec promotion
+and archival only after the coordinate acceptance criteria pass.
