@@ -12,6 +12,8 @@ provenance review cycle, see
 For the later Dev Container cross-check of every squash commit from pull
 request #1 through pull request #9, see
 [`dev-container-validation-2026-08-03.md`](dev-container-validation-2026-08-03.md).
+For the v1.0.1 release completion and next-session restart boundary, see the
+[`2026-08-05 development handoff`](development-handoff-2026-08-05.md).
 
 ## Current baseline
 
@@ -25,13 +27,18 @@ request #1 through pull request #9, see
   final coordinate-placement validation
 - Runtime completion pull request:
   [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Latest completed repository update: v1.0.1 release preparation and public
-  GitHub Release
+- Latest completed repository update: v1.0.1 release preparation, public
+  GitHub Release, and durable release closeout
 - Release preparation pull request:
   [#24](https://github.com/inata169/dicomxphits/pull/24)
 - Release merge commit: `7db473b12d570026600c03947690d0f6c1fb60f5`
 - Release CI: pull-request run #181, main push run #182, and tag push run #183
   completed successfully
+- Release closeout pull request:
+  [#25](https://github.com/inata169/dicomxphits/pull/25)
+- Current main baseline: merge commit
+  `902425dc99ba9f57d3cc83690d4f903d9f602eb6`
+- Closeout main push CI run #186 completed successfully
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
@@ -261,7 +268,7 @@ approved work:
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from the completed pull requests through #24.
+  from the completed pull requests through #25.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -273,8 +280,9 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains release merge commit `7db473b12d5` or a later
-   descendant.
+3. Confirm that `main` contains closeout merge commit `902425dc99ba` or a later
+   descendant, and that the `v1.0.1` tag still resolves to release commit
+   `7db473b12d5`.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the
    [workflow stage guide](workflow_stages.md), and verify that their baseline
