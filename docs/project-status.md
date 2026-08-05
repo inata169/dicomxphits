@@ -15,25 +15,38 @@ request #1 through pull request #9, see
 
 ## Current baseline
 
-- Public release target: `v1.0.1`
-- Previously published release: `v1.0.0`
+- Public release: [`v1.0.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.1)
+- Previous public release: `v1.0.0`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Recorded implementation baseline commit: `8489c07180be4fd2916c1b4a619c0eff91268ef8`
+- Release tag and commit: `v1.0.1` at
+  `7db473b12d570026600c03947690d0f6c1fb60f5`
   (2026-08-05)
 - Latest completed runtime work: fail-closed RTDOSE isocenter translation and
   final coordinate-placement validation
 - Runtime completion pull request:
   [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Latest completed repository updates: v1.0.x GUI documentation, bounded
-  v1.0.1 manual evidence, and the proposal-only portable-workspace recovery
-  record
-- Baseline pull request:
-  [#23](https://github.com/inata169/dicomxphits/pull/23)
-- Baseline merge commit: `8489c07180be4fd2916c1b4a619c0eff91268ef8`
+- Latest completed repository update: v1.0.1 release preparation and public
+  GitHub Release
+- Release preparation pull request:
+  [#24](https://github.com/inata169/dicomxphits/pull/24)
+- Release merge commit: `7db473b12d570026600c03947690d0f6c1fb60f5`
+- Release CI: pull-request run #181, main push run #182, and tag push run #183
+  completed successfully
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
 - Status last reviewed: 2026-08-05
+
+The GitHub Release publishes the source distribution and wheel built from the
+`v1.0.1` tag. Their SHA-256 digests are
+`1afbbf75d7d8baaf9914c0263ce15a3073581fc7df0681b83e1ac5eff7e3cc3e`
+for `dicomxphits-1.0.1.tar.gz` and
+`da46087c3d4dc0944fc3561055b4b6fcc312b156bfdb376892bc209b6e2bb55a`
+for `dicomxphits-1.0.1-py3-none-any.whl`. A fresh public download reproduced
+both digests, passed `twine check`, installed into an isolated Python 3.12
+environment with matching package and runtime version `1.0.1`, and returned
+success for `--help` on all eleven console entry points without executing
+external tools. The release is not published to PyPI.
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,
@@ -94,7 +107,7 @@ interpreter range to Python 3.12 and aligned the public documentation and
 OpenSpec project contract. Pull requests #15 and #16 completed the runtime and
 RTDOSE GUI work described above. These later changes do not extend the dated
 Dev Container evidence beyond pull request #9. At current `main`, the
-public-tree audit passes 131 tracked files.
+public-tree audit passes 133 tracked files.
 
 ## Validation baseline
 
@@ -196,6 +209,17 @@ Proposal closeout checks passed five strict OpenSpec validations, source
 compilation, a 131-file public-tree audit, and Git diff/status checks. No
 runtime implementation was included.
 
+Pull request #23 recorded the bounded v1.0.1 external non-patient manual
+evidence without adding paths, DICOM, numerical results, screenshots, result
+files, or generated outputs. Pull request #24 prepared version metadata and
+release documentation and was merged as `7db473b`. Its Codex review reported
+no major issues, GitHub Actions passed on the pull request, main, and tag, and
+the remote feature branch was deleted. Release preparation validation completed
+with 86 focused tests, 589 full public tests and one expected skip, five strict
+OpenSpec validations, successful source compilation, a 133-file public-tree
+audit, successful sdist and wheel builds, `twine check`, isolated wheel
+installation, and all eleven installed console entry-point help checks.
+
 ## Current development plan
 
 The approved `fix-rtdose-isocenter-translation` change is complete and
@@ -213,7 +237,7 @@ present. All workstation paths, DICOM, licensed tools, GPR result files, and
 generated results remained outside Git. This is bounded non-patient research
 evidence, not clinical validation.
 
-For v1.0.1 readiness, an additional explicitly authorized external non-patient
+For the v1.0.1 release evidence, an explicitly authorized external non-patient
 workflow completed CT2PHITS, workspace preparation, PHITS segment execution,
 Sumtally Generate/Run, RTDOSE Prepare/Run, and an external GPR comparison. The
 result is recorded only as a human-reported, screenshot-supported completion;
@@ -237,7 +261,7 @@ approved work:
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from the completed pull requests through #21.
+  from the completed pull requests through #24.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -249,7 +273,7 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains squash merge commit `92260d94377` or a later
+3. Confirm that `main` contains release merge commit `7db473b12d5` or a later
    descendant.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the
