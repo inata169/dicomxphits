@@ -1,4 +1,4 @@
-"""Exact-decimal guard for the centered 20 x 20 cm2 public v1.0.0 aperture."""
+"""Exact-decimal guard for the centered 20 x 20 cm2 public v1.0.x aperture."""
 
 from __future__ import annotations
 
@@ -199,7 +199,7 @@ def require_v1_effective_apertures(
     return {
         "status": "accepted",
         "comparison_semantics": "exact-decimal-no-tolerance-no-rounding",
-        # Public v1.0.0 centered 20 x 20 cm2 support boundary.
+        # Public v1.0.x centered 20 x 20 cm2 support boundary.
         "support_box_mm": {
             "x_min": "-100.000",
             "x_max": "100.000",

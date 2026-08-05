@@ -1,4 +1,5 @@
 include config/dicomxphits.machine.example.json
 include docs/release_acceptance_evidence.json
+include docs/release-notes-v1.0.1.md
 include launchers/run_gui_venv.ps1
 include templates/phits2dicom_rtdose_template.dcm

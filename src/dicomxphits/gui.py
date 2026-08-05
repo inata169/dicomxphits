@@ -78,7 +78,7 @@ PERSISTED_GUI_FIELDS = (
 GUI_HELP_TEXT = """\
 usage: dicomxphits-gui [-h]
 
-Launch the dicomxphits v1.0.0 guided GUI for validated 3D-CRT fixed-field
+Launch the dicomxphits v1.0.x guided GUI for validated 3D-CRT fixed-field
 workflows only. The first stage uses the accepted Windows CT2PHITS frontend.
 IMRT, dynamic MLC delivery, and VMAT are not supported as validated public
 workflows.

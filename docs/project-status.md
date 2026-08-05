@@ -15,19 +15,21 @@ request #1 through pull request #9, see
 
 ## Current baseline
 
-- Public release: `v1.0.0`
+- Public release target: `v1.0.1`
+- Previously published release: `v1.0.0`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Recorded baseline commit: `92260d943771bc38877ace9a20e73e14e8603634`
+- Recorded implementation baseline commit: `8489c07180be4fd2916c1b4a619c0eff91268ef8`
   (2026-08-05)
 - Latest completed runtime work: fail-closed RTDOSE isocenter translation and
   final coordinate-placement validation
 - Runtime completion pull request:
   [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Latest completed repository updates: v1.0.x GUI documentation and the
-  proposal-only portable-workspace recovery record
+- Latest completed repository updates: v1.0.x GUI documentation, bounded
+  v1.0.1 manual evidence, and the proposal-only portable-workspace recovery
+  record
 - Baseline pull request:
-  [#21](https://github.com/inata169/dicomxphits/pull/21)
-- Baseline squash merge commit: `92260d943771bc38877ace9a20e73e14e8603634`
+  [#23](https://github.com/inata169/dicomxphits/pull/23)
+- Baseline merge commit: `8489c07180be4fd2916c1b4a619c0eff91268ef8`
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
