@@ -79,6 +79,7 @@ Full public suite: 589 passed, 1 skipped
 Python compileall and OpenSpec strict validation: passed
 Public-tree audit: 134 tracked files passed
 Git diff check: passed
+```
 
 The human also reported completion of one explicitly authorized external
 non-patient research workflow through the guided stages and an external GPR
