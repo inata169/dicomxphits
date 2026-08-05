@@ -1537,26 +1537,32 @@ def run_rtdose(
         coordinate_correction = None
         coordinate_placement_validation = None
         final_semantic_validation = None
+        postprocessing_error = None
         if returncode == 0 and expected_updated:
-            absolute_labeling = mark_rtdose_absolute(expected_rtdose_output)
-            plan_reference_synchronization = synchronize_plan_rtdose(
-                expected_rtdose_output,
-                plan_evidence=plan_evidence,
-            )
-            coordinate_correction = fix_coordinates(
-                expected_rtdose_output,
-                coordinate_corrected_output,
-                summary_path=coordinate_summary_path(coordinate_corrected_output),
-                expected_placement=current_rtdose_placement,
-            )
-            coordinate_placement_validation = validate_rtdose_placement(
-                coordinate_corrected_output,
-                expected_placement=current_rtdose_placement,
-            )
-            final_semantic_validation = validate_plan_rtdose(
-                coordinate_corrected_output,
-                plan_evidence=plan_evidence,
-            )
+            try:
+                absolute_labeling = mark_rtdose_absolute(expected_rtdose_output)
+                plan_reference_synchronization = synchronize_plan_rtdose(
+                    expected_rtdose_output,
+                    plan_evidence=plan_evidence,
+                )
+                coordinate_correction = fix_coordinates(
+                    expected_rtdose_output,
+                    coordinate_corrected_output,
+                    summary_path=coordinate_summary_path(coordinate_corrected_output),
+                    expected_placement=current_rtdose_placement,
+                )
+                coordinate_placement_validation = validate_rtdose_placement(
+                    coordinate_corrected_output,
+                    expected_placement=current_rtdose_placement,
+                )
+                final_semantic_validation = validate_plan_rtdose(
+                    coordinate_corrected_output,
+                    plan_evidence=plan_evidence,
+                )
+            except Exception as exc:
+                postprocessing_error = (
+                    "RTDOSE post-conversion validation failed: " + str(exc)
+                )
         after = dicom_snapshot(output_dirs)
         new_paths = sorted(set(after) - set(before))
         new_dicoms = [after[path] for path in new_paths]
@@ -1573,6 +1579,7 @@ def run_rtdose(
             "success"
             if returncode == 0
             and expected_updated
+            and postprocessing_error is None
             and coordinate_corrected_exists
             and bool(
                 coordinate_placement_validation
@@ -1638,6 +1645,8 @@ def run_rtdose(
             "plan_reference_synchronization": plan_reference_synchronization,
             "final_semantic_validation": final_semantic_validation,
         }
+        if postprocessing_error is not None:
+            summary["failure_reason"] = postprocessing_error
         write_json(summary_path, summary)
         return summary
     except Exception as exc:

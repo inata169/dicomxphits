@@ -2030,13 +2030,12 @@ def test_run_fails_when_final_plan_reference_is_corrupted(
         corrupting_fix_coordinates,
     )
 
-    with pytest.raises(ValueError, match="wrong RT Plan SOP Instance UID"):
-        run_rtdose(
-            workspace_root=workspace,
-            paths=paths(phits2dicom=str(exe)),
-            command_argv=["run"],
-            runner=lambda cmd, **kwargs: FakeProc(),
-        )
+    summary = run_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        command_argv=["run"],
+        runner=lambda cmd, **kwargs: FakeProc(),
+    )
 
     failure = json.loads(
         (workspace / "analysis" / "rtdose_conversion_execution_summary.json").read_text(
@@ -2045,6 +2044,16 @@ def test_run_fails_when_final_plan_reference_is_corrupted(
     )
     assert failure["stage_status"] == "failed"
     assert failure["phits2dicom_execution_started"] is True
+    assert failure == summary
+    assert failure["returncode"] == 0
+    assert failure["expected_rtdose_output_updated_by_run"] is True
+    assert failure["expected_rtdose_output_after_conversion"]["sha256"]
+    assert failure["coordinate_corrected_rtdose_output_exists"] is True
+    assert failure["coordinate_placement_validation"]["validated"] is True
+    assert failure["final_semantic_validation"] is None
+    assert "wrong RT Plan SOP Instance UID" in failure["failure_reason"]
+    assert Path(failure["stdout_path"]).read_text(encoding="utf-8") == "ok"
+    assert Path(failure["stderr_path"]).read_text(encoding="utf-8") == ""
 
 
 def test_run_fails_when_final_coordinate_placement_is_corrupted(
@@ -2092,16 +2101,12 @@ def test_run_fails_when_final_coordinate_placement_is_corrupted(
         corrupting_fix_coordinates,
     )
 
-    with pytest.raises(
-        ValueError,
-        match="patient-coordinate residual exceeds 1e-6 mm",
-    ):
-        run_rtdose(
-            workspace_root=workspace,
-            paths=paths(phits2dicom=str(exe)),
-            command_argv=["run"],
-            runner=lambda cmd, **kwargs: FakeProc(),
-        )
+    summary = run_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        command_argv=["run"],
+        runner=lambda cmd, **kwargs: FakeProc(),
+    )
 
     failure = json.loads(
         (workspace / "analysis" / "rtdose_conversion_execution_summary.json").read_text(
@@ -2110,6 +2115,17 @@ def test_run_fails_when_final_coordinate_placement_is_corrupted(
     )
     assert failure["stage_status"] == "failed"
     assert failure["phits2dicom_execution_started"] is True
+    assert failure == summary
+    assert failure["returncode"] == 0
+    assert failure["expected_rtdose_output_updated_by_run"] is True
+    assert failure["expected_rtdose_output_after_conversion"]["sha256"]
+    assert failure["coordinate_corrected_rtdose_output_exists"] is True
+    assert failure["coordinate_correction"]
+    assert failure["coordinate_placement_validation"] is None
+    assert failure["final_semantic_validation"] is None
+    assert "patient-coordinate residual exceeds 1e-6 mm" in failure["failure_reason"]
+    assert Path(failure["stdout_path"]).read_text(encoding="utf-8") == "ok"
+    assert Path(failure["stderr_path"]).read_text(encoding="utf-8") == ""
 
 
 def test_relative_comparison_contract_requires_both_operands_relative(tmp_path):
