@@ -40,8 +40,8 @@ Inspection classifies evidence rather than treating all `success` strings as
 current success:
 
 - **Current and verified**: the required artifact exists below the current
-  workspace, its recorded digest matches when digest evidence exists, and its
-  stage-specific provenance remains valid.
+  workspace, every digest required by its evidence class is recorded and
+  matches, and its stage-specific provenance remains valid.
 - **Historical and recoverable**: the summary records a prior success, but a
   current path binding or downstream artifact is missing; verified upstream
   evidence is sufficient to regenerate the affected stage.
@@ -56,10 +56,13 @@ is rejected with a controlled explanation.
 ## Recovery boundary
 
 Verified PHITS segment outputs are expensive immutable inputs for this
-workflow. When the manifest, complete active-output set, and available digest
-evidence validate at their relocated in-workspace paths, recovery may start at
-Sumtally Generate and MUST NOT require PHITS execution merely because the
-workspace root changed.
+workflow. Recovery may start at Sumtally Generate only when the manifest and
+complete active-output set validate at their relocated in-workspace paths and
+a recorded SHA-256 for every active segment output matches its current bytes.
+Missing digest evidence for any active segment output fails closed; it is not
+reconstructed or accepted from path existence alone. Once those gates pass,
+recovery MUST NOT require PHITS execution merely because the workspace root
+changed.
 
 Copied Sumtally and RTDOSE summaries remain historical. Fresh downstream
 execution must keep the existing new-or-byte-changed output requirements. If a

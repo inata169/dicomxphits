@@ -12,15 +12,17 @@
 
 - [ ] 2.1 Add a read-only relocated-workspace inspector that maps only paths
   below the recorded root to the same relative path below the selected root.
-- [ ] 2.2 Revalidate required existence, manifest identity, SHA-256 evidence,
-  and stage provenance without searching outside the selected workspace.
+- [ ] 2.2 Revalidate required existence, manifest identity, stage provenance,
+  and a recorded matching SHA-256 for every active PHITS segment output
+  without searching outside the selected workspace.
 - [ ] 2.3 Record current, historical-recoverable, and invalid evidence states
   with controlled reasons.
 
 ## 3. Safe downstream recovery
 
-- [ ] 3.1 Permit verified relocated PHITS segment outputs to seed a fresh
-  Sumtally Generate stage without rerunning PHITS.
+- [ ] 3.1 Permit relocated PHITS segment outputs to seed a fresh Sumtally
+  Generate stage without rerunning PHITS only when every active output has a
+  recorded matching SHA-256.
 - [ ] 3.2 Move conflicting historical downstream artifacts into a new
   workspace-local recovery-history directory, record their relative paths and
   SHA-256 values, and keep new-or-byte-changed validation authoritative.
@@ -43,7 +45,8 @@
 ## 5. Synthetic validation and documentation
 
 - [ ] 5.1 Add synthetic tests for root relocation, safe relative rebinding,
-  external-path rejection, missing artifacts, and digest mismatch.
+  external-path rejection, missing artifacts, missing active-segment digest
+  evidence, and digest mismatch.
 - [ ] 5.2 Add fake-runner tests proving PHITS is not rerun and stale unchanged
   Sumtally or RTDOSE output is not accepted.
 - [ ] 5.3 Add GUI tests for explicit existing-workspace selection, historical

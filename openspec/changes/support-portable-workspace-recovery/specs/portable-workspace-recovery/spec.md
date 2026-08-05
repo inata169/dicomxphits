@@ -64,11 +64,14 @@ summary alone MUST NOT establish current completion.
 
 The workflow SHALL allow a relocated workspace's PHITS segment outputs to be
 reused without PHITS execution only when the strict manifest, complete active
-segment output set, and available digest provenance validate at the current
-workspace. Recovery SHALL regenerate Sumtally and RTDOSE evidence under the
-current workspace and SHALL retain the existing requirement that an external
-run create a new output or change its SHA-256. It MUST NOT silently delete a
-conflicting historical artifact or accept unchanged bytes as a fresh result.
+segment output set, and a recorded SHA-256 for every active segment output
+validate at the current workspace. Missing SHA-256 evidence for any active
+segment output MUST fail closed and MUST NOT be inferred from file existence,
+path binding, or a successful execution summary. Recovery SHALL regenerate
+Sumtally and RTDOSE evidence under the current workspace and SHALL retain the
+existing requirement that an external run create a new output or change its
+SHA-256. It MUST NOT silently delete a conflicting historical artifact or
+accept unchanged bytes as a fresh result.
 With explicit recovery permission, it SHALL move conflicting downstream
 summaries and artifacts into a new
 `recovery_history/<unique-recovery-id>/` directory below the current workspace,
@@ -79,15 +82,15 @@ required preservation step fails, and MUST NOT move PHITS segment outputs.
 
 #### Scenario: Verified relocated segment outputs
 
-- **WHEN** all active PHITS segment outputs and their binding evidence validate
-  after bounded relocation
+- **WHEN** all active PHITS segment outputs, their binding evidence, and their
+  individually recorded SHA-256 values validate after bounded relocation
 - **THEN** the user may start recovery at Sumtally Generate without rerunning
   PHITS
 
 #### Scenario: Missing or changed segment output
 
-- **WHEN** any active segment output is missing or fails its available digest
-  binding after relocation
+- **WHEN** any active segment output is missing, lacks a recorded SHA-256, or
+  differs from its recorded SHA-256 after relocation
 - **THEN** the workflow rejects downstream recovery before Sumtally execution
 
 #### Scenario: Conflicting historical downstream output
