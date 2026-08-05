@@ -11,10 +11,11 @@ tool distributions, and real-tool outputs must remain outside this repository.
 
 ## Status
 
-Version 1.0.0 includes standalone public adapters for strict 3D-CRT workspace
+Version 1.0.1 includes standalone public adapters for strict 3D-CRT workspace
 preparation, PHITS segment execution, Sumtally generation and execution,
 RTDOSE conversion and coordinate correction, and an optional external
-GPR-comparing handoff.
+GPR-comparing handoff. See the [v1.0.1 release notes](docs/release-notes-v1.0.1.md)
+for the changes since v1.0.0.
 
 ## Supported Environment
 
@@ -74,9 +75,9 @@ The guided workflow keeps each stage explicit and gated:
 6. **Optional GPR** — execute the external comparison or record an explicit
    knowledge-based skip.
 
-## v1.0.0 Workflow
+## v1.0.x Workflow
 
-The v1.0.0 workflow is intentionally narrow:
+The v1.0.x workflow is intentionally narrow:
 
 - strict 3D-CRT RT Plan input
 - strict MU gate before downstream stages
@@ -89,9 +90,9 @@ Each stage must write command metadata, return code when executed, stdout and
 stderr capture paths or content, major input and output paths, and a summary JSON
 path.
 
-## v1.0.0 Supported Scope
+## v1.0.x Supported Scope
 
-For v1.0.0, dicomxphits supports fixed-field 3D-CRT up to the centered
+For v1.0.x, dicomxphits supports fixed-field 3D-CRT up to the centered
 `20 x 20 cm2` effective-aperture boundary for education and research. After
 DICOM Control Point inheritance is resolved, the jaw and MLC common effective
 aperture at every Control Point must remain inside the closed collimator-local
@@ -124,7 +125,7 @@ The tested DICOM CT files identify the following scanner:
 - Manufacturer (`0008,0070`): `GE MEDICAL SYSTEMS`
 - Manufacturer's Model Name (`0008,1090`): `Discovery RT`
 
-These values record the environment actually tested for v1.0.0. They do not
+These values record the environment originally documented for v1.0.0. They do not
 claim validation or guaranteed compatibility for other TPS versions, treatment
 machines, or CT scanners. The runtime does not reject an input solely because
 these identifying DICOM values differ.
@@ -132,7 +133,7 @@ these identifying DICOM values differ.
 Elekta's public
 [Infinity brochure](https://www.elekta.com/products/radiation-therapy/infinity/assets/Infinity-Brochure.pdf)
 describes Agility leaves across a full `40 x 40 cm2` device field. That is a
-cited hardware specification only. It is outside the dicomxphits v1.0.0
+cited hardware specification only. It is outside the dicomxphits v1.0.x
 software scope and is not supported behavior.
 
 Technical references to Elekta, Agility, Monaco, IAEA, PHITS, or other product
@@ -380,7 +381,7 @@ explicitly confirmed non-patient phantom; they are not Dev Container commands.
 
 ### Prepare Workspace Adapter
 
-The workspace adapter prepares the v1.0.0 starting workspace:
+The workspace adapter prepares the v1.0.x starting workspace:
 
 ```powershell
 dicomxphits-prepare-3dcrt-workspace `

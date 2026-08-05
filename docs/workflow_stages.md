@@ -1,6 +1,6 @@
 ﻿# Workflow Stages
 
-The v1.0.0 workflow is staged. A later stage must not run
+The v1.0.x workflow is staged. A later stage must not run
 until the previous stage gate has passed.
 
 ## Stages

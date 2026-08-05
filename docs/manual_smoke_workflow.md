@@ -1,6 +1,6 @@
 ﻿# Manual Smoke Workflow
 
-This guide describes the v1.0.0 smoke workflow for
+This guide describes the v1.0.x smoke workflow for
 `dicomxphits`. It is documentation for local validation and review. It does not
 add a GUI, runtime command, or CI requirement for real PHITS tools.
 
