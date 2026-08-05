@@ -742,17 +742,28 @@ def run_sumtally(
             or output_after["sha256"] != output_before["sha256"]
         )
         sumtally_geometry_evidence = None
+        geometry_validation_error = None
         if result.returncode == 0 and output_updated and output_non_empty:
-            sumtally_geometry_evidence = sumtally_output_geometry_evidence(
-                expected_output,
-                expected_geometry=current_tally_geometry_binding["mesh_geometry"],
-            )
+            try:
+                sumtally_geometry_evidence = sumtally_output_geometry_evidence(
+                    expected_output,
+                    expected_geometry=current_tally_geometry_binding["mesh_geometry"],
+                )
+            except Exception as exc:
+                geometry_validation_error = (
+                    "Sumtally output geometry validation failed: " + str(exc)
+                )
         summary = {
             "schema_version": "dicomxphits_public_sumtally_execution_v1",
             "stage": "run_sumtally",
             "stage_status": (
                 "success"
-                if result.returncode == 0 and output_updated and output_non_empty
+                if (
+                    result.returncode == 0
+                    and output_updated
+                    and output_non_empty
+                    and geometry_validation_error is None
+                )
                 else "failed"
             ),
             "workspace_root": str(workspace_root),
@@ -789,6 +800,8 @@ def run_sumtally(
             "tally_geometry_binding": current_tally_geometry_binding,
             "sumtally_output_geometry_evidence": sumtally_geometry_evidence,
         }
+        if geometry_validation_error is not None:
+            summary["failure_reason"] = geometry_validation_error
         write_json(execution_summary_path, summary)
         return summary
     except Exception as exc:

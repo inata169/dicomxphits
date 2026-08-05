@@ -829,7 +829,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     assert summary["returncode"] == 0
     assert summary["phits_execution_started"] is True
     assert summary["expected_sumtally_output_exists"] is True
-    assert summary["expected_sumtally_output_size"] == len(tally_output_text())
+    assert summary["expected_sumtally_output_size"] == expected_output.stat().st_size
     assert summary["expected_sumtally_output_non_empty"] is True
     assert summary["expected_sumtally_output_updated_by_run"] is True
     assert len(summary["expected_sumtally_output_sha256"]) == 64
@@ -854,6 +854,47 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         summary["sumtally_normalization_evidence"]
         == generation["sumtally_normalization_evidence"]
     )
+
+
+def test_run_sumtally_preserves_execution_evidence_when_geometry_is_invalid(
+    tmp_path,
+):
+    workspace, _ = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+
+    def fake_runner(cmd, **kwargs):
+        expected_output.write_text("not a tally mesh\n", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="sum completed",
+            stderr="geometry warning",
+        )
+
+    summary = run_sumtally(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=None),
+        sum_input=Path(generation["outputs"]["sum_input"]),
+        command_argv=["run"],
+        runner=fake_runner,
+    )
+
+    assert summary["stage_status"] == "failed"
+    assert summary["returncode"] == 0
+    assert summary["phits_execution_started"] is True
+    assert summary["expected_sumtally_output_exists"] is True
+    assert summary["expected_sumtally_output_updated_by_run"] is True
+    assert summary["expected_sumtally_output_after_run"]["sha256"]
+    assert summary["expected_sumtally_output_sha256"]
+    assert summary["sumtally_output_geometry_evidence"] is None
+    assert "geometry validation failed" in summary["failure_reason"]
+    assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "sum completed"
+    assert Path(summary["stderr_path"]).read_text(encoding="utf-8") == "geometry warning"
 
 
 def test_run_sumtally_rejects_legacy_normalization_before_execution(tmp_path):
