@@ -17,13 +17,17 @@ request #1 through pull request #9, see
 
 - Public release: `v1.0.0`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Current `main` HEAD: `8d690c8640d882a017a5e1533e1acada4183e1c9`
+- Recorded baseline commit: `92260d943771bc38877ace9a20e73e14e8603634`
   (2026-08-05)
-- Latest completed work: fail-closed RTDOSE isocenter translation and final
-  coordinate-placement validation
-- Completion pull request:
+- Latest completed runtime work: fail-closed RTDOSE isocenter translation and
+  final coordinate-placement validation
+- Runtime completion pull request:
   [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Squash merge commit: `8d690c8640d882a017a5e1533e1acada4183e1c9`
+- Latest completed repository updates: v1.0.x GUI documentation and the
+  proposal-only portable-workspace recovery record
+- Baseline pull request:
+  [#21](https://github.com/inata169/dicomxphits/pull/21)
+- Baseline squash merge commit: `92260d943771bc38877ace9a20e73e14e8603634`
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
@@ -65,6 +69,12 @@ The underlying automated CT2PHITS frontend remains complete under pull request
 [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md) for its detailed
 completion state and restart procedure.
 
+Pull request [#20](https://github.com/inata169/dicomxphits/pull/20) adds the
+[v1.0.x GUI user guide](gui-user-guide.md) and aligns README guidance with the
+implemented workflow stages and the bounded companion-repository references.
+It does not extend the clinical, physics, DICOM, dose, MU, normalization, or
+supported-workflow scope.
+
 The earlier LLM development-loop foundation remains complete under pull
 request [#1](https://github.com/inata169/dicomxphits/pull/1), squash commit
 `7d2f511a3136da6d35b857b42c8e048e9f1f5c84`.
@@ -82,7 +92,7 @@ interpreter range to Python 3.12 and aligned the public documentation and
 OpenSpec project contract. Pull requests #15 and #16 completed the runtime and
 RTDOSE GUI work described above. These later changes do not extend the dated
 Dev Container evidence beyond pull request #9. At current `main`, the
-public-tree audit passes 124 tracked files.
+public-tree audit passes 131 tracked files.
 
 ## Validation baseline
 
@@ -96,15 +106,17 @@ with:
 - passing Git diff and status checks; and
 - a final Codex review of head commit `1c6d6ea78c` reporting no major issues.
 
-OpenSpec CLI `1.6.0` strict validation passed all three current specifications
-with zero failures. The accepted CT2PHITS frontend, guided GUI, and RTDOSE
-changes are archived, and the repository retains zero active change
-directories. Each archived change was also copied individually to an isolated
-temporary OpenSpec root, validated there as an active change in strict mode,
-and removed after all three validations passed.
+At the pull request #8 completion baseline, OpenSpec CLI `1.6.0` strict
+validation passed all three then-current specifications with zero failures.
+Each archived change at that baseline was also copied individually to an
+isolated temporary OpenSpec root, validated there as an active change in strict
+mode, and removed after validation passed.
 
-The repository contains four current specifications and six archived changes;
-new approved work is represented by active change proposals. The PHITS
+At current `main`, the repository contains four current specifications, eight
+archived changes, and one active change. Strict validation passes all four
+current specifications plus the active `support-portable-workspace-recovery`
+change, for five passed items and zero failures. The active change remains at
+1/21 tasks and is not approved for runtime implementation. The PHITS
 runtime-control delta from pull request #15 was promoted into the current
 specification and archived
 as part of that task. The guided RTDOSE state and explicit reprepare recovery
@@ -167,6 +179,21 @@ focused tests passed, 588 full public tests passed and one expected skip,
 successful source compilation, a 124-file public-tree audit, and strict
 OpenSpec validation.
 
+Pull request #20 was squash-merged as `45bd940`. Its final Codex review reported
+no major issues, GitHub Actions passed, and its remote feature branch was
+deleted. Documentation closeout validation completed with 91 focused tests
+passed, 588 full public tests passed and one expected skip, successful source
+compilation, a 125-file public-tree audit, and four strict OpenSpec validations.
+
+Pull request #21 was squash-merged as `92260d9`. Its first Codex review found a
+digest-binding ambiguity in the proposal; commit `0e228a0` corrected it by
+requiring a recorded matching SHA-256 for every active PHITS segment output
+before Sumtally recovery. The final Codex review reported no major issues,
+GitHub Actions run #172 passed, and the remote feature branch was deleted.
+Proposal closeout checks passed five strict OpenSpec validations, source
+compilation, a 131-file public-tree audit, and Git diff/status checks. No
+runtime implementation was included.
+
 ## Current development plan
 
 The approved `fix-rtdose-isocenter-translation` change is complete and
@@ -184,7 +211,9 @@ present. All workstation paths, DICOM, licensed tools, GPR result files, and
 generated results remained outside Git. This is bounded non-patient research
 evidence, not clinical validation.
 
-The separate `support-portable-workspace-recovery` work remains
+The separate `support-portable-workspace-recovery` work was recorded through
+pull request #21 and remains active at 1/21 tasks. Task 1.1, explicit human
+approval before runtime work, is unchecked. The change therefore remains
 proposal-only, unapproved for implementation, and unimplemented. No portable
 workspace recovery implementation is part of the current baseline.
 
@@ -199,7 +228,7 @@ approved work:
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from the completed pull requests through #19.
+  from the completed pull requests through #21.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -211,7 +240,7 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains squash merge commit `8d690c8640d` or a later
+3. Confirm that `main` contains squash merge commit `92260d94377` or a later
    descendant.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the
