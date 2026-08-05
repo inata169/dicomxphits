@@ -1,7 +1,8 @@
 {
   "schema_version": "dicomxphits_v1_release_acceptance_evidence_v1",
+  "target_release": "v1.0.1",
   "scope": "fixed_field_3dcrt_education_and_research_only",
-  "physical_rerun_performed": false,
+  "prior_release_physical_rerun_performed": false,
   "prior_physical_evidence": {
     "status": "approved_knowledge_based_reuse",
     "approved_physical_evidence_manifest_sha256": "7f020ab5e0fd719b9fef7cab906d88c40b0a947f0fa5a06c865ece6e6a85a1a0",
@@ -33,16 +34,38 @@
     ]
   },
   "gpr_regression": {
-    "status": "reusable_without_rerun",
-    "approved_pass_rate_percent": 98.079471112706,
+    "status": "historical_v1.0.0_evidence_only",
+    "historical_release": "v1.0.0",
+    "applicable_to_target_release": false,
+    "historical_approved_pass_rate_percent": 98.079471112706,
     "criterion": "global 3 percent / 3 mm",
     "dose_threshold_percent": 10,
     "evaluation_scale_factor_allowed": false,
-    "coordinate_corrected_rtdose_sha256": "aa5c80e9b61917bb9afa899004e0c4d56790db61dbde1b738adfbf748de5b129",
+    "historical_coordinate_corrected_rtdose_sha256": "aa5c80e9b61917bb9afa899004e0c4d56790db61dbde1b738adfbf748de5b129",
     "current_public_runtime_evidence": [
       "tests/test_fix_coordinates.py",
       "tests/test_run_gpr_compare.py"
     ]
+  },
+  "target_release_external_manual_check": {
+    "status": "human_reported_complete_untracked",
+    "verification_basis": "human_authorized_non_patient_report_and_screenshots",
+    "workflow_stages_completed": [
+      "ct2phits",
+      "workspace_prepare",
+      "phits_segment_execution",
+      "sumtally_generate",
+      "sumtally_run",
+      "rtdose_prepare",
+      "rtdose_run",
+      "external_gpr_comparison"
+    ],
+    "agent_result_file_inspected": false,
+    "numerical_result_recorded": false,
+    "result_file_recorded": false,
+    "absolute_path_recorded": false,
+    "dicom_recorded": false,
+    "claim_boundary": "One bounded external non-patient research workflow; no clinical or general dose-accuracy claim."
   },
   "beam6_classification": {
     "classification_basis": "RT Plan delivery structure, not BeamNumber",
