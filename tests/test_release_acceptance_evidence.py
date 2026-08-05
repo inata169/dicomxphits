@@ -43,16 +43,28 @@ def fixed_state(*, cmw: float) -> dict:
 def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
     evidence = load_evidence()
 
-    assert evidence["physical_rerun_performed"] is False
+    assert evidence["prior_release_physical_rerun_performed"] is False
     assert evidence["prior_physical_evidence"]["content_mismatch_count"] == 0
     assert evidence["water_regression"]["status"] == "knowledge_based_skip"
     assert evidence["water_regression"]["report_available_in_public_candidate"] is False
     assert evidence["water_regression"]["new_result_claimed"] is False
     assert evidence["voxel_regression"]["status"] == "approved_knowledge_based_reuse"
     assert evidence["multi_beam_regression"]["status"] == "approved_knowledge_based_reuse"
-    assert evidence["gpr_regression"]["status"] == "reusable_without_rerun"
-    assert evidence["gpr_regression"]["approved_pass_rate_percent"] == 98.079471112706
-    assert evidence["gpr_regression"]["evaluation_scale_factor_allowed"] is False
+    assert evidence["target_release"] == "v1.0.1"
+    gpr = evidence["gpr_regression"]
+    assert gpr["status"] == "historical_v1.0.0_evidence_only"
+    assert gpr["historical_release"] == "v1.0.0"
+    assert gpr["applicable_to_target_release"] is False
+    assert gpr["evaluation_scale_factor_allowed"] is False
+
+    manual = evidence["target_release_external_manual_check"]
+    assert manual["status"] == "human_reported_complete_untracked"
+    assert manual["agent_result_file_inspected"] is False
+    assert manual["numerical_result_recorded"] is False
+    assert manual["result_file_recorded"] is False
+    assert manual["absolute_path_recorded"] is False
+    assert manual["dicom_recorded"] is False
+    assert "external_gpr_comparison" in manual["workflow_stages_completed"]
 
 
 def test_beam6_controls_map_approved_evidence_to_current_public_classifier() -> None:
@@ -101,3 +113,4 @@ def test_acceptance_evidence_contains_no_private_absolute_paths_or_uids() -> Non
 
     assert "DICOM/" not in text
     assert "1.2.840." not in text
+    assert "C:\\" not in text

@@ -211,6 +211,15 @@ present. All workstation paths, DICOM, licensed tools, GPR result files, and
 generated results remained outside Git. This is bounded non-patient research
 evidence, not clinical validation.
 
+For v1.0.1 readiness, an additional explicitly authorized external non-patient
+workflow completed CT2PHITS, workspace preparation, PHITS segment execution,
+Sumtally Generate/Run, RTDOSE Prepare/Run, and an external GPR comparison. The
+result is recorded only as a human-reported, screenshot-supported completion;
+the agent did not inspect the external result file. Exact paths, DICOM, numeric
+results, screenshots, GPR result files, and generated outputs remain outside
+Git. This is one bounded research workflow, not clinical validation or a
+general dose-accuracy claim.
+
 The separate `support-portable-workspace-recovery` work was recorded through
 pull request #21 and remains active at 1/21 tasks. Task 1.1, explicit human
 approval before runtime work, is unchecked. The change therefore remains
@@ -222,8 +231,6 @@ workspace recovery implementation is part of the current baseline.
 The following facts may inform a future human decision, but they are not
 approved work:
 
-- an optional external GPR comparison remains outside ordinary public
-  development and requires an explicit, exact human request;
 - any change to the public fixed-field 3D-CRT scope, physics, geometry, dose,
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
