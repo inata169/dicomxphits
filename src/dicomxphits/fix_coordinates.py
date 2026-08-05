@@ -10,6 +10,9 @@ import numpy as np
 import pydicom
 from pydicom.dataset import Dataset
 
+from dicomxphits.rtdose_geometry import validate_rtdose_placement
+from dicomxphits.sumtally_inputs import file_sha256
+
 
 SCHEMA_VERSION = "dicomxphits_public_rtdose_coordinate_correction_v1"
 AXIS_MAPPING = "phits2dicom_frames_rows_columns_to_dicom_rows_frames_columns_v1"
@@ -124,15 +127,47 @@ def _geometry_record(
     }
 
 
+def _placement_vector(
+    placement: dict[str, Any],
+    key: str,
+    length: int,
+) -> np.ndarray:
+    value = placement.get(key)
+    try:
+        result = np.asarray([float(item) for item in value], dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"expected placement {key} must be numeric") from exc
+    if result.shape != (length,) or not np.all(np.isfinite(result)):
+        raise ValueError(
+            f"expected placement {key} must contain {length} finite values"
+        )
+    return result
+
+
+def _placement_shape(placement: dict[str, Any]) -> tuple[int, int, int]:
+    value = placement.get("output_shape_frames_rows_columns")
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise ValueError("expected placement is missing output dimensions")
+    try:
+        shape = tuple(int(item) for item in value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("expected placement dimensions must be integers") from exc
+    if any(item <= 0 for item in shape):
+        raise ValueError("expected placement dimensions must be positive")
+    return shape  # type: ignore[return-value]
+
+
 def fix_coordinates(
     input_path: Path,
     output_path: Path,
     *,
     summary_path: Path | None = None,
+    expected_placement: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Place PHITS2DICOM dose voxels on the supported DICOM LPS grid."""
 
     dataset = pydicom.dcmread(str(input_path))
+    input_sha256 = file_sha256(input_path)
     if str(getattr(dataset, "Modality", "")).upper() != "RTDOSE":
         raise ValueError("Coordinate correction requires Modality RTDOSE")
     try:
@@ -170,7 +205,10 @@ def fix_coordinates(
     )
     corrected = np.ascontiguousarray(source.transpose(1, 0, 2))
     corrected_frames, corrected_rows, corrected_columns = corrected.shape
-    corrected_pixel_spacing = (source_frame_spacing, source_column_spacing)
+    corrected_pixel_spacing = np.asarray(
+        (source_frame_spacing, source_column_spacing),
+        dtype=float,
+    )
     corrected_offsets = np.arange(corrected_frames, dtype=float) * source_row_spacing
     corrected_position = (
         source_center
@@ -181,6 +219,59 @@ def fix_coordinates(
         - np.cross(EXPECTED_AXIAL_IOP[:3], EXPECTED_AXIAL_IOP[3:])
         * ((corrected_offsets[0] + corrected_offsets[-1]) / 2.0)
     )
+    output_center = source_center
+    center_mode = "preserve_source_physical_volume_center"
+
+    if expected_placement is not None:
+        expected_shape = _placement_shape(expected_placement)
+        if corrected.shape != expected_shape:
+            raise ValueError(
+                "PHITS2DICOM voxel dimensions do not match bound tally geometry: "
+                f"{corrected.shape} != {expected_shape}"
+            )
+        expected_orientation = _placement_vector(
+            expected_placement,
+            "image_orientation_patient",
+            6,
+        )
+        expected_pixel_spacing = _placement_vector(
+            expected_placement,
+            "pixel_spacing_mm",
+            2,
+        )
+        expected_offsets = _placement_vector(
+            expected_placement,
+            "grid_frame_offset_vector_mm",
+            corrected_frames,
+        )
+        expected_position = _placement_vector(
+            expected_placement,
+            "image_position_patient_mm",
+            3,
+        )
+        output_center = _placement_vector(
+            expected_placement,
+            "output_volume_center_dicom_mm",
+            3,
+        )
+        for label, actual, expected in (
+            ("ImageOrientationPatient", EXPECTED_AXIAL_IOP, expected_orientation),
+            ("PixelSpacing", corrected_pixel_spacing, expected_pixel_spacing),
+            ("GridFrameOffsetVector", corrected_offsets, expected_offsets),
+        ):
+            if not np.allclose(
+                actual,
+                expected,
+                rtol=0.0,
+                atol=GEOMETRY_TOLERANCE,
+            ):
+                raise ValueError(
+                    f"PHITS2DICOM {label} does not match bound tally geometry"
+                )
+        corrected_pixel_spacing = expected_pixel_spacing
+        corrected_offsets = expected_offsets
+        corrected_position = expected_position
+        center_mode = str(expected_placement.get("mode") or "plan_and_tally_affine")
 
     dataset.PixelData = corrected.tobytes()
     dataset.NumberOfFrames = corrected_frames
@@ -205,8 +296,19 @@ def fix_coordinates(
         "schema_version": SCHEMA_VERSION,
         "axis_mapping": AXIS_MAPPING,
         "input_path": str(input_path),
+        "input_sha256": input_sha256,
         "output_path": str(output_path),
-        "center_mode": "preserve_source_physical_volume_center",
+        "center_mode": center_mode,
+        "expected_placement": expected_placement,
+        "applied_translation_dicom_mm": (
+            np.asarray(output_center, dtype=float)
+            - np.asarray(source_center, dtype=float)
+        ).tolist(),
+        "target_override_translation_dicom_mm": (
+            expected_placement.get("applied_translation_dicom_mm")
+            if expected_placement is not None
+            else [0.0, 0.0, 0.0]
+        ),
         "source_geometry": _geometry_record(
             array=source,
             pixel_spacing=spacing,
@@ -222,7 +324,7 @@ def fix_coordinates(
             frame_offsets=corrected_offsets,
             image_position=corrected_position,
             image_orientation=EXPECTED_AXIAL_IOP,
-            volume_center=source_center,
+            volume_center=output_center,
             frame_offset_interpretation="relative_to_image_position_patient",
         ),
         "invariants": {
@@ -236,6 +338,16 @@ def fix_coordinates(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.save_as(str(output_path))
+    placement_validation = (
+        validate_rtdose_placement(
+            output_path,
+            expected_placement=expected_placement,
+        )
+        if expected_placement is not None
+        else None
+    )
+    summary["placement_validation"] = placement_validation
+    summary["output_sha256"] = file_sha256(output_path)
     if summary_path is not None:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(

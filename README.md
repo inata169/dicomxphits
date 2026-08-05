@@ -293,7 +293,12 @@ validated handoff can still be entered from the advanced workspace controls.
 RTDOSE remains a two-step action. After **Prepare RTDOSE** succeeds, the GUI
 shows **Prepared**, disables the prepare action, and makes **Run RTDOSE** the
 next available action. Only **Run RTDOSE** invokes phits2dicom and creates the
-raw and coordinate-corrected DICOM outputs. A successful prepare summary must
+raw and coordinate-corrected DICOM outputs. **Completed** requires a successful
+independent final coordinate-placement validation. Legacy Prepare/Run success
+summaries without placement proof are not accepted: the GUI returns to
+**Not run**, and explicit Prepare/Run clicks may replace only those legacy
+successful summaries. Failed summaries and current evidence keep the normal
+overwrite guards. A successful prepare summary must
 be reused rather than prepared again. If an upstream Sumtally rerun invalidates
 that preparation, explicitly select **Allow overwrite of downstream stage
 summaries** to re-enable **Prepare RTDOSE**; the RTDOSE adapter still validates
@@ -484,9 +489,23 @@ complete dependency set and every digest before PHITS launch. RTDOSE Prepare
 requires the Generate and Run evidence to match. Sumtally Run also requires the
 expected dose output to be newly created or byte-changed by that invocation,
 records its SHA-256, and
-RTDOSE Prepare verifies that digest before applying its documented
-ImagePositionPatient title patch. RTDOSE Run then verifies the prepared dose
-digest. For a workspace with stale or factor-one weighted-average evidence, select
+RTDOSE Prepare verifies that digest before copying the dose and companion
+phits.out into rtdose/DATfiles. The documented ImagePositionPatient title patch
+is applied only to those private copies; Prepare records before/after source
+hashes and fails if either upstream file changes. RTDOSE Run verifies both the
+unchanged upstream evidence and the prepared-copy digests.
+
+An older workspace changed by the historical in-place IPP title patch remains
+reusable only when restoring the hash-bound segment T-Deposit title, including
+the historical LF/CRLF normalization, exactly reproduces the Sumtally Run
+SHA-256. Recovery bytes are used only for the private converter copy. Any
+additional or ambiguous difference fails closed. An older successful handoff
+without explicit mesh fields otherwise remains reusable when its segment
+outputs and accepted Sumtally output match their recorded SHA-256 values and
+contain one consistent mesh header. If reconstruction cannot be proven, rerun
+Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and Run.
+Existing segment PHITS outputs remain reusable without PHITS transport.
+For a workspace with stale or factor-one weighted-average evidence, select
 **Allow overwrite of downstream stage summaries**, then rerun **Sumtally
 Generate**, **Sumtally Run**, **Prepare RTDOSE**, and **Run RTDOSE**. Existing
 digest-bound segment PHITS outputs remain reusable; PHITS transport does not
@@ -497,7 +516,7 @@ The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
 slash-normalized paths and records its SHA-256 during RTDOSE Prepare. RTDOSE Run
 rejects the file if it changed before converter launch. Prepare also records
 the SHA-256 of every file named by that input: the workspace template, CT
-reference, prepared Sumtally dose, and companion `phits.out`. Run revalidates
+reference, staged Sumtally dose copy, and staged companion `phits.out`. Run revalidates
 all four files immediately before conversion. The converter output must also
 be new or have a changed SHA-256; a timestamp-only change fails before plan
 reference synchronization. For PHITS `isumtally = 2`, `X = F * sum((r_j / sum(r)) * X_j)`. The
@@ -515,11 +534,14 @@ RT Plan, then creates the accepted `.fixed.dcm` output next to the Sumtally
 `<workspace>/sumtally/deposit-target-3D_sum_all_active_segments_totalfield.fixed.dcm`.
 The execution summary records the exact path in
 `coordinate_corrected_rtdose_output`. This final output maps the supported
-PHITS2DICOM `[frames, rows, columns]` voxel
-layout to the DICOM patient grid, updates spacing and position consistently,
-and preserves stored dose values, `DoseGridScaling`, and the physical volume
-center. The run fails instead of accepting an output whose PLAN reference is
-missing or stale. Unsupported or ambiguous input geometry also fails closed.
+PHITS tally `(y, z, reversed x)` bin-centre layout to the DICOM patient grid
+through the frozen-plan isocenter and `I + 10 * (-x, z, y)` millimetre
+mapping. The converter CT slice position is compatibility metadata, not final
+placement evidence. Stored dose values and `DoseGridScaling` are preserved.
+The final DICOM is reopened and its first, centre, edge, and final voxel
+positions must match the bound tally geometry with zero relative tolerance and
+`1e-6 mm` absolute component tolerance. The run fails instead of accepting an
+output whose coordinate placement, PLAN reference, or mesh evidence is missing,
 
 This output is absolute dose only for the defined public education and research
 reference model. It does not claim clinical commissioning, universal machine

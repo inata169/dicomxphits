@@ -427,15 +427,27 @@ def validate_stage(
         and summary_path.exists()
         and not config.allow_overwrite
     ):
-        if spec.key == "prepare_rtdose" and summary_succeeded(
-            read_summary(summary_path)
+        existing_summary = read_summary(summary_path)
+        if spec.key == "prepare_rtdose":
+            if rtdose_preparation_succeeded(existing_summary):
+                state = rtdose_stage_state(workspace)
+                if state == RTDOSE_COMPLETED:
+                    raise GuiValidationError("RTDOSE is already completed.")
+                if state == RTDOSE_PREPARED:
+                    raise GuiValidationError(
+                        "RTDOSE is already prepared. Click Run RTDOSE to create the output."
+                    )
+            if summary_succeeded(existing_summary):
+                raise GuiValidationError(
+                    "RTDOSE Prepare summary is stale; select Allow overwrite of "
+                    "downstream stage summaries to prepare current evidence."
+                )
+        if (
+            spec.key == "run_rtdose"
+            and summary_succeeded(existing_summary)
+            and not rtdose_execution_succeeded(existing_summary)
         ):
-            state = rtdose_stage_state(workspace)
-            if state == RTDOSE_COMPLETED:
-                raise GuiValidationError("RTDOSE is already completed.")
-            raise GuiValidationError(
-                "RTDOSE is already prepared. Click Run RTDOSE to create the output."
-            )
+            return workspace
         raise GuiValidationError(f"stage output already exists: {summary_path}")
     return workspace
 
@@ -566,6 +578,31 @@ def summary_succeeded(summary: Mapping[str, object] | None) -> bool:
     return False
 
 
+def rtdose_execution_succeeded(
+    summary: Mapping[str, object] | None,
+) -> bool:
+    coordinate_validation = (
+        summary.get("coordinate_placement_validation")
+        if isinstance(summary, Mapping)
+        else None
+    )
+    return bool(
+        summary_succeeded(summary)
+        and isinstance(coordinate_validation, Mapping)
+        and coordinate_validation.get("validated") is True
+    )
+
+
+def rtdose_preparation_succeeded(
+    summary: Mapping[str, object] | None,
+) -> bool:
+    return bool(
+        summary_succeeded(summary)
+        and isinstance(summary, Mapping)
+        and isinstance(summary.get("rtdose_placement"), Mapping)
+    )
+
+
 def _current_sumtally_binding(
     workspace_root: Path,
 ) -> dict[str, object] | None:
@@ -672,7 +709,7 @@ def rtdose_stage_state(workspace_root: Path) -> str:
         workspace_root / stage_by_key("prepare_rtdose").summary_relative_path
     )
     preparation = read_summary(prepare_path)
-    if not summary_succeeded(preparation):
+    if not rtdose_preparation_succeeded(preparation):
         return RTDOSE_NOT_PREPARED
     assert isinstance(preparation, Mapping)
     if not _prepare_matches_current_sumtally(workspace_root, preparation):
@@ -682,7 +719,7 @@ def rtdose_stage_state(workspace_root: Path) -> str:
         workspace_root / stage_by_key("run_rtdose").summary_relative_path
     )
     if (
-        summary_succeeded(execution)
+        rtdose_execution_succeeded(execution)
         and isinstance(execution, Mapping)
         and _execution_matches_prepare(prepare_path, execution)
     ):

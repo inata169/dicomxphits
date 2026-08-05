@@ -17,26 +17,27 @@ request #1 through pull request #9, see
 
 - Public release: `v1.0.0`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Current `main` HEAD: `e1d9943c276db181dedacc70ed13669ed388e5fa`
-  (2026-08-03)
-- Latest completed work: Windows PHITS runtime controls and guided RTDOSE
-  execution after preparation
-- Completion pull requests:
-  [#15](https://github.com/inata169/dicomxphits/pull/15) and
-  [#16](https://github.com/inata169/dicomxphits/pull/16)
-- Squash merge commits: `ac18e03db4d3ecd3771faf93f1e936d7aa408ef1` and
-  `e1d9943c276db181dedacc70ed13669ed388e5fa`
+- Current `main` HEAD: `6112fce3e3d6d1700bb171558bf601ca5b0b8234`
+  (2026-08-04)
+- Latest completed work: active-treatment-MU Sumtally normalization and
+  fail-closed downstream digest binding
+- Completion pull request:
+  [#18](https://github.com/inata169/dicomxphits/pull/18)
+- Squash merge commit: `6112fce3e3d6d1700bb171558bf601ca5b0b8234`
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
-- Status last reviewed: 2026-08-03
+- Status last reviewed: 2026-08-04
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,
 generated Sumtally inputs and dependencies, produced dose output, and every
 file consumed by `phits2dicom`. Sumtally and RTDOSE conversion now require a
 new output or changed SHA-256; timestamp-only changes to stale output fail
-closed. The accepted contract is in
+closed. Pull request #18 additionally sets `sumfactor` to the active
+treatment-segment MU sum, excludes validated skipped non-treatment beams from
+treatment dose, keeps phits2dicom factor `1.0`, and binds GUI state to the
+current Sumtally-to-Prepare-to-Run digest chain. The accepted contract is in
 [`openspec/specs/rtdose-dicom-semantics/spec.md`](../openspec/specs/rtdose-dicom-semantics/spec.md).
 
 The guided CT2PHITS GUI integration is complete. It made the accepted frontend
@@ -102,9 +103,10 @@ directories. Each archived change was also copied individually to an isolated
 temporary OpenSpec root, validated there as an active change in strict mode,
 and removed after all three validations passed.
 
-The repository now contains four current specifications, six archived
-changes, and zero active change directories. The PHITS runtime-control delta
-from pull request #15 was promoted into the current specification and archived
+The repository contains four current specifications and six archived changes;
+new approved work is represented by active change proposals. The PHITS
+runtime-control delta from pull request #15 was promoted into the current
+specification and archived
 as part of that task. The guided RTDOSE state and explicit reprepare recovery
 from pull request #17 are also recorded in the current guided GUI specification
 and archived. The previously deferred CT2PHITS workplace Dev Container task is
@@ -154,22 +156,54 @@ pull request #17 records and corrects both findings. These checks use
 synthetic/mock fixtures and do not extend the real-tool or clinical validation
 boundary described above.
 
+Pull request #18 was squash-merged as `6112fce`; its final Codex review reported
+no major issues, GitHub Actions passed, and the public suite completed with 572
+tests passed and one expected skip. Its remote feature branch was deleted.
+
+The coordinate feature integration and bounded pull-request review correction
+complete with 194 focused tests passed, 588 full public tests passed and one
+expected skip, successful source compilation, a 124-file public-tree audit,
+and strict OpenSpec validation.
+
 ## Current development plan
 
-The next approved goal is a human-operated Windows GUI diagnostic session using
-the two designated external test workspaces. Confirm again that the selected
-inputs are non-patient phantom data before any real-tool execution. Exercise
-the guided stages, record reproducible steps, timestamps, relevant GUI log
-messages, expected behavior, and actual behavior, and identify bugs or usability
-failures. Keep the absolute workstation paths, DICOM, licensed-tool files, and
-generated results outside the repository.
+The Windows GUI diagnostic completed the designated non-patient phantom
+workflow through RTDOSE, but external research comparison showed a gross
+three-dimensional translation and zero pass rate. Read-only diagnosis found
+that the final coordinate correction preserved a volume centre inherited from
+the converter CT slice position instead of deriving placement from the frozen
+RT Plan isocenter and PHITS tally mesh. Dose/MU normalization remained a separate observation and was corrected by
+pull request #18 without changing the coordinate contract.
 
-This goal authorizes testing and diagnosis, not an unspecified implementation
-branch. Each confirmed defect must be checked against the documented behavior
-and safety boundary before deciding whether it is a bug fix or requires an
-OpenSpec change and separate human approval. An LLM must not turn optional
-improvements or unconfirmed observations into new Issues, branches, pull
-requests, automations, or other work items on its own.
+The approved `fix-rtdose-isocenter-translation` change implements the exact
+bin-centre mapping `I + 10 * (-x, z, y)`, binds the mesh and frozen-plan
+isocenter, and requires independent final-DICOM coordinate validation before
+the GUI reports RTDOSE Completed. Automated validation remains synthetic-only:
+nonzero isocenters, asymmetric bounds, unequal dimensions, anisotropic
+spacing, and fake converter runners write only under temporary test folders.
+No PHITS, Sumtally, phits2dicom, GPR, real DICOM, or calculation result is
+executed or added by those tests.
+
+The separately approved coordinate-only manual reprepare then exposed a
+fail-closed digest mismatch: historical RTDOSE Prepare had patched the accepted
+Sumtally output in place after Sumtally Run recorded its SHA-256. The approved
+correction stages private converter copies and proves the upstream Sumtally and
+companion PHITS files remain unchanged. A historical in-place IPP title patch
+is reusable only when reversing that exact patch, including LF/CRLF newline
+normalization, reproduces the recorded Sumtally Run SHA-256; all other changes
+remain failures.
+
+The separately approved coordinate-only manual validation completed with the
+existing designated non-patient phantom PHITS and Sumtally results. It did not
+repeat PHITS or Sumtally, and the final coordinate-placement validation passed
+with its output present. All workstation paths, DICOM, licensed tools, and
+generated results remained outside Git. This is bounded non-patient research
+evidence, not clinical validation.
+
+The accepted coordinate delta is promoted into the current RTDOSE specification
+and archived on the feature branch. The remaining step is review through the
+feature pull request; the portable-workspace recovery proposal stays active and
+unimplemented.
 
 ## Human-decision queue
 
@@ -182,7 +216,7 @@ approved work:
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from the completed pull requests through #16.
+  from the completed pull requests through #18.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -194,14 +228,14 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains squash merge commit `e1d9943c276d` or a later
+3. Confirm that `main` contains squash merge commit `6112fce3e3d6` or a later
    descendant.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the
    [workflow stage guide](workflow_stages.md), and verify that their baseline
    still matches `main`.
-5. Start with the approved Windows GUI diagnostic session described above;
-   keep both designated workspaces and all real-tool output outside Git.
+5. Keep the archived coordinate implementation and the active portable-workspace
+   recovery proposal separate; do not implement the latter without approval.
 6. For each observed failure, preserve the GUI log and record exact
    reproduction steps before proposing a code change.
 7. When a human decision is required, ask a direct yes/no question.
