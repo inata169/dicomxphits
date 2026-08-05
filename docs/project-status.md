@@ -17,17 +17,17 @@ request #1 through pull request #9, see
 
 - Public release: `v1.0.0`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Current `main` HEAD: `6112fce3e3d6d1700bb171558bf601ca5b0b8234`
-  (2026-08-04)
-- Latest completed work: active-treatment-MU Sumtally normalization and
-  fail-closed downstream digest binding
+- Current `main` HEAD: `8d690c8640d882a017a5e1533e1acada4183e1c9`
+  (2026-08-05)
+- Latest completed work: fail-closed RTDOSE isocenter translation and final
+  coordinate-placement validation
 - Completion pull request:
-  [#18](https://github.com/inata169/dicomxphits/pull/18)
-- Squash merge commit: `6112fce3e3d6d1700bb171558bf601ca5b0b8234`
+  [#19](https://github.com/inata169/dicomxphits/pull/19)
+- Squash merge commit: `8d690c8640d882a017a5e1533e1acada4183e1c9`
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
-- Status last reviewed: 2026-08-04
+- Status last reviewed: 2026-08-05
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,
@@ -82,7 +82,7 @@ interpreter range to Python 3.12 and aligned the public documentation and
 OpenSpec project contract. Pull requests #15 and #16 completed the runtime and
 RTDOSE GUI work described above. These later changes do not extend the dated
 Dev Container evidence beyond pull request #9. At current `main`, the
-public-tree audit passes 110 tracked files.
+public-tree audit passes 124 tracked files.
 
 ## Validation baseline
 
@@ -160,50 +160,33 @@ Pull request #18 was squash-merged as `6112fce`; its final Codex review reported
 no major issues, GitHub Actions passed, and the public suite completed with 572
 tests passed and one expected skip. Its remote feature branch was deleted.
 
-The coordinate feature integration and bounded pull-request review correction
-complete with 194 focused tests passed, 588 full public tests passed and one
-expected skip, successful source compilation, a 124-file public-tree audit,
-and strict OpenSpec validation.
+Pull request #19 was squash-merged as `8d690c8`. Its final Codex review
+reported no major issues, GitHub Actions passed on Windows and Ubuntu, and its
+remote feature branch was deleted. Closeout validation completed with 194
+focused tests passed, 588 full public tests passed and one expected skip,
+successful source compilation, a 124-file public-tree audit, and strict
+OpenSpec validation.
 
 ## Current development plan
 
-The Windows GUI diagnostic completed the designated non-patient phantom
-workflow through RTDOSE, but external research comparison showed a gross
-three-dimensional translation and zero pass rate. Read-only diagnosis found
-that the final coordinate correction preserved a volume centre inherited from
-the converter CT slice position instead of deriving placement from the frozen
-RT Plan isocenter and PHITS tally mesh. Dose/MU normalization remained a separate observation and was corrected by
-pull request #18 without changing the coordinate contract.
+The approved `fix-rtdose-isocenter-translation` change is complete and
+merged through pull request #19. The implementation derives RTDOSE placement
+from the frozen RT Plan isocenter and PHITS tally mesh using the accepted
+bin-centre mapping `I + 10 * (-x, z, y)`, then requires independent
+final-DICOM coordinate validation before the GUI reports RTDOSE Completed.
+The Sumtally, MU-normalization, and digest-binding corrections from pull request
+#18 remain intact.
 
-The approved `fix-rtdose-isocenter-translation` change implements the exact
-bin-centre mapping `I + 10 * (-x, z, y)`, binds the mesh and frozen-plan
-isocenter, and requires independent final-DICOM coordinate validation before
-the GUI reports RTDOSE Completed. Automated validation remains synthetic-only:
-nonzero isocenters, asymmetric bounds, unequal dimensions, anisotropic
-spacing, and fake converter runners write only under temporary test folders.
-No PHITS, Sumtally, phits2dicom, GPR, real DICOM, or calculation result is
-executed or added by those tests.
-
-The separately approved coordinate-only manual reprepare then exposed a
-fail-closed digest mismatch: historical RTDOSE Prepare had patched the accepted
-Sumtally output in place after Sumtally Run recorded its SHA-256. The approved
-correction stages private converter copies and proves the upstream Sumtally and
-companion PHITS files remain unchanged. A historical in-place IPP title patch
-is reusable only when reversing that exact patch, including LF/CRLF newline
-normalization, reproduces the recorded Sumtally Run SHA-256; all other changes
-remain failures.
-
-The separately approved coordinate-only manual validation completed with the
-existing designated non-patient phantom PHITS and Sumtally results. It did not
-repeat PHITS or Sumtally, and the final coordinate-placement validation passed
-with its output present. All workstation paths, DICOM, licensed tools, and
+The authorized coordinate-only manual validation reused the existing designated
+non-patient phantom PHITS and Sumtally results. It did not repeat PHITS or
+Sumtally, and final coordinate-placement validation passed with the output
+present. All workstation paths, DICOM, licensed tools, GPR result files, and
 generated results remained outside Git. This is bounded non-patient research
 evidence, not clinical validation.
 
-The accepted coordinate delta is promoted into the current RTDOSE specification
-and archived on the feature branch. The remaining step is review through the
-feature pull request; the portable-workspace recovery proposal stays active and
-unimplemented.
+The separate `support-portable-workspace-recovery` work remains
+proposal-only, unapproved for implementation, and unimplemented. No portable
+workspace recovery implementation is part of the current baseline.
 
 ## Human-decision queue
 
@@ -216,7 +199,7 @@ approved work:
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from the completed pull requests through #18.
+  from the completed pull requests through #19.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -228,7 +211,7 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains squash merge commit `6112fce3e3d6` or a later
+3. Confirm that `main` contains squash merge commit `8d690c8640d` or a later
    descendant.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the

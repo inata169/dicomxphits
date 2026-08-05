@@ -54,7 +54,8 @@ unavailable, use `python --version` only when it reports Python 3.12, then run
 `python -m venv .venv`. The launcher intentionally requires the repository-local
 `.venv`; it does not create an environment, install dependencies, or reuse the
 Dev Container's Linux Python. See [Guided Desktop GUI](#guided-desktop-gui) for
-tool setup and case-path behavior.
+tool setup and case-path behavior. For the complete v1.0.x walkthrough, see the
+[GUI User Guide](docs/gui-user-guide.md).
 
 ## Workflow at a Glance
 
@@ -350,6 +351,7 @@ config/
   dicomxphits.paths.schema.json
   dicomxphits.paths.example.json
 docs/
+  gui-user-guide.md
   manual_smoke_workflow.md
   release_acceptance_evidence.json
   workflow_stages.md
@@ -549,8 +551,9 @@ reference model. It does not claim clinical commissioning, universal machine
 
 ### GPR-comparing Handoff
 
-GPR-comparing remains an external research tool and is not bundled. The public
-boundary can either record an explicit knowledge-based skip when the tool is
+[GPR-comparing](https://github.com/inata169/GPR-comparing) remains an external
+research tool and is not bundled. The public boundary can either record an
+explicit knowledge-based skip when the tool is
 not configured, prepare the exact external command, or execute it after
 checking that both RTDOSE inputs use `GY` and share a `FrameOfReferenceUID`:
 
@@ -583,11 +586,24 @@ RTDOSE Run stage performs its accepted correction handoff automatically.
 
 ## Related Documentation
 
+- [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
 - [Manual smoke workflow](docs/manual_smoke_workflow.md)
 - [Workflow stages and gates](docs/workflow_stages.md)
 - [CT2PHITS frontend handoff](docs/ct2phits-frontend-handoff.md)
 - [Development and Dev Container guidance](docs/development.md)
 - [Current project status](docs/project-status.md)
+
+## Related Repositories
+
+- [GPR-comparing](https://github.com/inata169/GPR-comparing) is the separate
+  external research tool used by the optional gamma-comparison handoff. It is
+  not bundled with dicomxphits, and its outputs must stay outside this
+  repository.
+- [dicom4dicomxphits](https://github.com/inata169/dicom4dicomxphits) is a private,
+  data-only companion repository containing anonymized DICOM CT, RT Plan, and
+  RT Dose examples for dicomxphits. Access requires GitHub authorization. Its
+  examples remain non-patient research and education data and do not establish
+  clinical validity.
 
 Real PHITS and phits2dicom smoke execution is optional local validation only and
 is not required for CI. Real DICOM files and real-tool outputs must not be
