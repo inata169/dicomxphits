@@ -12,8 +12,11 @@ provenance review cycle, see
 For the later Dev Container cross-check of every squash commit from pull
 request #1 through pull request #9, see
 [`dev-container-validation-2026-08-03.md`](dev-container-validation-2026-08-03.md).
-For the v1.0.1 release completion and next-session restart boundary, see the
-[`2026-08-05 development handoff`](development-handoff-2026-08-05.md).
+For the v1.0.1 release completion, see the
+[`2026-08-05 development handoff`](development-handoff-2026-08-05.md). For the
+current next-session restart boundary after the Windows launcher correction and
+manual evidence record, see the
+[`2026-08-06 development handoff`](development-handoff-2026-08-06.md).
 
 ## Current baseline
 
@@ -27,8 +30,8 @@ For the v1.0.1 release completion and next-session restart boundary, see the
   final coordinate-placement validation
 - Runtime completion pull request:
   [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Latest completed repository update: Windows Code **Download ZIP** launcher
-  correction and durable documentation alignment
+- Latest completed repository update before the current handoff: anonymized
+  Windows manual evidence and durable baseline correction
 - Release preparation pull request:
   [#24](https://github.com/inata169/dicomxphits/pull/24)
 - Release merge commit: `7db473b12d570026600c03947690d0f6c1fb60f5`
@@ -37,10 +40,10 @@ For the v1.0.1 release completion and next-session restart boundary, see the
 - Release closeout pull request:
   [#25](https://github.com/inata169/dicomxphits/pull/25)
 - Latest repository update pull request:
-  [#27](https://github.com/inata169/dicomxphits/pull/27)
-- Current main baseline: merge commit
-  `857e61bc0cecfce882c3b0949119d4868824fe6f`
-- Current-baseline main push CI run #198 completed successfully
+  [#28](https://github.com/inata169/dicomxphits/pull/28)
+- Closing baseline before the current handoff: merge commit
+  `e2cb54568628b6b1d9121fe3b85eb2b4b224f6f9`
+- Closing-baseline main push CI run #203 completed successfully
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
@@ -115,8 +118,8 @@ tool profile and CT2PHITS case-path setup. Pull request
 interpreter range to Python 3.12 and aligned the public documentation and
 OpenSpec project contract. Pull requests #15 and #16 completed the runtime and
 RTDOSE GUI work described above. These later changes do not extend the dated
-Dev Container evidence beyond pull request #9. At current `main`, the
-public-tree audit passes 136 tracked files.
+Dev Container evidence beyond pull request #9. With this handoff document, the
+prospective public-tree audit passes 137 tracked files.
 
 ## Validation baseline
 
@@ -240,6 +243,12 @@ its exact-head Codex review reported no major issues, pull-request CI #197 and
 main CI #198 passed on Ubuntu and Windows, and its remote feature branch was
 deleted.
 
+Pull request #28 recorded the bounded two-case Windows manual report without
+adding external paths or results, refreshed the durable current-baseline
+fields after a Codex review finding, and was squash-merged as `e2cb545`. Its
+exact-head re-review reported no major issues, pull-request CI #202 and main CI
+#203 passed on Ubuntu and Windows, and its remote feature branch was deleted.
+
 ## Current development plan
 
 The approved `fix-rtdose-isocenter-translation` change is complete and
@@ -291,7 +300,8 @@ approved work:
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from the completed implementation pull requests through #27.
+  from the completed implementation and documentation pull requests through
+  #28.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -303,8 +313,8 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains launcher merge commit `857e61bc0cec` or a later
-   descendant, and that the `v1.0.1` tag still resolves to release commit
+3. Confirm that `main` contains documentation merge commit `e2cb54568628` or a
+   later descendant, and that the `v1.0.1` tag still resolves to release commit
    `7db473b12d5`.
 4. Read this document, the
    [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the
