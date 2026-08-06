@@ -227,6 +227,17 @@ OpenSpec validations, successful source compilation, a 133-file public-tree
 audit, successful sdist and wheel builds, `twine check`, isolated wheel
 installation, and all eleven installed console entry-point help checks.
 
+Pull request #25 recorded the release closeout as `902425d`, and pull request
+#26 recorded the 2026-08-05 development handoff as `3aa69ae`. Pull request #27
+then corrected the Windows Code **Download ZIP** launcher path after an unsigned
+PowerShell script was blocked by host policy. It added the default CMD launcher,
+kept the equivalent PowerShell entry point, included both launchers in source
+distributions, and added path-metacharacter regression coverage without changing
+runtime workflow semantics. Pull request #27 was squash-merged as `857e61b`;
+its exact-head Codex review reported no major issues, pull-request CI #197 and
+main CI #198 passed on Ubuntu and Windows, and its remote feature branch was
+deleted.
+
 ## Current development plan
 
 The approved `fix-rtdose-isocenter-translation` change is complete and
@@ -253,6 +264,16 @@ results, screenshots, GPR result files, and generated outputs remain outside
 Git. This is one bounded research workflow, not clinical validation or a
 general dose-accuracy claim.
 
+After pull request #27, the human separately reported two successful Windows
+manual checks: one used an existing external workspace path and one used a
+duplicate path containing spaces, Japanese text, and a copy suffix. The
+external GPR handoff was reported complete in both cases. The agent did not
+inspect the external directories or results, and exact paths, DICOM, numerical
+results, screenshots, GPR files, and generated outputs remain outside Git. See
+the [dated Windows GUI launcher validation
+record](windows-gui-launcher-validation-2026-08-06.md). This report does not
+validate or authorize portable-workspace recovery.
+
 The separate `support-portable-workspace-recovery` work was recorded through
 pull request #21 and remains active at 1/21 tasks. Task 1.1, explicit human
 approval before runtime work, is unchecked. The change therefore remains
@@ -268,7 +289,7 @@ approved work:
   MU, machine model, or clinical claims requires a separate human-approved
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
-  from the completed pull requests through #25.
+  from the completed implementation pull requests through #27.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -280,7 +301,7 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains closeout merge commit `902425dc99ba` or a later
+3. Confirm that `main` contains launcher merge commit `857e61bc0cec` or a later
    descendant, and that the `v1.0.1` tag still resolves to release commit
    `7db473b12d5`.
 4. Read this document, the
