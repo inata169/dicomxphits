@@ -110,6 +110,12 @@ PowerShell policy permits unsigned repository scripts. If a Download ZIP copy
 produces `PSSecurityException` or a digital-signature error, do not weaken the
 machine or organization execution policy; use `run_gui_venv.cmd` instead.
 
+The bounded, human-reported Windows check completed after this launcher change
+is recorded in [Windows GUI Launcher Validation -
+2026-08-06](windows-gui-launcher-validation-2026-08-06.md). That record omits
+external paths and results and is not clinical validation or a general Windows
+compatibility claim.
+
 ## 5. One-time tool setup
 
 1. Open **1 CT2PHITS** in the left sidebar.
