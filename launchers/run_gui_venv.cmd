@@ -7,7 +7,7 @@ set "PythonExe=%ProjectRoot%\.venv\Scripts\python.exe"
 set "VenvScripts=%ProjectRoot%\.venv\Scripts"
 
 if not exist "%PythonExe%" (
-  echo Missing virtual environment Python: %PythonExe%. Create the environment explicitly before running this launcher. 1>&2
+  echo Missing virtual environment Python: "%PythonExe%". Create the environment explicitly before running this launcher. 1>&2
   exit /b 1
 )
 
