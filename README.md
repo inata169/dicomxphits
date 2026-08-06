@@ -47,15 +47,29 @@ PowerShell. Do not run this launcher from the Linux Dev Container terminal.
 py -3.12 --version
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
-.\launchers\run_gui_venv.ps1
+.\launchers\run_gui_venv.cmd
 ```
 
 Confirm that the first command reports Python 3.12. If the Python launcher is
 unavailable, use `python --version` only when it reports Python 3.12, then run
-`python -m venv .venv`. The launcher intentionally requires the repository-local
-`.venv`; it does not create an environment, install dependencies, or reuse the
-Dev Container's Linux Python. See [Guided Desktop GUI](#guided-desktop-gui) for
-tool setup and case-path behavior. For the complete v1.0.x walkthrough, see the
+`python -m venv .venv`. The `.cmd` launcher is the default Windows entry point
+because it is not governed by PowerShell's `.ps1` script execution policy. It
+adds the repository-local `.venv\Scripts` directory to the child process PATH
+and starts the GUI with that environment's Python.
+
+The equivalent PowerShell launcher remains available where local policy allows
+unsigned repository scripts:
+
+```powershell
+.\launchers\run_gui_venv.ps1
+```
+
+If PowerShell reports `PSSecurityException` or says that the downloaded script
+is not digitally signed, keep the machine or organization execution policy in
+place and use `run_gui_venv.cmd`. Neither launcher creates an environment,
+installs dependencies, or reuses the Dev Container's Linux Python. See
+[Guided Desktop GUI](#guided-desktop-gui) for tool setup and case-path behavior.
+For the complete v1.0.x walkthrough, see the
 [GUI User Guide](docs/gui-user-guide.md).
 
 ## Workflow at a Glance
@@ -358,6 +372,7 @@ docs/
   workflow_stages.md
 launchers/
   README.md
+  run_gui_venv.cmd
   run_gui_venv.ps1
 src/
   dicomxphits/

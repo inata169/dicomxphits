@@ -1183,6 +1183,48 @@ def test_launcher_does_not_install_dependencies() -> None:
     assert ".venv\\scripts" in text
 
 
+def test_cmd_launcher_uses_project_venv_without_powershell() -> None:
+    launcher = PUBLIC_ROOT / "launchers" / "run_gui_venv.cmd"
+    text = launcher.read_text(encoding="utf-8-sig").lower()
+
+    assert "pip install" not in text
+    assert "install-package" not in text
+    assert "powershell" not in text
+    assert "executionpolicy" not in text
+    assert "-m dicomxphits.gui" in text
+    assert 'set "path=' in text
+    assert ".venv\\scripts" in text
+    assert 'echo missing virtual environment python: "%pythonexe%"' in text
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows CMD behavior")
+def test_cmd_launcher_handles_metacharacters_in_missing_venv_path(
+    tmp_path: Path,
+) -> None:
+    source = PUBLIC_ROOT / "launchers" / "run_gui_venv.cmd"
+    launcher_dir = tmp_path / "download (1) & copy" / "launchers"
+    launcher_dir.mkdir(parents=True)
+    launcher = launcher_dir / source.name
+    launcher.write_bytes(source.read_bytes())
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", launcher.name],
+        cwd=launcher_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Missing virtual environment Python:" in result.stderr
+
+def test_source_distribution_includes_both_gui_launchers() -> None:
+    manifest = (PUBLIC_ROOT / "MANIFEST.in").read_text(encoding="utf-8-sig")
+
+    assert "include launchers/run_gui_venv.cmd" in manifest.splitlines()
+    assert "include launchers/run_gui_venv.ps1" in manifest.splitlines()
+
+
 def test_ct2phits_is_the_first_guided_gui_stage(tmp_path: Path) -> None:
     rtphits_root = write_dir(tmp_path / "rtphits")
     config = replace(
