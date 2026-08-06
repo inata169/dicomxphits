@@ -366,6 +366,7 @@ config/
   dicomxphits.paths.schema.json
   dicomxphits.paths.example.json
 docs/
+  development-handoff-2026-08-06.md
   gui-user-guide.md
   manual_smoke_workflow.md
   release_acceptance_evidence.json
@@ -605,6 +606,7 @@ RTDOSE Run stage performs its accepted correction handoff automatically.
 
 - [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)
+- [Development handoff — 2026-08-06](docs/development-handoff-2026-08-06.md)
 - [Manual smoke workflow](docs/manual_smoke_workflow.md)
 - [Workflow stages and gates](docs/workflow_stages.md)
 - [CT2PHITS frontend handoff](docs/ct2phits-frontend-handoff.md)
