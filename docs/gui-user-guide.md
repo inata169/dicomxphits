@@ -88,7 +88,7 @@ Open PowerShell in the repository root. Do not launch the GUI from the Linux Dev
 py -3.12 --version
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
-.\launchers\run_gui_venv.ps1
+.\launchers\run_gui_venv.cmd
 ```
 
 Confirm that the first command reports `Python 3.12.x`.
@@ -98,10 +98,17 @@ If the `py` launcher is unavailable, replace the first two commands only when `p
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
-.\launchers\run_gui_venv.ps1
+.\launchers\run_gui_venv.cmd
 ```
 
-The launcher does not create the virtual environment or install dependencies for you.
+The `.cmd` launcher adds the repository-local `.venv\Scripts` directory to the
+GUI process PATH. It does not create the virtual environment or install
+dependencies for you.
+
+The equivalent `.\launchers\run_gui_venv.ps1` launcher may be used where local
+PowerShell policy permits unsigned repository scripts. If a Download ZIP copy
+produces `PSSecurityException` or a digital-signature error, do not weaken the
+machine or organization execution policy; use `run_gui_venv.cmd` instead.
 
 ## 5. One-time tool setup
 
