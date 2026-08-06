@@ -27,8 +27,8 @@ For the v1.0.1 release completion and next-session restart boundary, see the
   final coordinate-placement validation
 - Runtime completion pull request:
   [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Latest completed repository update: v1.0.1 release preparation, public
-  GitHub Release, and durable release closeout
+- Latest completed repository update: Windows Code **Download ZIP** launcher
+  correction and durable documentation alignment
 - Release preparation pull request:
   [#24](https://github.com/inata169/dicomxphits/pull/24)
 - Release merge commit: `7db473b12d570026600c03947690d0f6c1fb60f5`
@@ -36,13 +36,15 @@ For the v1.0.1 release completion and next-session restart boundary, see the
   completed successfully
 - Release closeout pull request:
   [#25](https://github.com/inata169/dicomxphits/pull/25)
+- Latest repository update pull request:
+  [#27](https://github.com/inata169/dicomxphits/pull/27)
 - Current main baseline: merge commit
-  `902425dc99ba9f57d3cc83690d4f903d9f602eb6`
-- Closeout main push CI run #186 completed successfully
+  `857e61bc0cecfce882c3b0949119d4868824fe6f`
+- Current-baseline main push CI run #198 completed successfully
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
-- Status last reviewed: 2026-08-05
+- Status last reviewed: 2026-08-06
 
 The GitHub Release publishes the source distribution and wheel built from the
 `v1.0.1` tag. Their SHA-256 digests are
@@ -114,7 +116,7 @@ interpreter range to Python 3.12 and aligned the public documentation and
 OpenSpec project contract. Pull requests #15 and #16 completed the runtime and
 RTDOSE GUI work described above. These later changes do not extend the dated
 Dev Container evidence beyond pull request #9. At current `main`, the
-public-tree audit passes 133 tracked files.
+public-tree audit passes 136 tracked files.
 
 ## Validation baseline
 
