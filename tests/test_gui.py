@@ -1196,6 +1196,13 @@ def test_cmd_launcher_uses_project_venv_without_powershell() -> None:
     assert ".venv\\scripts" in text
 
 
+def test_source_distribution_includes_both_gui_launchers() -> None:
+    manifest = (PUBLIC_ROOT / "MANIFEST.in").read_text(encoding="utf-8-sig")
+
+    assert "include launchers/run_gui_venv.cmd" in manifest.splitlines()
+    assert "include launchers/run_gui_venv.ps1" in manifest.splitlines()
+
+
 def test_ct2phits_is_the_first_guided_gui_stage(tmp_path: Path) -> None:
     rtphits_root = write_dir(tmp_path / "rtphits")
     config = replace(
