@@ -14,9 +14,11 @@ request #1 through pull request #9, see
 [`dev-container-validation-2026-08-03.md`](dev-container-validation-2026-08-03.md).
 For the v1.0.1 release completion, see the
 [`2026-08-05 development handoff`](development-handoff-2026-08-05.md). For the
-current next-session restart boundary after the Windows launcher correction and
-manual evidence record, see the
+Windows launcher correction and manual evidence record, see the
 [`2026-08-06 development handoff`](development-handoff-2026-08-06.md).
+For the current restart boundary after the public-feasibility documentation
+review and pull request #30 closeout, see the
+[`2026-08-07 development handoff`](development-handoff-2026-08-07.md).
 For the current aggregate account of the bounded non-patient demonstrations,
 comparison conditions, and interpretation limits, see the
 [`Public Feasibility Demonstration`](public-feasibility-demonstration.md).
@@ -33,8 +35,8 @@ comparison conditions, and interpretation limits, see the
   final coordinate-placement validation
 - Runtime completion pull request:
   [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Latest completed repository update before the current handoff: anonymized
-  Windows manual evidence and durable baseline correction
+- Latest completed repository update before the current handoff: public
+  feasibility documentation and durable evidence-boundary clarification
 - Release preparation pull request:
   [#24](https://github.com/inata169/dicomxphits/pull/24)
 - Release merge commit: `7db473b12d570026600c03947690d0f6c1fb60f5`
@@ -43,12 +45,11 @@ comparison conditions, and interpretation limits, see the
 - Release closeout pull request:
   [#25](https://github.com/inata169/dicomxphits/pull/25)
 - Latest repository update pull request:
-  [#28](https://github.com/inata169/dicomxphits/pull/28)
-- Current public feasibility documentation pull request:
   [#30](https://github.com/inata169/dicomxphits/pull/30)
 - Closing baseline before the current handoff: merge commit
-  `e2cb54568628b6b1d9121fe3b85eb2b4b224f6f9`
-- Closing-baseline main push CI run #203 completed successfully
+  `a7339c19d9b7e274f8e4827d82a97eb2c077774a`
+- Pull request #30 exact-head Codex review reported no major issues; local full
+  validation and the 138-file public-tree audit passed before merge
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
@@ -123,8 +124,8 @@ tool profile and CT2PHITS case-path setup. Pull request
 interpreter range to Python 3.12 and aligned the public documentation and
 OpenSpec project contract. Pull requests #15 and #16 completed the runtime and
 RTDOSE GUI work described above. These later changes do not extend the dated
-Dev Container evidence beyond pull request #9. With this handoff document, the
-prospective public-tree audit passes 137 tracked files.
+Dev Container evidence beyond pull request #9. At pull request #30, the
+public-tree audit passes 138 tracked files.
 
 ## Validation baseline
 
@@ -254,6 +255,18 @@ fields after a Codex review finding, and was squash-merged as `e2cb545`. Its
 exact-head re-review reported no major issues, pull-request CI #202 and main CI
 #203 passed on Ubuntu and Windows, and its remote feature branch was deleted.
 
+Pull request #30 added the public feasibility demonstration and the concise
+README account of the two human-confirmed end-to-end cases and four locally
+retained comparison records. Its first Codex review found that the durable
+status still exposed only the older v1.0.1 evidence boundary. Commit
+`99f0a643ce` preserved that historical boundary while recording the later
+aggregate review and non-clinical interpretation limits. The exact-head
+re-review reported no major issues. Local validation completed with 591 tests
+passed and two expected skips, successful source compilation, a 138-file
+public-tree audit, and a passing Git diff check. Pull request #30 was
+squash-merged as `a7339c1`, and its remote and local feature branches were
+deleted.
+
 ## Current development plan
 
 The approved `fix-rtdose-isocenter-translation` change is complete and
@@ -323,7 +336,7 @@ approved work:
   decision; and
 - no known merge-blocking defect or approved follow-up implementation remains
   from the completed implementation and documentation pull requests through
-  #28.
+  #30.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -335,7 +348,7 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, `main`, clean status, remote, recent history,
    and tags.
-3. Confirm that `main` contains documentation merge commit `e2cb54568628` or a
+3. Confirm that `main` contains documentation merge commit `a7339c19d9b7` or a
    later descendant, and that the `v1.0.1` tag still resolves to release commit
    `7db473b12d5`.
 4. Read this document, the
