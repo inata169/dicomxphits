@@ -5,6 +5,12 @@ fixed-field 3D-CRT PHITS inputs from DICOM RT Plans and for controlling the
 explicit PHITS, Sumtally, RTDOSE, coordinate-correction, and external GPR
 handoff stages.
 
+Within its documented non-patient phantom scope, this repository is a working
+public implementation of that complete chain rather than only a proposal that
+the interfaces might be connected. It provides a bounded engineering
+demonstration—a constructive proof of feasibility—for an openly inspectable
+and modifiable DICOM-to-PHITS-to-RTDOSE research workflow.
+
 It is not clinical commissioning, patient QA, vendor certification, or a
 substitute for independent clinical validation. Real patient DICOM, licensed
 tool distributions, and real-tool outputs must remain outside this repository.
@@ -89,6 +95,42 @@ The guided workflow keeps each stage explicit and gated:
 6. **Optional GPR** — execute the external comparison or record an explicit
    knowledge-based skip.
 
+## What This Repository Demonstrates
+
+The public adapters implement the path from non-patient phantom DICOM CT and
+RT Plan inputs, through the user-supplied CT2PHITS handoff, fixed-field 3D-CRT
+PHITS input generation and segment calculation, Sumtally dose aggregation,
+DICOM RT Dose conversion and coordinate correction, to an external
+GPR-comparing comparison using a TPS-derived RT Dose as the reference and the
+coordinate-corrected PHITS-derived RTDOSE as the evaluation.
+
+Two bounded non-patient phantom cases have been confirmed by the author to
+complete this end-to-end workflow: a centered `20 × 20 cm²` field on a water
+phantom and a case using the PHITSgeoTest plan. A read-only review of four
+locally retained comparison reports and their run logs mapped one record to
+PHITSgeoTest, two records to the same centered water-phantom case, and one
+record to a separate non-patient phantom. The PHITSgeoTest case produced a
+Gamma Passing Rate of at least 95%. The two centered water-phantom records
+produced values around 95%, slightly below 95% in both records.
+
+All four records used global `3% / 3 mm` gamma with a `10%` dose cutoff,
+global-maximum normalization, linear interpolation, and an interpolation
+fraction of 3. A separate non-patient phantom record also produced a passing
+rate of at least 95%. The available evidence for that record establishes the
+comparison outcome, but not the human-confirmed completion of the full chain
+used to define the two demonstrated cases, so it is retained only as supporting
+comparison evidence. Exact individual pass rates, external paths, identifiers,
+and result files are not published.
+
+This is a working end-to-end demonstration within a deliberately narrow
+research scope. It demonstrates that the public implementation and external
+tool handoffs can be made operational; it does not demonstrate clinical
+accuracy, commissioning, general machine compatibility, or suitability for
+patient QA. The reported Gamma Passing Rates are research observations, not
+clinical acceptance thresholds or QA decisions. See
+[Public Feasibility Demonstration](docs/public-feasibility-demonstration.md)
+for the evidence and reproducibility boundaries.
+
 ## v1.0.x Workflow
 
 The v1.0.x workflow is intentionally narrow:
@@ -107,13 +149,13 @@ path.
 ## v1.0.x Supported Scope
 
 For v1.0.x, dicomxphits supports fixed-field 3D-CRT up to the centered
-`20 x 20 cm2` effective-aperture boundary for education and research. After
+`20 × 20 cm²` effective-aperture boundary for education and research. After
 DICOM Control Point inheritance is resolved, the jaw and MLC common effective
 aperture at every Control Point must remain inside the closed collimator-local
 isocenter-plane box from `-100.000 mm` to `+100.000 mm` on both X and Y. Each
 effective width must also be no greater than `200.000 mm`.
 
-A centered `20 x 20 cm2` aperture is therefore the largest square at the
+A centered `20 × 20 cm²` aperture is therefore the largest square at the
 boundary. A narrower offset aperture is eligible only when every effective
 point remains inside the same box. The workflow rejects overruns rather than
 clipping, recentering, or expanding the source cone.
@@ -146,7 +188,7 @@ these identifying DICOM values differ.
 
 Elekta's public
 [Infinity brochure](https://www.elekta.com/products/radiation-therapy/infinity/assets/Infinity-Brochure.pdf)
-describes Agility leaves across a full `40 x 40 cm2` device field. That is a
+describes Agility leaves across a full `40 × 40 cm²` device field. That is a
 cited hardware specification only. It is outside the dicomxphits v1.0.x
 software scope and is not supported behavior.
 
@@ -156,10 +198,11 @@ imply affiliation, endorsement, certification, or comprehensive compatibility.
 
 ## Built-In Public Research Model
 
-The default workspace preparation uses the approved built-in research model:
+The default workspace preparation uses a deliberately simplified built-in
+public research model:
 
-- a uniform `3 x 3 mm` rectangular photon source centered 100 cm from
-  isocenter;
+- a uniform `3 × 3 mm` rectangular photon source centered in a beam-aligned
+  source plane located `100 cm` upstream of isocenter;
 - the bundled 59-bin author-generated spectrum;
 - the reviewed rectangular MLC and Y-Diaphragm model, shielding material, and
   PHITS transport settings.
@@ -178,12 +221,35 @@ the approved factor is bound to the built-in model identity, a changed machine
 configuration fails closed as a stale factor unless the caller explicitly
 selects `--relative-dose-only`.
 
+## Why a Simplified Public Model Matters
+
+The simplification is an intentional trade-off. The built-in source, spectrum,
+rectangular MLC and Y-Diaphragm geometry, materials, and transport settings can
+be inspected, discussed, and modified without vendor-confidential machine
+drawings, NDA-protected information, facility-specific commissioning data, or
+proprietary Monaco beam-model data. Licensed PHITS and RT-PHITS tools remain
+external prerequisites and are not redistributed here.
+
+This openness makes the workflow useful as a research baseline even though the
+model does not reproduce a specific clinical Elekta unit, a proprietary
+Monaco beam-model configuration, or a commercial treatment-machine digital
+twin, and it carries no vendor certification. Its replaceable research-model
+components let investigators supply a different configuration and study more
+detailed source, MLC, jaw, material, or transport descriptions. A changed
+model requires its own calibration and validation; the default dose factor is
+deliberately rejected or must be
+disabled with `--relative-dose-only`. The value is the public, inspectable
+foundation and demonstrated workflow, not a claim that the simplified model
+already has clinical-machine fidelity.
+
 ## Photon Spectrum Provenance and Dose Calibration
 
-The bundled 59-bin photon spectrum is an author-generated derivative of the
-IAEA `ELEKTA_PRECISE_6MV` phase-space dataset. The source dataset was prepared
-by Iwan Kawrakow at the National Research Council of Canada and was accessed
-from [IAEA Nuclear Data Services](https://www-nds.iaea.org/phsp/photon1/) on
+The bundled 59-bin photon spectrum is an author-generated derivative of part 1
+of the IAEA `ELEKTA_PRECISE` 6 MV phase-space dataset, identified by
+`ELEKTA_PRECISE_6mv_part1.IAEAphsp` and its matching `.IAEAheader`. The source
+dataset was prepared by Iwan Kawrakow at the National Research Council of
+Canada and was accessed from
+[IAEA Nuclear Data Services](https://www-nds.iaea.org/phsp/photon1/) on
 2025-08-06. The repository author generated the derivative with PSFC4PHITS,
 PHITS, and Sumtally and authorized its neutral inclusion and redistribution.
 The original IAEA phase-space and header files remain external and are neither
@@ -199,8 +265,9 @@ the public research default. The model-specific
 reference calculation and accepted on 2026-07-30. The default runtime writes
 that exact value into PHITS inputs only after the machine-model identity
 matches the calibrated public default; a changed model is rejected as a stale
-factor before output is created. This is an education and research calibration,
-not a commissioned, vendor-approved, or universal clinical beam.
+factor before output is created. This education and research calibration
+carries no clinical commissioning, vendor certification, or universal
+clinical-beam claim.
 
 ## External Tool Paths
 
@@ -369,6 +436,7 @@ docs/
   development-handoff-2026-08-06.md
   gui-user-guide.md
   manual_smoke_workflow.md
+  public-feasibility-demonstration.md
   release_acceptance_evidence.json
   windows-gui-launcher-validation-2026-08-06.md
   workflow_stages.md
@@ -565,7 +633,7 @@ output whose coordinate placement, PLAN reference, or mesh evidence is missing,
 
 This output is absolute dose only for the defined public education and research
 reference model. It does not claim clinical commissioning, universal machine
-`Gy/MU` accuracy, vendor approval, or agreement with a physical Elekta unit.
+`Gy/MU` accuracy, certification by a vendor, or agreement with a physical Elekta unit.
 
 ### GPR-comparing Handoff
 
@@ -604,6 +672,7 @@ RTDOSE Run stage performs its accepted correction handoff automatically.
 
 ## Related Documentation
 
+- [Public feasibility demonstration and research boundaries](docs/public-feasibility-demonstration.md)
 - [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)
 - [Development handoff — 2026-08-06](docs/development-handoff-2026-08-06.md)
