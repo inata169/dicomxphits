@@ -7,6 +7,7 @@ access and Authenticode validation remain visible in the PowerShell wrapper.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -45,6 +46,23 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 class OfflineBundleError(RuntimeError):
     """A controlled bundle preparation or validation failure."""
+
+
+@dataclass(frozen=True)
+class GitIndexEntry:
+    mode: str
+    object_id: str
+    path: str
+
+
+@dataclass(frozen=True)
+class GitIndexSnapshot:
+    raw: bytes
+    entries: tuple[GitIndexEntry, ...]
+
+    @property
+    def fingerprint(self) -> str:
+        return hashlib.sha256(self.raw).hexdigest()
 
 
 def normalize_distribution_name(value: str) -> str:
@@ -188,7 +206,7 @@ def _safe_relative_path(value: str) -> PurePosixPath:
     return relative
 
 
-def _git_indexed_files(repo_root: Path) -> list[str]:
+def _capture_git_index(repo_root: Path) -> GitIndexSnapshot:
     result = subprocess.run(
         ["git", "ls-files", "--stage", "-z"],
         cwd=repo_root,
@@ -200,7 +218,7 @@ def _git_indexed_files(repo_root: Path) -> list[str]:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise OfflineBundleError(f"Cannot enumerate Git-indexed files: {detail}")
     entries = result.stdout.split(b"\0")
-    paths: list[str] = []
+    parsed: list[GitIndexEntry] = []
     for raw in entries:
         if not raw:
             continue
@@ -209,52 +227,93 @@ def _git_indexed_files(repo_root: Path) -> list[str]:
         if not separator or len(fields) != 3:
             raise OfflineBundleError("Unexpected git ls-files --stage output")
         mode = fields[0].decode("ascii", errors="strict")
+        object_id = fields[1].decode("ascii", errors="strict").lower()
+        stage = fields[2].decode("ascii", errors="strict")
+        if stage != "0":
+            raise OfflineBundleError("Git index contains an unresolved merge entry")
         if mode not in {"100644", "100755"}:
             display = encoded_path.decode("utf-8", errors="replace")
             raise OfflineBundleError(
                 f"Unsupported indexed entry type {mode} for offline source: {display}"
             )
+        if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", object_id):
+            raise OfflineBundleError("Git index contains an invalid object ID")
         path = encoded_path.decode("utf-8", errors="strict")
-        paths.append(_safe_relative_path(path).as_posix())
+        parsed.append(
+            GitIndexEntry(
+                mode=mode,
+                object_id=object_id,
+                path=_safe_relative_path(path).as_posix(),
+            )
+        )
+    paths = [entry.path for entry in parsed]
     if len(paths) != len(set(paths)):
         raise OfflineBundleError("Git index contains duplicate normalized paths")
-    return sorted(paths)
+    entries = tuple(sorted(parsed, key=lambda entry: entry.path))
+    return GitIndexSnapshot(raw=result.stdout, entries=entries)
+
+
+def _git_indexed_files(repo_root: Path) -> list[str]:
+    return [entry.path for entry in _capture_git_index(repo_root).entries]
 
 
 def _git_index_fingerprint(repo_root: Path) -> str:
-    result = subprocess.run(
-        ["git", "ls-files", "--stage", "-z"],
-        cwd=repo_root,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise OfflineBundleError(f"Cannot fingerprint the Git index: {detail}")
-    return hashlib.sha256(result.stdout).hexdigest()
+    return _capture_git_index(repo_root).fingerprint
 
 
-def _run_public_tree_audit(repo_root: Path) -> None:
-    result = subprocess.run(
-        [sys.executable, str(repo_root / "tools" / "verify_public_tree.py")],
-        cwd=repo_root,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+def _run_public_tree_audit(
+    repo_root: Path, snapshot: GitIndexSnapshot | None = None
+) -> None:
+    snapshot = snapshot or _capture_git_index(repo_root)
+    with tempfile.TemporaryDirectory(prefix=".dicomxphits-audit-index-") as temporary:
+        index_path = Path(temporary) / "index"
+        environment = os.environ.copy()
+        environment["GIT_INDEX_FILE"] = str(index_path)
+        initialize = subprocess.run(
+            ["git", "read-tree", "--empty"],
+            cwd=repo_root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if initialize.returncode != 0:
+            detail = initialize.stderr.decode("utf-8", errors="replace").strip()
+            raise OfflineBundleError(f"Cannot initialize audit index: {detail}")
+        populate = subprocess.run(
+            ["git", "update-index", "-z", "--index-info"],
+            cwd=repo_root,
+            env=environment,
+            input=snapshot.raw,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if populate.returncode != 0:
+            detail = populate.stderr.decode("utf-8", errors="replace").strip()
+            raise OfflineBundleError(f"Cannot populate audit index: {detail}")
+        result = subprocess.run(
+            [sys.executable, str(repo_root / "tools" / "verify_public_tree.py")],
+            cwd=repo_root,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
     if result.returncode != 0:
         raise OfflineBundleError(
             "Public-tree verification failed before bundle staging:\n" + result.stdout
         )
 
 
-def _read_indexed_blob(repo_root: Path, relative: str) -> bytes:
+def _read_indexed_blob(
+    repo_root: Path, object_id: str, relative: str = "indexed source"
+) -> bytes:
     result = subprocess.run(
-        ["git", "cat-file", "blob", f":{relative}"],
+        ["git", "cat-file", "blob", object_id],
         cwd=repo_root,
         check=False,
         stdout=subprocess.PIPE,
@@ -268,17 +327,35 @@ def _read_indexed_blob(repo_root: Path, relative: str) -> bytes:
     return result.stdout
 
 
-def load_indexed_project_metadata(repo_root: Path) -> dict[str, object]:
+def load_indexed_project_metadata(
+    repo_root: Path, snapshot: GitIndexSnapshot | None = None
+) -> dict[str, object]:
+    snapshot = snapshot or _capture_git_index(repo_root)
+    entry = next(
+        (entry for entry in snapshot.entries if entry.path == "pyproject.toml"), None
+    )
+    if entry is None:
+        raise OfflineBundleError("Indexed pyproject.toml is missing")
     try:
-        text = _read_indexed_blob(repo_root, "pyproject.toml").decode("utf-8")
+        text = _read_indexed_blob(
+            repo_root, entry.object_id, entry.path
+        ).decode("utf-8")
     except UnicodeError as exc:
         raise OfflineBundleError("Indexed pyproject.toml is not UTF-8") from exc
     return _parse_project_metadata(text, "indexed pyproject.toml")
 
 
-def copy_indexed_public_source(repo_root: Path, staging_root: Path) -> list[str]:
-    _run_public_tree_audit(repo_root)
-    indexed = _git_indexed_files(repo_root)
+def copy_indexed_public_source(
+    repo_root: Path,
+    staging_root: Path,
+    snapshot: GitIndexSnapshot | None = None,
+    *,
+    run_audit: bool = True,
+) -> list[str]:
+    snapshot = snapshot or _capture_git_index(repo_root)
+    if run_audit:
+        _run_public_tree_audit(repo_root, snapshot)
+    indexed = [entry.path for entry in snapshot.entries]
     indexed_set = set(indexed)
     missing_required = sorted(set(REQUIRED_BUNDLE_SOURCE_PATHS) - indexed_set)
     if missing_required:
@@ -286,10 +363,13 @@ def copy_indexed_public_source(repo_root: Path, staging_root: Path) -> list[str]
             "Required offline source files are not Git-indexed: "
             + ", ".join(missing_required)
         )
-    for relative in indexed:
+    for entry in snapshot.entries:
+        relative = entry.path
         destination = staging_root.joinpath(*PurePosixPath(relative).parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(_read_indexed_blob(repo_root, relative))
+        destination.write_bytes(
+            _read_indexed_blob(repo_root, entry.object_id, relative)
+        )
     return indexed
 
 
@@ -373,7 +453,9 @@ def build_bundle(
     signature_metadata_path: Path,
     output_zip: Path,
 ) -> dict[str, object]:
-    metadata = load_indexed_project_metadata(repo_root)
+    snapshot = _capture_git_index(repo_root)
+    _run_public_tree_audit(repo_root, snapshot)
+    metadata = load_indexed_project_metadata(repo_root, snapshot)
     wheels = validate_wheelhouse(wheelhouse, list(metadata["dependencies"]))
     signature = _load_signature_metadata(signature_metadata_path)
     if python_installer.name.lower() != PYTHON_INSTALLER_NAME.lower():
@@ -389,7 +471,9 @@ def build_bundle(
     ) as temporary:
         staging_root = Path(temporary) / top_level
         staging_root.mkdir(parents=True)
-        source_paths = copy_indexed_public_source(repo_root, staging_root)
+        source_paths = copy_indexed_public_source(
+            repo_root, staging_root, snapshot, run_audit=False
+        )
 
         installer_relative = f"python/{PYTHON_INSTALLER_NAME}"
         installer_destination = staging_root / installer_relative
@@ -424,7 +508,7 @@ def build_bundle(
             },
             "source": {
                 "git_head_commit": _git_head(repo_root),
-                "git_index_entries_sha256": _git_index_fingerprint(repo_root),
+                "git_index_entries_sha256": snapshot.fingerprint,
                 "selection": "git-indexed-public-regular-files",
                 "file_count": len(source_paths),
             },

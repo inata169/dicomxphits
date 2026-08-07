@@ -68,6 +68,49 @@ def _make_bundle(root: Path) -> dict:
     return manifest
 
 
+def _make_cmd_bootstrap_bundle(root: Path) -> tuple[dict, Path]:
+    marker = root / "helper-executed.txt"
+    payloads = {
+        "install_offline.cmd": (ROOT / "install_offline.cmd").read_bytes(),
+        "tools/offline_install.py": (
+            "from pathlib import Path\n"
+            "Path(__file__).resolve().parents[1].joinpath("
+            "'helper-executed.txt').write_text('executed', encoding='utf-8')\n"
+        ).encode("utf-8"),
+        "python/python-3.12.10-amd64.exe": b"synthetic installer",
+    }
+    records = []
+    for relative, content in payloads.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        records.append(
+            {
+                "path": relative,
+                "role": "synthetic",
+                "size": len(content),
+                "sha256": _sha256(path),
+            }
+        )
+    manifest = {"schema_version": 1, "files": records}
+    _write_cmd_bootstrap_integrity(root, manifest)
+    return manifest, marker
+
+
+def _write_cmd_bootstrap_integrity(root: Path, manifest: dict) -> None:
+    manifest_path = root / "bundle-manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    lines = [
+        f"{_sha256(root / record['path'])} *{record['path']}"
+        for record in manifest["files"]
+    ]
+    lines.append(f"{_sha256(manifest_path)} *bundle-manifest.json")
+    (root / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 class FakeRunner:
     def __init__(self, *, venv_minor: int = 12) -> None:
         self.venv_minor = venv_minor
@@ -112,6 +155,97 @@ def test_sha256_mismatch_is_rejected_before_installation(tmp_path):
 
     with pytest.raises(offline_install.OfflineInstallError, match="SHA-256 mismatch"):
         offline_install.verify_bundle(tmp_path)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
+@pytest.mark.parametrize("inventory_problem", ["empty", "missing-helper", "manifest-mismatch"])
+def test_cmd_rejects_incomplete_or_manifest_inconsistent_inventory_before_python(
+    tmp_path, inventory_problem
+):
+    root = tmp_path / "日本語 user" / "offline bootstrap"
+    root.mkdir(parents=True)
+    manifest, marker = _make_cmd_bootstrap_bundle(root)
+    checksum_path = root / "SHA256SUMS.txt"
+    if inventory_problem == "empty":
+        checksum_path.write_text("", encoding="utf-8")
+    elif inventory_problem == "missing-helper":
+        lines = checksum_path.read_text(encoding="utf-8").splitlines()
+        checksum_path.write_text(
+            "\n".join(
+                line for line in lines if not line.endswith("*tools/offline_install.py")
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    else:
+        helper_record = next(
+            record
+            for record in manifest["files"]
+            if record["path"] == "tools/offline_install.py"
+        )
+        helper_record["sha256"] = "0" * 64
+        _write_cmd_bootstrap_integrity(root, manifest)
+    environment = os.environ.copy()
+    environment["PYTHONUTF8"] = "1"
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "Initial SHA-256 verification passed." not in result.stdout
+    assert not marker.exists()
+    assert not (root / ".venv").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
+def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
+    root = tmp_path / "日本語 user" / "valid offline bootstrap"
+    root.mkdir(parents=True)
+    manifest, marker = _make_cmd_bootstrap_bundle(root)
+    helper = root / "tools" / "offline_install.py"
+    helper.write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "if '--probe' in sys.argv:\n"
+        "    print(sys.executable)\n"
+        "    raise SystemExit(0)\n"
+        "Path(__file__).resolve().parents[1].joinpath("
+        "'helper-executed.txt').write_text('executed', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    helper_record = next(
+        record
+        for record in manifest["files"]
+        if record["path"] == "tools/offline_install.py"
+    )
+    helper_record["size"] = helper.stat().st_size
+    helper_record["sha256"] = _sha256(helper)
+    _write_cmd_bootstrap_integrity(root, manifest)
+    environment = os.environ.copy()
+    environment["PYTHONUTF8"] = "1"
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Initial SHA-256 verification passed." in result.stdout
+    assert marker.read_text(encoding="utf-8") == "executed"
 
 
 @pytest.mark.parametrize(

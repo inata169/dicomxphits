@@ -39,11 +39,29 @@ powershell.exe -NoProfile -NonInteractive -Command ^
   "if([IO.Path]::IsPathRooted($relative)){throw ('Absolute checksum path: '+$relative)};" ^
   "$full=[IO.Path]::GetFullPath((Join-Path $root $relative));" ^
   "if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw ('Escaping checksum path: '+$relative)};" ^
-  "$key=$full.ToLowerInvariant();if($seen.ContainsKey($key)){throw ('Duplicate checksum path: '+$relative)};$seen[$key]=$true;" ^
+  "$key=$full.ToLowerInvariant();if($seen.ContainsKey($key)){throw ('Duplicate checksum path: '+$relative)};$seen[$key]=$expected;" ^
   "if(-not [IO.File]::Exists($full)){throw ('Missing bundle payload: '+$relative)};" ^
   "$actual=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant();" ^
   "if($actual -ne $expected){throw ('SHA-256 mismatch: '+$relative)}" ^
-  "};Write-Host 'Initial SHA-256 verification passed.'"
+  "};" ^
+  "if($seen.Count -eq 0){throw 'SHA256SUMS.txt is empty'};" ^
+  "$required=@('install_offline.cmd','bundle-manifest.json','tools/offline_install.py','python/python-3.12.10-amd64.exe');" ^
+  "foreach($item in $required){$full=[IO.Path]::GetFullPath((Join-Path $root $item));if(-not $seen.ContainsKey($full.ToLowerInvariant())){throw ('Required checksum entry is missing: '+$item)}};" ^
+  "$manifestPath=Join-Path $root 'bundle-manifest.json';$manifest=Get-Content -Raw -LiteralPath $manifestPath -Encoding UTF8|ConvertFrom-Json;" ^
+  "if($manifest.schema_version -ne 1 -or $null -eq $manifest.files){throw 'Unsupported or malformed bundle manifest'};" ^
+  "$records=@($manifest.files);if($records.Count -eq 0){throw 'Bundle manifest files list is empty'};$manifestSeen=@{};" ^
+  "foreach($record in $records){" ^
+  "$manifestRelative=[string]$record.path;if([string]::IsNullOrWhiteSpace($manifestRelative)){throw 'Manifest file path is missing'};" ^
+  "$relative=$manifestRelative.Replace('/',[IO.Path]::DirectorySeparatorChar);if([IO.Path]::IsPathRooted($relative)){throw ('Absolute manifest path: '+$manifestRelative)};" ^
+  "$full=[IO.Path]::GetFullPath((Join-Path $root $relative));if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw ('Escaping manifest path: '+$manifestRelative)};" ^
+  "$key=$full.ToLowerInvariant();if($manifestSeen.ContainsKey($key)){throw ('Duplicate manifest path: '+$manifestRelative)};$manifestSeen[$key]=$true;" ^
+  "$manifestHash=[string]$record.sha256;if($manifestHash -notmatch '^[0-9a-f]{64}$'){throw ('Invalid manifest SHA-256: '+$manifestRelative)};" ^
+  "if(-not $seen.ContainsKey($key)){throw ('Manifest path is missing from checksums: '+$manifestRelative)};if($seen[$key] -ne $manifestHash){throw ('Manifest/checksum mismatch: '+$manifestRelative)};" ^
+  "if(([long]$record.size) -ne ([IO.FileInfo]$full).Length){throw ('Manifest size mismatch: '+$manifestRelative)}" ^
+  "};" ^
+  "$manifestKey=$manifestPath.ToLowerInvariant();if($seen.Count -ne ($manifestSeen.Count+1)){throw 'Checksum inventory and manifest file set differ'};" ^
+  "foreach($key in $seen.Keys){if($key -ne $manifestKey -and -not $manifestSeen.ContainsKey($key)){throw 'Checksum entry is absent from manifest'}};" ^
+  "Write-Host 'Initial SHA-256 verification passed.'"
 if errorlevel 1 (
   echo ERROR: Bundle integrity verification failed. Nothing was installed. 1>&2
   >>"%LogFile%" echo ERROR: Initial bundle SHA-256 verification failed before installation.

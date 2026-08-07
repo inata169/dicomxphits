@@ -118,7 +118,9 @@ def test_source_copy_uses_only_git_indexed_regular_files(tmp_path, monkeypatch):
         check=True,
     )
     tracked.write_text("unstaged replacement must not copy\n", encoding="utf-8")
-    monkeypatch.setattr(offline_bundle, "_run_public_tree_audit", lambda _repo: None)
+    monkeypatch.setattr(
+        offline_bundle, "_run_public_tree_audit", lambda _repo, _snapshot: None
+    )
 
     copied = offline_bundle.copy_indexed_public_source(repo, staging)
 
@@ -166,6 +168,48 @@ def test_git_index_fingerprint_changes_with_staged_content(tmp_path):
 
     subprocess.run(["git", "add", "source.txt"], cwd=repo, check=True)
     assert offline_bundle._git_index_fingerprint(repo) != first
+
+
+def test_snapshot_copy_and_fingerprint_ignore_concurrent_index_change(
+    tmp_path, monkeypatch
+):
+    repo = tmp_path / "repo"
+    staging = tmp_path / "staging"
+    repo.mkdir()
+    staging.mkdir()
+    for relative in offline_bundle.REQUIRED_BUNDLE_SOURCE_PATHS:
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"snapshot {relative}\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    snapshot = offline_bundle._capture_git_index(repo)
+    original_read = offline_bundle._read_indexed_blob
+    changed = False
+
+    def read_while_index_changes(repo_root, object_id, relative="indexed source"):
+        nonlocal changed
+        if not changed:
+            changed = True
+            source = repo / "install_offline.cmd"
+            source.write_text("concurrent staged replacement\n", encoding="utf-8")
+            subprocess.run(["git", "add", "install_offline.cmd"], cwd=repo, check=True)
+        return original_read(repo_root, object_id, relative)
+
+    monkeypatch.setattr(offline_bundle, "_read_indexed_blob", read_while_index_changes)
+    monkeypatch.setattr(
+        offline_bundle, "_run_public_tree_audit", lambda _repo, _snapshot: None
+    )
+
+    copied = offline_bundle.copy_indexed_public_source(
+        repo, staging, snapshot=snapshot
+    )
+
+    assert "install_offline.cmd" in copied
+    assert (staging / "install_offline.cmd").read_text(encoding="utf-8") == (
+        "snapshot install_offline.cmd\n"
+    )
+    assert snapshot.fingerprint != offline_bundle._git_index_fingerprint(repo)
 
 
 def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
