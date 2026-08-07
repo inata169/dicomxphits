@@ -306,14 +306,30 @@ def ensure_venv(
     *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> Path:
+    bundle_root = bundle_root.resolve()
     venv_root = bundle_root / ".venv"
     venv_python = venv_root / "Scripts" / "python.exe"
+    if venv_root.is_symlink() or venv_root.is_junction():
+        raise OfflineInstallError(
+            "Existing .venv is a symbolic link or directory junction and may "
+            "resolve outside the bundle. It was not changed. Rename or remove "
+            "the link manually after confirming its target, then rerun."
+        )
     if venv_root.exists():
         if not venv_root.is_dir() or not venv_python.is_file():
             raise OfflineInstallError(
                 "Existing .venv is malformed or incomplete. It was not changed. "
                 "Rename or remove it manually after confirming it is no longer needed, then rerun."
             )
+        try:
+            resolved_python = venv_python.resolve(strict=True)
+            resolved_python.relative_to(venv_root)
+        except (OSError, ValueError) as exc:
+            raise OfflineInstallError(
+                "Existing .venv Python resolves outside the repository-local "
+                "environment. It was not changed. Rename or remove .venv "
+                "manually after confirming its target, then rerun."
+            ) from exc
         probe = probe_python(venv_python, runner=runner)
         if not probe.supported:
             raise OfflineInstallError(
@@ -493,8 +509,16 @@ def install_bundle(
     )
     environment = offline_environment(wheelhouse)
     commands = [
-        offline_pip_command(venv_python, wheelhouse, ["setuptools", "wheel"]),
-        offline_pip_command(venv_python, wheelhouse, runtime_requirements),
+        offline_pip_command(
+            venv_python,
+            wheelhouse,
+            ["--force-reinstall", "setuptools", "wheel"],
+        ),
+        offline_pip_command(
+            venv_python,
+            wheelhouse,
+            ["--force-reinstall", *runtime_requirements],
+        ),
         offline_pip_command(venv_python, wheelhouse, ["--editable", str(root)]),
     ]
     for command in commands:

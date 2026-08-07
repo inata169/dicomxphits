@@ -302,6 +302,34 @@ def test_incompatible_existing_venv_is_rejected_without_deletion(tmp_path):
     assert venv_python.exists()
 
 
+def test_linked_existing_venv_is_rejected_without_probing(tmp_path, monkeypatch):
+    venv_python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_bytes(b"synthetic Python")
+    logger = offline_install.InstallLogger(tmp_path / "offline-install.log")
+    original_is_junction = Path.is_junction
+
+    def report_venv_as_junction(path):
+        return path == tmp_path / ".venv" or original_is_junction(path)
+
+    monkeypatch.setattr(Path, "is_junction", report_venv_as_junction)
+    runner = FakeRunner()
+
+    with pytest.raises(
+        offline_install.OfflineInstallError,
+        match="symbolic link or directory junction",
+    ):
+        offline_install.ensure_venv(
+            tmp_path,
+            Path(sys.executable),
+            logger,
+            runner=runner,
+        )
+
+    assert runner.calls == []
+    assert venv_python.exists()
+
+
 def test_offline_install_uses_only_bundled_wheels_in_unicode_space_path(tmp_path):
     root = tmp_path / "日本語 user" / "offline bundle"
     root.mkdir(parents=True)
@@ -326,11 +354,13 @@ def test_offline_install_uses_only_bundled_wheels_in_unicode_space_path(tmp_path
         if "pip" in command and "install" in command
     ]
     assert len(pip_calls) == 3
-    for command, kwargs in pip_calls:
+    for index, (command, kwargs) in enumerate(pip_calls):
         assert "--no-index" in command
         assert "--find-links" in command
         assert str(root / "wheelhouse") in command
         assert "--no-build-isolation" in command
+        if index < 2:
+            assert "--force-reinstall" in command
         assert kwargs["env"]["PIP_NO_INDEX"] == "1"
         assert kwargs["env"]["PIP_FIND_LINKS"] == str(root / "wheelhouse")
         assert not any(value.startswith(("http://", "https://")) for value in command)
