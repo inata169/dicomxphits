@@ -17,6 +17,9 @@ For the v1.0.1 release completion, see the
 current next-session restart boundary after the Windows launcher correction and
 manual evidence record, see the
 [`2026-08-06 development handoff`](development-handoff-2026-08-06.md).
+For the current aggregate account of the bounded non-patient demonstrations,
+comparison conditions, and interpretation limits, see the
+[`Public Feasibility Demonstration`](public-feasibility-demonstration.md).
 
 ## Current baseline
 
@@ -41,13 +44,15 @@ manual evidence record, see the
   [#25](https://github.com/inata169/dicomxphits/pull/25)
 - Latest repository update pull request:
   [#28](https://github.com/inata169/dicomxphits/pull/28)
+- Current public feasibility documentation pull request:
+  [#30](https://github.com/inata169/dicomxphits/pull/30)
 - Closing baseline before the current handoff: merge commit
   `e2cb54568628b6b1d9121fe3b85eb2b4b224f6f9`
 - Closing-baseline main push CI run #203 completed successfully
 - Dev Container baseline validated through pull request
   [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
   `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
-- Status last reviewed: 2026-08-06
+- Status last reviewed: 2026-08-07
 
 The GitHub Release publishes the source distribution and wheel built from the
 `v1.0.1` tag. Their SHA-256 digests are
@@ -274,6 +279,23 @@ the agent did not inspect the external result file. Exact paths, DICOM, numeric
 results, screenshots, GPR result files, and generated outputs remain outside
 Git. This is one bounded research workflow, not clinical validation or a
 general dose-accuracy claim.
+
+That paragraph records the evidence boundary at the time of the v1.0.1
+release; it is not the current aggregate comparison record. A later read-only
+review of four locally retained comparison reports and run logs confirmed two
+human-identified end-to-end non-patient cases: a centered `20 × 20 cm²` water
+phantom, with two records around 95% and slightly below 95% in both, and the
+PHITSgeoTest case, at least 95%. All four records used global `3% / 3 mm`
+gamma, a `10%` dose cutoff, global-maximum normalization, linear
+interpolation, and interpolation fraction 3. The fourth record supports the
+comparison evidence but is not counted as a third end-to-end case because the
+complete chain was not separately human-confirmed for that phantom. Exact
+individual rates and protected artifacts remain unpublished. These values are
+engineering feasibility evidence under bounded research conditions, not a
+clinical QA threshold, clinical validation, commissioning evidence, or a
+patient-specific QA result. See the
+[`Public Feasibility Demonstration`](public-feasibility-demonstration.md) for
+the evidence and reproducibility boundaries.
 
 After pull request #27, the human separately reported two successful Windows
 manual checks: one used an existing external workspace path and one used a
