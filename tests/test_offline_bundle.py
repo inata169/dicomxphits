@@ -77,6 +77,25 @@ def test_source_archive_in_wheelhouse_is_rejected(tmp_path):
         offline_bundle.validate_wheelhouse(wheelhouse, ["numpy", "pydicom"])
 
 
+def test_captured_wheel_bytes_ignore_replacement_before_staging(tmp_path):
+    wheelhouse = tmp_path / "wheelhouse"
+    _write_wheels(wheelhouse)
+    numpy_path = wheelhouse / "numpy-2.3.0-cp312-cp312-win_amd64.whl"
+    expected = numpy_path.read_bytes()
+
+    wheels, captured = offline_bundle._capture_wheelhouse(
+        wheelhouse, ["numpy", "pydicom"]
+    )
+    numpy_path.write_bytes(b"replacement after validation")
+    staging = tmp_path / "staging" / "wheelhouse"
+    staging.mkdir(parents=True)
+    for name, content in captured.items():
+        (staging / name).write_bytes(content)
+
+    assert any(wheel["distribution"] == "numpy" for wheel in wheels)
+    assert (staging / numpy_path.name).read_bytes() == expected
+
+
 def test_project_runtime_dependencies_are_read_from_pyproject(tmp_path):
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(

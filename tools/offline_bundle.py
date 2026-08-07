@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -149,17 +148,13 @@ def parse_wheel_filename(path: Path) -> dict[str, object]:
     }
 
 
-def validate_wheelhouse(
-    wheelhouse: Path, runtime_dependencies: list[str]
+def _validate_wheel_names(
+    artifact_names: list[str], runtime_dependencies: list[str]
 ) -> list[dict[str, object]]:
-    try:
-        artifacts = sorted(path for path in wheelhouse.iterdir() if path.is_file())
-    except OSError as exc:
-        raise OfflineBundleError(f"Cannot read wheelhouse: {exc}") from exc
-    if not artifacts:
+    if not artifact_names:
         raise OfflineBundleError("Wheelhouse is empty")
 
-    wheels = [parse_wheel_filename(path) for path in artifacts]
+    wheels = [parse_wheel_filename(Path(name)) for name in artifact_names]
     available = {str(wheel["distribution"]) for wheel in wheels}
     required = {
         *(requirement_name(value) for value in runtime_dependencies),
@@ -184,6 +179,43 @@ def validate_wheelhouse(
             "NumPy wheel must have cp312-cp312-win_amd64 compatibility; found: "
             + names
         )
+    return wheels
+
+
+def _capture_wheelhouse(
+    wheelhouse: Path, runtime_dependencies: list[str]
+) -> tuple[list[dict[str, object]], dict[str, bytes]]:
+    try:
+        entries = sorted(wheelhouse.iterdir(), key=lambda path: path.name)
+    except OSError as exc:
+        raise OfflineBundleError(f"Cannot read wheelhouse: {exc}") from exc
+    invalid = [
+        path.name for path in entries if path.is_symlink() or not path.is_file()
+    ]
+    if invalid:
+        raise OfflineBundleError(
+            "Wheelhouse contains a non-regular artifact: " + ", ".join(invalid)
+        )
+    captured: dict[str, bytes] = {}
+    for path in entries:
+        try:
+            captured[path.name] = path.read_bytes()
+        except OSError as exc:
+            raise OfflineBundleError(
+                f"Cannot read wheel artifact {path.name}: {exc}"
+            ) from exc
+        if path.is_symlink():
+            raise OfflineBundleError(
+                f"Wheel artifact became a symbolic link while being captured: {path.name}"
+            )
+    wheels = _validate_wheel_names(list(captured), runtime_dependencies)
+    return wheels, captured
+
+
+def validate_wheelhouse(
+    wheelhouse: Path, runtime_dependencies: list[str]
+) -> list[dict[str, object]]:
+    wheels, _captured = _capture_wheelhouse(wheelhouse, runtime_dependencies)
     return wheels
 
 
@@ -502,7 +534,9 @@ def build_bundle(
     snapshot = _capture_git_index(repo_root)
     _run_public_tree_audit(repo_root, snapshot)
     metadata = load_indexed_project_metadata(repo_root, snapshot)
-    wheels = validate_wheelhouse(wheelhouse, list(metadata["dependencies"]))
+    wheels, wheel_artifacts = _capture_wheelhouse(
+        wheelhouse, list(metadata["dependencies"])
+    )
     if python_installer.name.lower() != PYTHON_INSTALLER_NAME.lower():
         raise OfflineBundleError(
             f"Expected Python installer named {PYTHON_INSTALLER_NAME}, got {python_installer.name}"
@@ -536,9 +570,9 @@ def build_bundle(
         wheel_relatives: list[str] = []
         wheel_destination = staging_root / "wheelhouse"
         wheel_destination.mkdir()
-        for wheel_path in sorted(path for path in wheelhouse.iterdir() if path.is_file()):
-            relative = f"wheelhouse/{wheel_path.name}"
-            shutil.copyfile(wheel_path, staging_root / relative)
+        for wheel_name, wheel_bytes in wheel_artifacts.items():
+            relative = f"wheelhouse/{wheel_name}"
+            (staging_root / relative).write_bytes(wheel_bytes)
             wheel_relatives.append(relative)
 
         records = [
