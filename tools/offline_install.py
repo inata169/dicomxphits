@@ -152,6 +152,7 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
     if not isinstance(raw_files, list):
         raise OfflineInstallError("Bundle manifest files must be a list")
     manifest_paths: set[str] = set()
+    expected_wheel_paths: set[str] = set()
     for record in raw_files:
         if not isinstance(record, dict):
             raise OfflineInstallError("Bundle manifest contains a malformed file record")
@@ -170,6 +171,20 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
             raise OfflineInstallError(f"Invalid manifest size for {relative}")
         if not isinstance(role, str) or not role:
             raise OfflineInstallError(f"Invalid manifest role for {relative}")
+        if role == "dependency-wheel":
+            if (
+                len(PurePosixPath(relative).parts) != 2
+                or not relative.startswith("wheelhouse/")
+                or not relative.lower().endswith(".whl")
+            ):
+                raise OfflineInstallError(
+                    f"Dependency wheel is outside the flat wheelhouse: {relative}"
+                )
+            expected_wheel_paths.add(relative)
+        elif relative.startswith("wheelhouse/"):
+            raise OfflineInstallError(
+                f"Wheelhouse payload has an invalid manifest role: {relative}"
+            )
         if checksums.get(relative) != digest:
             raise OfflineInstallError(
                 f"Manifest and SHA256SUMS.txt disagree for {relative}"
@@ -186,6 +201,30 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
         raise OfflineInstallError(
             "Integrity inventories disagree; "
             f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
+        )
+
+    if not expected_wheel_paths:
+        raise OfflineInstallError("Bundle manifest contains no dependency wheels")
+    wheelhouse = root / "wheelhouse"
+    try:
+        wheelhouse_entries = list(wheelhouse.iterdir())
+    except OSError as exc:
+        raise OfflineInstallError(f"Cannot inspect bundled wheelhouse: {exc}") from exc
+    actual_wheel_paths: set[str] = set()
+    invalid_entries: list[str] = []
+    for entry in wheelhouse_entries:
+        relative = f"wheelhouse/{entry.name}"
+        if entry.is_symlink() or not entry.is_file():
+            invalid_entries.append(relative)
+        else:
+            actual_wheel_paths.add(relative)
+    if invalid_entries or actual_wheel_paths != expected_wheel_paths:
+        missing = sorted(expected_wheel_paths - actual_wheel_paths)
+        unexpected = sorted(actual_wheel_paths - expected_wheel_paths)
+        raise OfflineInstallError(
+            "Wheelhouse contents differ from the verified manifest; "
+            f"missing={missing or 'none'}, "
+            f"unexpected={(unexpected + sorted(invalid_entries)) or 'none'}"
         )
 
     required_source = {

@@ -134,6 +134,7 @@ try {
     Write-Host "Downloading official CPython $PythonVersion x64 installer..."
     Invoke-WebRequest -UseBasicParsing -Uri $PythonInstallerUrl -OutFile $PythonInstaller
 
+    $InstallerHashBeforeSignature = (Get-FileHash -LiteralPath $PythonInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
     $Signature = Get-AuthenticodeSignature -LiteralPath $PythonInstaller
     if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
         throw "Python installer Authenticode validation failed: $($Signature.Status) $($Signature.StatusMessage)"
@@ -149,6 +150,10 @@ try {
     if ($null -ne $Signature.TimeStamperCertificate) {
         $TimestampSubject = [string]$Signature.TimeStamperCertificate.Subject
     }
+    $InstallerHash = (Get-FileHash -LiteralPath $PythonInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($InstallerHash -ne $InstallerHashBeforeSignature) {
+        throw "Python installer changed during Authenticode validation."
+    }
     $AuthenticodeRecord = [ordered]@{
         status = [string]$Signature.Status
         status_message = [string]$Signature.StatusMessage
@@ -157,9 +162,9 @@ try {
         signer_not_before = $Signature.SignerCertificate.NotBefore.ToUniversalTime().ToString("o")
         signer_not_after = $Signature.SignerCertificate.NotAfter.ToUniversalTime().ToString("o")
         timestamp_signer_subject = $TimestampSubject
+        installer_sha256 = $InstallerHash
     }
     $AuthenticodeRecord | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SignatureMetadata -Encoding UTF8
-    $InstallerHash = (Get-FileHash -LiteralPath $PythonInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
     Write-Host "Python installer Authenticode: Valid"
     Write-Host "Python installer SHA-256: $InstallerHash"
 

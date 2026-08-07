@@ -157,6 +157,24 @@ def test_sha256_mismatch_is_rejected_before_installation(tmp_path):
         offline_install.verify_bundle(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "extra_name",
+    [
+        "numpy-99.0.0-cp312-cp312-win_amd64.whl",
+        "numpy-99.0.0.tar.gz",
+    ],
+)
+def test_unmanifested_wheelhouse_artifact_is_rejected(tmp_path, extra_name):
+    _make_bundle(tmp_path)
+    (tmp_path / "wheelhouse" / extra_name).write_bytes(b"unverified artifact")
+
+    with pytest.raises(
+        offline_install.OfflineInstallError,
+        match="Wheelhouse contents differ from the verified manifest",
+    ):
+        offline_install.verify_bundle(tmp_path)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
 @pytest.mark.parametrize("inventory_problem", ["empty", "missing-helper", "manifest-mismatch"])
 def test_cmd_rejects_incomplete_or_manifest_inconsistent_inventory_before_python(

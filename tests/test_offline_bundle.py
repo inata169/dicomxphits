@@ -232,6 +232,35 @@ def test_snapshot_audit_executes_indexed_verifier_not_worktree(tmp_path):
         offline_bundle._run_public_tree_audit(repo, snapshot)
 
 
+def test_authenticode_metadata_is_bound_to_installer_bytes(tmp_path):
+    validated_bytes = b"validated signed installer"
+    validated_hash = offline_bundle.hashlib.sha256(validated_bytes).hexdigest()
+    metadata_path = tmp_path / "python-authenticode.json"
+    metadata_path.write_text(
+        offline_bundle.json.dumps(
+            {
+                "status": "Valid",
+                "signer_subject": "CN=Python Software Foundation",
+                "signer_thumbprint": "A" * 40,
+                "installer_sha256": validated_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        offline_bundle.OfflineBundleError,
+        match="do not match the Authenticode-validated SHA-256",
+    ):
+        offline_bundle._load_signature_metadata(
+            metadata_path,
+            offline_bundle.hashlib.sha256(b"replaced installer").hexdigest(),
+        )
+
+    value = offline_bundle._load_signature_metadata(metadata_path, validated_hash)
+    assert value["installer_sha256"] == validated_hash
+
+
 def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
     text = (ROOT / "tools" / "prepare_offline_bundle.ps1").read_text(
         encoding="utf-8"
@@ -245,3 +274,6 @@ def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
     assert '"--abi"' in text and '"cp312"' in text
     assert "Get-AuthenticodeSignature" in text
     assert "Python Software Foundation" in text
+    assert "InstallerHashBeforeSignature" in text
+    assert "installer_sha256" in text
+    assert "changed during Authenticode validation" in text

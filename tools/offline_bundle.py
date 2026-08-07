@@ -440,7 +440,9 @@ def _git_head(repo_root: Path) -> str:
     return value
 
 
-def _load_signature_metadata(path: Path) -> dict[str, object]:
+def _load_signature_metadata(
+    path: Path, installer_sha256: str
+) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -457,6 +459,15 @@ def _load_signature_metadata(path: Path) -> dict[str, object]:
         r"[0-9A-Fa-f]{40,64}", thumbprint
     ):
         raise OfflineBundleError("Python installer signer thumbprint is invalid")
+    recorded_hash = value.get("installer_sha256")
+    if not isinstance(recorded_hash, str) or not _SHA256_RE.fullmatch(
+        recorded_hash
+    ):
+        raise OfflineBundleError("Authenticode metadata installer SHA-256 is invalid")
+    if recorded_hash != installer_sha256:
+        raise OfflineBundleError(
+            "Python installer bytes do not match the Authenticode-validated SHA-256"
+        )
     return value
 
 
@@ -492,13 +503,20 @@ def build_bundle(
     _run_public_tree_audit(repo_root, snapshot)
     metadata = load_indexed_project_metadata(repo_root, snapshot)
     wheels = validate_wheelhouse(wheelhouse, list(metadata["dependencies"]))
-    signature = _load_signature_metadata(signature_metadata_path)
     if python_installer.name.lower() != PYTHON_INSTALLER_NAME.lower():
         raise OfflineBundleError(
             f"Expected Python installer named {PYTHON_INSTALLER_NAME}, got {python_installer.name}"
         )
     if not python_installer.is_file():
         raise OfflineBundleError(f"Python installer is missing: {python_installer}")
+    try:
+        python_installer_bytes = python_installer.read_bytes()
+    except OSError as exc:
+        raise OfflineBundleError(f"Cannot read Python installer: {exc}") from exc
+    installer_sha256 = hashlib.sha256(python_installer_bytes).hexdigest()
+    signature = _load_signature_metadata(
+        signature_metadata_path, installer_sha256
+    )
 
     top_level = f"dicomxphits-offline-win64-{metadata['version']}"
     with tempfile.TemporaryDirectory(
@@ -513,7 +531,7 @@ def build_bundle(
         installer_relative = f"python/{PYTHON_INSTALLER_NAME}"
         installer_destination = staging_root / installer_relative
         installer_destination.parent.mkdir(parents=True)
-        shutil.copyfile(python_installer, installer_destination)
+        installer_destination.write_bytes(python_installer_bytes)
 
         wheel_relatives: list[str] = []
         wheel_destination = staging_root / "wheelhouse"
