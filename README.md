@@ -78,6 +78,30 @@ installs dependencies, or reuses the Dev Container's Linux Python. See
 For the complete v1.0.x walkthrough, see the
 [GUI User Guide](docs/gui-user-guide.md).
 
+## Windows Offline Installation
+
+For a Windows 10/11 x64 computer without internet access, an online Windows
+computer can create a USB-ready bundle with:
+
+```powershell
+.\tools\prepare_offline_bundle.ps1
+```
+
+On the offline computer, the primary procedure is only:
+
+1. Copy and fully extract the ZIP to a writable local-disk folder.
+2. Run `install_offline.cmd` from the extracted folder.
+
+The installer verifies the bundle, creates the repository-local `.venv`, uses
+only bundled wheels, verifies the required imports, and offers the existing GUI
+launcher after success. It does not bundle, discover, or run PHITS-related
+external tools. See the complete [English offline installation guide](docs/windows-offline-installation.md)
+or [Japanese offline installation guide](docs/windows-offline-installation.ja.md).
+The bounded 2026-08-07 human check is recorded in the
+[Windows offline installation validation record](docs/windows-offline-installation-validation-2026-08-07.md)
+([Japanese](docs/windows-offline-installation-validation-2026-08-07.ja.md));
+it is installation evidence, not clinical validation.
+
 ## Workflow at a Glance
 
 The guided workflow keeps each stage explicit and gated:
@@ -676,6 +700,7 @@ RTDOSE Run stage performs its accepted correction handoff automatically.
 - [Public feasibility demonstration and research boundaries](docs/public-feasibility-demonstration.md)
 - [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)
+- [Windows offline installation validation — 2026-08-07](docs/windows-offline-installation-validation-2026-08-07.md)
 - [Development handoff — 2026-08-07](docs/development-handoff-2026-08-07.md)
 - [Development handoff — 2026-08-06](docs/development-handoff-2026-08-06.md)
 - [Manual smoke workflow](docs/manual_smoke_workflow.md)

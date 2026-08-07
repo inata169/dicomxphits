@@ -1,6 +1,12 @@
 include config/dicomxphits.machine.example.json
 include docs/release_acceptance_evidence.json
 include docs/release-notes-v1.0.1.md
+include docs/windows-offline-installation.md
+include docs/windows-offline-installation.ja.md
+include install_offline.cmd
 include launchers/run_gui_venv.cmd
 include launchers/run_gui_venv.ps1
 include templates/phits2dicom_rtdose_template.dcm
+include tools/offline_bundle.py
+include tools/offline_install.py
+include tools/prepare_offline_bundle.ps1
