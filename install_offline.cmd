@@ -28,6 +28,7 @@ if not exist "%ChecksumFile%" (
 rem Verify every protected payload before any bundled executable is started.
 powershell.exe -NoProfile -NonInteractive -Command ^
   "$ErrorActionPreference='Stop';" ^
+  "function Get-Sha256([string]$path){$stream=[IO.File]::OpenRead($path);try{$sha=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}}finally{$stream.Dispose()}};" ^
   "$root=[IO.Path]::GetFullPath($env:DICOMXPHITS_BUNDLE_ROOT);" ^
   "$prefix=$root.TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar;" ^
   "$seen=@{};" ^
@@ -41,7 +42,7 @@ powershell.exe -NoProfile -NonInteractive -Command ^
   "if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw ('Escaping checksum path: '+$relative)};" ^
   "$key=$full.ToLowerInvariant();if($seen.ContainsKey($key)){throw ('Duplicate checksum path: '+$relative)};$seen[$key]=$expected;" ^
   "if(-not [IO.File]::Exists($full)){throw ('Missing bundle payload: '+$relative)};" ^
-  "$actual=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant();" ^
+  "$actual=Get-Sha256 $full;" ^
   "if($actual -ne $expected){throw ('SHA-256 mismatch: '+$relative)}" ^
   "};" ^
   "if($seen.Count -eq 0){throw 'SHA256SUMS.txt is empty'};" ^

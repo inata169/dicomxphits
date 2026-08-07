@@ -358,7 +358,7 @@ def test_existing_public_gui_launcher_remains_the_offline_target():
 def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
     text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
 
-    checksum_position = text.index("Get-FileHash")
+    checksum_position = text.index("Get-Sha256")
     installer_position = text.index('"%Installer%" /quiet')
     assert checksum_position < installer_position
     assert "InstallAllUsers=0" in text
@@ -367,6 +367,8 @@ def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
     assert "InstallLauncherAllUsers=0" in text
     assert "Include_tcltk=1" in text
     assert "AssociateFiles=0" in text
+    assert "Security.Cryptography.SHA256" in text
+    assert "Get-FileHash" not in text
 
 
 def test_cmd_validates_the_new_current_user_python_without_for_f_capture():
