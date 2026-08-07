@@ -2,6 +2,8 @@
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul 2>&1
 
+if /I "%~1"=="--verified-stage" goto VerifiedStage
+
 rem One-entry Windows x64 offline installer. Keep all paths relative to this file.
 rem Resolve the script directory without a trailing separator. A quoted Windows
 rem argument ending in a backslash can escape its closing quote for Python.
@@ -25,13 +27,15 @@ if not exist "%ChecksumFile%" (
   exit /b 1
 )
 
-rem Verify every protected payload before any bundled executable is started.
+rem Verify and read-lock every protected payload, then run the installation as
+rem a child while those exact files cannot be replaced, rewritten, or deleted.
 powershell.exe -NoProfile -NonInteractive -Command ^
   "$ErrorActionPreference='Stop';" ^
-  "function Get-Sha256([string]$path){$stream=[IO.File]::OpenRead($path);try{$sha=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}}finally{$stream.Dispose()}};" ^
+  "function Get-Sha256([IO.Stream]$stream){$sha=[Security.Cryptography.SHA256]::Create();try{return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}};" ^
   "$root=[IO.Path]::GetFullPath($env:DICOMXPHITS_BUNDLE_ROOT);" ^
   "$prefix=$root.TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar;" ^
-  "$seen=@{};" ^
+  "$seen=@{};$lockedFiles=New-Object Collections.Generic.List[IO.Stream];$childExit=1;" ^
+  "try{" ^
   "$lines=Get-Content -LiteralPath (Join-Path $root 'SHA256SUMS.txt') -Encoding UTF8;" ^
   "foreach($line in $lines){" ^
   "if([string]::IsNullOrWhiteSpace($line)){continue};" ^
@@ -42,8 +46,8 @@ powershell.exe -NoProfile -NonInteractive -Command ^
   "if(-not $full.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw ('Escaping checksum path: '+$relative)};" ^
   "$key=$full.ToLowerInvariant();if($seen.ContainsKey($key)){throw ('Duplicate checksum path: '+$relative)};$seen[$key]=$expected;" ^
   "if(-not [IO.File]::Exists($full)){throw ('Missing bundle payload: '+$relative)};" ^
-  "$actual=Get-Sha256 $full;" ^
-  "if($actual -ne $expected){throw ('SHA-256 mismatch: '+$relative)}" ^
+  "$stream=[IO.File]::Open($full,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read);" ^
+  "try{$actual=Get-Sha256 $stream;if($actual -ne $expected){throw ('SHA-256 mismatch: '+$relative)};$lockedFiles.Add($stream);$stream=$null}finally{if($null -ne $stream){$stream.Dispose()}}" ^
   "};" ^
   "if($seen.Count -eq 0){throw 'SHA256SUMS.txt is empty'};" ^
   "$required=@('install_offline.cmd','bundle-manifest.json','tools/offline_install.py','python/python-3.12.10-amd64.exe');" ^
@@ -62,13 +66,34 @@ powershell.exe -NoProfile -NonInteractive -Command ^
   "};" ^
   "$manifestKey=$manifestPath.ToLowerInvariant();if($seen.Count -ne ($manifestSeen.Count+1)){throw 'Checksum inventory and manifest file set differ'};" ^
   "foreach($key in $seen.Keys){if($key -ne $manifestKey -and -not $manifestSeen.ContainsKey($key)){throw 'Checksum entry is absent from manifest'}};" ^
-  "Write-Host 'Initial SHA-256 verification passed.'"
+  "Write-Host 'Initial SHA-256 verification passed.';Write-Host 'Protected payloads are read-locked during installation.';" ^
+  "$stageToken=[Guid]::NewGuid().ToString('N');$env:DICOMXPHITS_VERIFIED_STAGE=$stageToken;" ^
+  "& $env:ComSpec '/d' '/c' 'call' (Join-Path $root 'install_offline.cmd') '--verified-stage' $stageToken;" ^
+  "$childExit=$LASTEXITCODE" ^
+  "}finally{foreach($stream in $lockedFiles){$stream.Dispose()};[Environment]::SetEnvironmentVariable('DICOMXPHITS_VERIFIED_STAGE',$null,'Process')};" ^
+  "exit $childExit"
 if errorlevel 1 (
-  echo ERROR: Bundle integrity verification failed. Nothing was installed. 1>&2
-  >>"%LogFile%" echo ERROR: Initial bundle SHA-256 verification failed before installation.
+  echo ERROR: Verified offline installation failed. See "%LogFile%". 1>&2
+  >>"%LogFile%" echo ERROR: Bundle verification or verified offline installation failed.
   exit /b 1
 )
->>"%LogFile%" echo Initial bundle SHA-256 verification passed.
+exit /b 0
+
+:VerifiedStage
+if not "%DICOMXPHITS_VERIFIED_STAGE%"=="%~2" (
+  echo ERROR: Refusing an unverified internal installation stage. 1>&2
+  exit /b 1
+)
+if not defined DICOMXPHITS_BUNDLE_ROOT (
+  echo ERROR: Verified bundle root is unavailable. 1>&2
+  exit /b 1
+)
+for %%I in ("%DICOMXPHITS_BUNDLE_ROOT%\.") do set "BundleRoot=%%~fI"
+set "Helper=%BundleRoot%\tools\offline_install.py"
+set "Installer=%BundleRoot%\python\python-3.12.10-amd64.exe"
+set "LogFile=%BundleRoot%\offline-install.log"
+set "InstallerLog=%BundleRoot%\python-installer.log"
+>>"%LogFile%" echo Initial bundle SHA-256 verification passed; protected payloads locked.
 
 if not exist "%Helper%" (
   echo ERROR: Missing offline installation helper: "%Helper%" 1>&2

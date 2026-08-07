@@ -233,6 +233,14 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
         "import sys\n"
         "from pathlib import Path\n"
         "if '--probe' in sys.argv:\n"
+        "    try:\n"
+        "        Path(__file__).write_text('replaced after verification', encoding='utf-8')\n"
+        "    except OSError:\n"
+        "        Path(__file__).resolve().parents[1].joinpath(\n"
+        "            'replacement-blocked.txt'\n"
+        "        ).write_text('blocked', encoding='utf-8')\n"
+        "    else:\n"
+        "        raise SystemExit(99)\n"
         "    print(sys.executable)\n"
         "    raise SystemExit(0)\n"
         "Path(__file__).resolve().parents[1].joinpath("
@@ -263,6 +271,7 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Initial SHA-256 verification passed." in result.stdout
+    assert (root / "replacement-blocked.txt").read_text(encoding="utf-8") == "blocked"
     assert marker.read_text(encoding="utf-8") == "executed"
 
 
@@ -417,6 +426,8 @@ def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
     assert "AssociateFiles=0" in text
     assert "Security.Cryptography.SHA256" in text
     assert "Get-FileHash" not in text
+    assert "[IO.FileShare]::Read" in text
+    assert "DICOMXPHITS_VERIFIED_STAGE" in text
 
 
 def test_cmd_validates_the_new_current_user_python_without_for_f_capture():
