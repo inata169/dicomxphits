@@ -265,10 +265,44 @@ def _run_public_tree_audit(
     repo_root: Path, snapshot: GitIndexSnapshot | None = None
 ) -> None:
     snapshot = snapshot or _capture_git_index(repo_root)
+    verifier_entry = next(
+        (
+            entry
+            for entry in snapshot.entries
+            if entry.path == "tools/verify_public_tree.py"
+        ),
+        None,
+    )
+    if verifier_entry is None:
+        raise OfflineBundleError("Indexed public-tree verifier is missing")
+    git_directory_result = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"],
+        cwd=repo_root,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if git_directory_result.returncode != 0:
+        detail = git_directory_result.stderr.strip()
+        raise OfflineBundleError(f"Cannot locate Git object database: {detail}")
+    git_directory = git_directory_result.stdout.strip()
     with tempfile.TemporaryDirectory(prefix=".dicomxphits-audit-index-") as temporary:
+        snapshot_root = Path(temporary) / "snapshot"
+        verifier_path = snapshot_root / "tools" / "verify_public_tree.py"
+        verifier_path.parent.mkdir(parents=True)
+        verifier_path.write_bytes(
+            _read_indexed_blob(
+                repo_root, verifier_entry.object_id, verifier_entry.path
+            )
+        )
         index_path = Path(temporary) / "index"
         environment = os.environ.copy()
+        environment["GIT_DIR"] = git_directory
         environment["GIT_INDEX_FILE"] = str(index_path)
+        environment["GIT_WORK_TREE"] = str(repo_root)
         initialize = subprocess.run(
             ["git", "read-tree", "--empty"],
             cwd=repo_root,
@@ -293,8 +327,8 @@ def _run_public_tree_audit(
             detail = populate.stderr.decode("utf-8", errors="replace").strip()
             raise OfflineBundleError(f"Cannot populate audit index: {detail}")
         result = subprocess.run(
-            [sys.executable, str(repo_root / "tools" / "verify_public_tree.py")],
-            cwd=repo_root,
+            [sys.executable, "-I", str(verifier_path)],
+            cwd=snapshot_root,
             env=environment,
             check=False,
             stdout=subprocess.PIPE,
@@ -305,7 +339,8 @@ def _run_public_tree_audit(
         )
     if result.returncode != 0:
         raise OfflineBundleError(
-            "Public-tree verification failed before bundle staging:\n" + result.stdout
+            "Captured public-tree verification failed before bundle staging:\n"
+            + result.stdout
         )
 
 

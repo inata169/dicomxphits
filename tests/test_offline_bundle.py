@@ -212,6 +212,26 @@ def test_snapshot_copy_and_fingerprint_ignore_concurrent_index_change(
     assert snapshot.fingerprint != offline_bundle._git_index_fingerprint(repo)
 
 
+def test_snapshot_audit_executes_indexed_verifier_not_worktree(tmp_path):
+    repo = tmp_path / "repo"
+    verifier = repo / "tools" / "verify_public_tree.py"
+    verifier.parent.mkdir(parents=True)
+    verifier.write_text(
+        "raise SystemExit('indexed verifier rejected snapshot')\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "tools/verify_public_tree.py"], cwd=repo, check=True)
+    snapshot = offline_bundle._capture_git_index(repo)
+    verifier.write_text("raise SystemExit(0)\n", encoding="utf-8")
+
+    with pytest.raises(
+        offline_bundle.OfflineBundleError,
+        match="indexed verifier rejected snapshot",
+    ):
+        offline_bundle._run_public_tree_audit(repo, snapshot)
+
+
 def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
     text = (ROOT / "tools" / "prepare_offline_bundle.ps1").read_text(
         encoding="utf-8"
