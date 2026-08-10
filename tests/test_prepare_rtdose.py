@@ -26,6 +26,7 @@ from dicomxphits.prepare_rtdose import (
     run_rtdose,
     select_ct_reference,
 )
+from dicomxphits.safe_output import UnsafeWorkspacePathError
 from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_INPUT_DOSE_STATE,
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
@@ -1488,6 +1489,57 @@ def test_run_rejects_phits_dose_changed_after_prepare(tmp_path):
         )
 
     assert calls == []
+
+
+@pytest.mark.parametrize("target_name", ["corrected", "coordinate_summary"])
+def test_run_rejects_non_regular_postprocessing_target_before_conversion(
+    tmp_path,
+    target_name,
+):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    corrected = prepare_rtdose_module.corrected_rtdose_path(
+        files["sumtally_output"].with_suffix(".dcm")
+    )
+    targets = {
+        "corrected": corrected,
+        "coordinate_summary": prepare_rtdose_module.coordinate_summary_path(
+            corrected
+        ),
+    }
+    targets[target_name].mkdir()
+    calls = []
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: calls.append((cmd, kwargs)),
+        )
+
+    assert calls == []
+    failure = json.loads(
+        (workspace / "analysis" / "rtdose_conversion_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["phits2dicom_execution_started"] is False
+    assert targets[target_name].is_dir()
 
 def test_run_rejects_upstream_phits_out_changed_after_prepare(tmp_path):
     workspace, files = write_workspace(tmp_path)

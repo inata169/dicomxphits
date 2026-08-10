@@ -23,6 +23,7 @@ from dicomxphits.prepare_sumtally import (
     run_sumtally,
     select_sumtally_base_input,
 )
+from dicomxphits.safe_output import UnsafeWorkspacePathError
 from dicomxphits.sumtally_inputs import file_sha256
 
 def tally_output_text() -> str:
@@ -809,6 +810,16 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         calls["text"] = kwargs["text"]
         calls["shell"] = kwargs["shell"]
         calls["env"] = kwargs["env"]
+        for record in generation["sumtally_segment_paths"]:
+            written = Path(record["sumtally_written_output_path"])
+            if written.is_absolute():
+                staged_reference = written
+            else:
+                staged_reference = Path(kwargs["cwd"]) / written
+            assert staged_reference.resolve() == Path(
+                record["resolved_output_path"]
+            ).resolve()
+            assert staged_reference.is_file()
         staged_output = Path(kwargs["cwd"]) / expected_output.name
         staged_output.write_text(tally_output_text(), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="sum warn")
@@ -824,7 +835,7 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     assert calls["cmd"] == ["/opt/phits-root/bin/phits"]
     original_cwd = Path(generation["outputs"]["sum_input"]).parent
     assert calls["cwd"] != original_cwd
-    calls["cwd"].resolve().relative_to(original_cwd.resolve())
+    assert calls["cwd"].resolve().parent == workspace.resolve()
     assert Path(calls["stdin_name"]).name == Path(
         generation["outputs"]["sum_input"]
     ).name
@@ -1046,6 +1057,48 @@ def test_sumtally_guard_failure_does_not_mark_external_execution_started(tmp_pat
     assert started == []
     assert calls == []
     assert invalid_output_parent.read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.parametrize(
+    "target_name",
+    ["expected", "stdout", "stderr", "batch.out", "phits.out"],
+)
+def test_sumtally_rejects_non_regular_destination_before_execution(
+    tmp_path,
+    target_name,
+):
+    workspace = tmp_path / "workspace"
+    sumtally_dir = workspace / "sumtally"
+    sumtally_dir.mkdir(parents=True)
+    sum_input = sumtally_dir / "sum.inp"
+    sum_input.write_text("$OMP = 1\n[ E N D ]\n", encoding="utf-8")
+    targets = {
+        "expected": sumtally_dir / "sum.out",
+        "stdout": sumtally_dir / "stdout.txt",
+        "stderr": sumtally_dir / "stderr.txt",
+        "batch.out": sumtally_dir / "batch.out",
+        "phits.out": sumtally_dir / "phits.out",
+    }
+    targets[target_name].mkdir()
+    started = []
+    calls = []
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        run_phits_sumtally(
+            phits_executable_path="synthetic-phits",
+            sum_input=sum_input,
+            stdout_path=targets["stdout"],
+            stderr_path=targets["stderr"],
+            workspace_root=workspace,
+            expected_output=targets["expected"],
+            environment={},
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+            on_start=lambda: started.append(True),
+        )
+
+    assert started == []
+    assert calls == []
+    assert targets[target_name].is_dir()
 
 
 def test_relative_workspace_root_round_trips_generated_paths(

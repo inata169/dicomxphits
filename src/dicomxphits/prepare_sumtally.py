@@ -565,11 +565,16 @@ def run_phits_sumtally(
     if environment is None:
         environment = phits_environment(sum_input)
     with WorkspaceOutputGuard(workspace_root) as guard:
-        guard.prepare(expected_output)
-        guard.prepare(stdout_path, create_parents=True)
-        guard.prepare(stderr_path)
+        for output in (
+            expected_output,
+            stdout_path,
+            stderr_path,
+            sum_input.parent / "batch.out",
+            sum_input.parent / "phits.out",
+        ):
+            guard.prepare_file_target(output, create_parents=True)
         execution_root = guard.make_staging_directory(
-            sum_input.parent,
+            workspace_root,
             prefix=".sumtally-run-",
         )
         try:
@@ -789,6 +794,11 @@ def run_sumtally(
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
 
         environment = phits_environment(selected_sum_input)
+        with WorkspaceOutputGuard(workspace_root) as guard:
+            guard.prepare_file_target(
+                execution_summary_path,
+                create_parents=True,
+            )
         def mark_phits_started() -> None:
             nonlocal phits_started
             phits_started = True

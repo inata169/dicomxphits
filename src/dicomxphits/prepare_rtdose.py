@@ -1380,9 +1380,9 @@ def run_phits2dicom(
 ) -> tuple[int, str, bool, Path]:
     with WorkspaceOutputGuard(workspace_root) as guard:
         for output in expected_outputs:
-            guard.prepare(output)
-        guard.prepare(stdout_path, create_parents=True)
-        guard.prepare(stderr_path)
+            guard.prepare_file_target(output)
+        guard.prepare_file_target(stdout_path, create_parents=True)
+        guard.prepare_file_target(stderr_path)
         lines = stdin_content.split("\n")
         if len(lines) < 8 or lines[0] != "PHITS2DICOM":
             raise ValueError("Malformed prepared phits2dicom input")
@@ -1585,6 +1585,13 @@ def run_rtdose(
         before = dicom_snapshot(output_dirs)
         stdout_path = workspace_root / "rtdose" / "phits2dicom_stdout.txt"
         stderr_path = workspace_root / "rtdose" / "phits2dicom_stderr.txt"
+        with WorkspaceOutputGuard(workspace_root) as guard:
+            for output in (
+                coordinate_corrected_output,
+                coordinate_summary_path(coordinate_corrected_output),
+                summary_path,
+            ):
+                guard.prepare_file_target(output, create_parents=True)
         def mark_execution_started() -> None:
             nonlocal execution_started
             execution_started = True
