@@ -497,7 +497,12 @@ def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
     assert "Get-FileHash" not in text
     assert "[IO.FileShare]::Read" in text
     assert "DICOMXPHITS_VERIFIED_STAGE" in text
-    assert 'set "TrustedPowerShell=%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"' in text
+    assert 'set "__APPDIR__="' in text
+    assert (
+        'set "TrustedPowerShell=%__APPDIR__%WindowsPowerShell\\v1.0\\powershell.exe"'
+        in text
+    )
+    assert "%SystemRoot%\\System32\\WindowsPowerShell" not in text
     assert '"%TrustedPowerShell%" -NoLogo' in text
 
 
@@ -545,6 +550,54 @@ def test_cmd_rejects_top_level_fake_executables_without_running_them(tmp_path, f
     assert result.returncode != 0
     assert "Unexpected executable or script at bundle root" in result.stderr
     assert not (root / "helper-executed.txt").exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows cmd.exe behavior")
+def test_cmd_ignores_mutable_system_directory_environment(tmp_path):
+    text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
+    bootstrap_lines = [
+        line
+        for line in text.splitlines()
+        if line.startswith('set "__APPDIR__=')
+        or line.startswith('set "TrustedPowerShell=')
+    ]
+    assert len(bootstrap_lines) == 2
+
+    root = tmp_path / "日本語 user" / "mutable environment probe"
+    root.mkdir(parents=True)
+    trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+    expected_powershell = (
+        trusted_cmd.parent / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    )
+    probe = root / "probe.cmd"
+    probe.write_text(
+        "@echo off\r\n"
+        "setlocal EnableExtensions DisableDelayedExpansion\r\n"
+        + "\r\n".join(bootstrap_lines)
+        + "\r\n"
+        + '"%PROBE_PYTHON%" -c "import sys;print(sys.argv[1])" '
+        '"%TrustedPowerShell%"\r\n',
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment["SystemRoot"] = str(tmp_path / "fake-system")
+    environment["__APPDIR__"] = str(tmp_path / "fake-app") + os.sep
+    environment["PROBE_PYTHON"] = sys.executable
+    environment["PYTHONUTF8"] = "1"
+
+    result = subprocess.run(
+        [str(trusted_cmd), "/d", "/c", str(probe)],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == expected_powershell
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows cmd.exe behavior")

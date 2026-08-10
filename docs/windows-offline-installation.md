@@ -87,8 +87,10 @@ In PowerShell, run the file with the following command. Do not use
 ```
 
 Before bundle verification, the command starts only the quoted absolute
-`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`. It does not use
-current-directory or `PATH` lookup for PowerShell, `py.exe`, or `python.exe`.
+`%__APPDIR__%WindowsPowerShell\v1.0\powershell.exe`, after clearing any inherited
+`__APPDIR__` override so cmd.exe supplies its own application directory. It does
+not use caller-supplied `SystemRoot`, current-directory, or `PATH` lookup for
+PowerShell, `py.exe`, or `python.exe`.
 The bootstrap rejects reparse-point protected paths and unexpected executable
 lookalikes at the extracted root, verifies and read-locks every protected
 payload, and only then runs the verified installation stage. It then:

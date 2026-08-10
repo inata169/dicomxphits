@@ -5,7 +5,9 @@ chcp 65001 >nul 2>&1
 rem Security bootstrap: the only executable started before bundle verification is
 rem Windows PowerShell from the Windows system directory. Never search CWD/PATH.
 for %%I in ("%~dp0.") do set "BundleRoot=%%~fI"
-set "TrustedPowerShell=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+rem Remove any inherited override so cmd.exe exposes its own dynamic app directory.
+set "__APPDIR__="
+set "TrustedPowerShell=%__APPDIR__%WindowsPowerShell\v1.0\powershell.exe"
 set "DICOMXPHITS_BUNDLE_ROOT=%BundleRoot%"
 
 echo dicomxphits offline installer

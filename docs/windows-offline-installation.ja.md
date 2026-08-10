@@ -84,8 +84,10 @@ PowerShellでは`cd install_offline.cmd`ではなく、次のように実行し�
 ```
 
 bundle検証前に起動する実行ファイルは、quoted absolute pathの
-`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`だけです。
-PowerShell、`py.exe`、`python.exe`をcurrent directoryまたは`PATH`から探索しません。
+`%__APPDIR__%WindowsPowerShell\v1.0\powershell.exe`だけです。継承された
+`__APPDIR__`の上書きを消去して、cmd.exe自身のapplication directoryを使用します。
+呼出元の`SystemRoot`、current directory、`PATH`からPowerShell、`py.exe`、
+`python.exe`を探索しません。
 bootstrapは、保護対象pathのreparse pointと展開root直下の想定外の実行ファイルを
 拒否し、全payloadを検証してread-lockした後だけ検証済みinstall stageを実行します。
 その後、次を行います。
