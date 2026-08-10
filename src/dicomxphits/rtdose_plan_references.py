@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import math
+import io
 from pathlib import Path
 from typing import Any
 
 import pydicom
 from pydicom.dataset import Dataset
 from pydicom.sequence import Sequence
+
+from dicomxphits.safe_output import WorkspaceOutputGuard
 from pydicom.uid import RTPlanStorage
 
 from dicomxphits.prepare_sumtally import load_json_object
@@ -605,6 +608,7 @@ def synchronize_plan_rtdose(
     path: Path,
     *,
     plan_evidence: dict[str, Any],
+    guard: WorkspaceOutputGuard | None = None,
 ) -> dict[str, Any]:
     dataset = pydicom.dcmread(str(path))
     if str(getattr(dataset, "Modality", "") or "").upper() != "RTDOSE":
@@ -626,7 +630,12 @@ def synchronize_plan_rtdose(
     for name in ("ReferencedFractionGroupSequence", "ReferencedBeamSequence"):
         if hasattr(dataset, name):
             delattr(dataset, name)
-    dataset.save_as(str(path))
+    if guard is None:
+        dataset.save_as(str(path))
+    else:
+        stream = io.BytesIO()
+        dataset.save_as(stream)
+        guard.write_bytes(path, stream.getvalue())
 
     updated = pydicom.dcmread(str(path))
     pixel_sha256_after = _pixel_sha256(updated)

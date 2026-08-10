@@ -1211,12 +1211,12 @@ def test_cmd_launcher_handles_metacharacters_in_missing_venv_path(
         ["cmd.exe", "/d", "/c", launcher.name],
         cwd=launcher_dir,
         capture_output=True,
-        text=True,
+        text=False,
         check=False,
     )
 
     assert result.returncode == 1
-    assert "Missing virtual environment Python:" in result.stderr
+    assert b"Missing virtual environment Python:" in result.stderr
 
 def test_source_distribution_includes_both_gui_launchers() -> None:
     manifest = (PUBLIC_ROOT / "MANIFEST.in").read_text(encoding="utf-8-sig")

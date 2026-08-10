@@ -645,6 +645,7 @@ def generate_sum_inp(
     output_path: Path,
     sumtally_filename: str = "sumtally.inp",
     include_base_dir: Path | None = None,
+    output_dir_basis: Path | None = None,
 ) -> Path:
     del out_files, sfile, sumfactor, mode
     content = base_inp_path.read_text(encoding="utf-8", errors="replace")
@@ -655,7 +656,11 @@ def generate_sum_inp(
         if include_base_dir is not None
         else base_dir
     )
-    output_dir = Path(output_path).resolve().parent
+    output_dir = (
+        Path(output_dir_basis).resolve()
+        if output_dir_basis is not None
+        else Path(output_path).resolve().parent
+    )
     lines = content.splitlines(keepends=True)
     preferred_eol = "\r\n" if "\r\n" in content else "\n"
     new_lines: list[str] = [

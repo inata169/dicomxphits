@@ -6,9 +6,10 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from dicomxphits.prepare_3dcrt_workspace import (
     ExternalToolPaths,
@@ -20,6 +21,7 @@ from dicomxphits.prepare_3dcrt_workspace import (
     write_json,
 )
 from dicomxphits.run_segments import phits_environment
+from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.rtdose_geometry import (
     segment_tally_geometry_binding,
     sumtally_output_geometry_evidence,
@@ -33,8 +35,6 @@ from dicomxphits.sumtally_inputs import (
     generate_sum_inp,
     manifest_sha256,
     validate_sumtally_normalization_input,
-    write_libpath_file,
-    write_text,
 )
 
 
@@ -377,7 +377,7 @@ def write_failure_summary(
     }
     if extra:
         summary.update(extra)
-    write_json(path, summary)
+    write_json(path, summary, case_root=workspace_root)
     return summary
 
 
@@ -389,6 +389,8 @@ def generate_sumtally(
     base_input: Path | None = None,
     command_argv: list[str] | None = None,
 ) -> dict[str, Any]:
+    with WorkspaceOutputGuard(workspace_root):
+        pass
     workspace_root = workspace_root.resolve()
     generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
     try:
@@ -419,33 +421,45 @@ def generate_sumtally(
         sumtally_path = sumtally_dir / "sumtally.inp"
         sum_input_path = sumtally_dir / f"{selection.path.stem}_sum.inp"
         libpath_path = sumtally_dir / "libpath.inp"
-        sumtally_dir.mkdir(parents=True, exist_ok=True)
-        content, out_files, path_basis, segment_path_records = localize_sumtally_segment_paths(
-            content,
-            helper_summary,
-            workspace_root=workspace_root,
-            sumtally_dir=sumtally_dir,
-        )
-        write_text(sumtally_path, content)
-        normalization_evidence = validate_sumtally_normalization_input(
-            sumtally_path,
-            manifest=manifest,
-            recorded_evidence=helper_summary["sumtally_normalization_evidence"],
-        )
-        write_libpath_file(libpath_path, paths.phits_root_folder)
-        generate_sum_inp(
-            selection.path,
-            out_files,
-            output_name,
-            float(helper_summary["sumfactor"]),
-            SUMTALLY_MODE,
-            tally_patterns,
-            sum_input_path,
-            sumtally_filename=sumtally_path.name,
-            include_base_dir=workspace_root,
-        )
-        sum_input_sha256 = file_sha256(sum_input_path)
-        sumtally_input_sha256 = file_sha256(sumtally_path)
+        with WorkspaceOutputGuard(workspace_root) as guard:
+            guard.mkdir(sumtally_dir)
+            for output_path in (sumtally_path, sum_input_path, libpath_path):
+                guard.prepare(output_path)
+            content, out_files, path_basis, segment_path_records = localize_sumtally_segment_paths(
+                content,
+                helper_summary,
+                workspace_root=workspace_root,
+                sumtally_dir=sumtally_dir,
+            )
+            guard.write_text(sumtally_path, content, newline="\n")
+            normalization_evidence = validate_sumtally_normalization_input(
+                sumtally_path,
+                manifest=manifest,
+                recorded_evidence=helper_summary["sumtally_normalization_evidence"],
+            )
+            portable_root = paths.phits_root_folder.replace("\\", "/")
+            guard.write_text(
+                libpath_path,
+                f"file(1)  = {portable_root} # PHITS install folder name\n",
+                newline="\r\n",
+            )
+            with tempfile.TemporaryDirectory(prefix="dicomxphits-sumtally-") as temporary:
+                temporary_sum_input = Path(temporary) / sum_input_path.name
+                generate_sum_inp(
+                    selection.path,
+                    out_files,
+                    output_name,
+                    float(helper_summary["sumfactor"]),
+                    SUMTALLY_MODE,
+                    tally_patterns,
+                    temporary_sum_input,
+                    sumtally_filename=sumtally_path.name,
+                    include_base_dir=workspace_root,
+                    output_dir_basis=sum_input_path.parent,
+                )
+                guard.write_bytes(sum_input_path, temporary_sum_input.read_bytes())
+            sum_input_sha256 = file_sha256(sum_input_path)
+            sumtally_input_sha256 = file_sha256(sumtally_path)
         segment_output_evidence = file_digest_evidence(
             expected_segment_outputs(workspace_root, manifest)
         )
@@ -502,7 +516,7 @@ def generate_sumtally(
             },
             "sumtally_helper_summary": helper_summary,
         }
-        write_json(generation_summary_path, summary)
+        write_json(generation_summary_path, summary, case_root=workspace_root)
         return summary
     except Exception as exc:
         write_failure_summary(
@@ -542,24 +556,74 @@ def run_phits_sumtally(
     sum_input: Path,
     stdout_path: Path,
     stderr_path: Path,
+    workspace_root: Path,
+    expected_output: Path,
     environment: dict[str, str] | None = None,
     runner=subprocess.run,
+    on_start: Callable[[], None] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     if environment is None:
         environment = phits_environment(sum_input)
-    with sum_input.open("r", encoding="utf-8", errors="replace") as stdin:
-        result = runner(
-            [phits_executable_path],
-            stdin=stdin,
-            cwd=sum_input.parent,
-            capture_output=True,
-            text=True,
-            shell=False,
-            env=environment,
+    with WorkspaceOutputGuard(workspace_root) as guard:
+        guard.prepare(expected_output)
+        guard.prepare(stdout_path, create_parents=True)
+        guard.prepare(stderr_path)
+        execution_root = guard.make_staging_directory(
+            sum_input.parent,
+            prefix=".sumtally-run-",
         )
-    stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    stdout_path.write_text(result.stdout or "", encoding="utf-8")
-    stderr_path.write_text(result.stderr or "", encoding="utf-8")
+        try:
+            staged_sum_input = execution_root / sum_input.name
+            guard.copy_file(sum_input, staged_sum_input, overwrite=False)
+            for dependency in transitive_phits_include_paths(
+                sum_input,
+                execution_cwd=sum_input.parent,
+            ):
+                try:
+                    relative = dependency.resolve().relative_to(
+                        sum_input.parent.resolve()
+                    )
+                except ValueError:
+                    continue
+                guard.copy_file(
+                    dependency,
+                    execution_root / relative,
+                    overwrite=False,
+                )
+            try:
+                output_relative = expected_output.resolve().relative_to(
+                    sum_input.parent.resolve()
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    "Sumtally output must remain below its execution directory"
+                ) from exc
+            staged_output = execution_root / output_relative
+            guard.mkdir(staged_output.parent)
+            with staged_sum_input.open(
+                "r", encoding="utf-8", errors="replace"
+            ) as stdin:
+                if on_start is not None:
+                    on_start()
+                result = runner(
+                    [phits_executable_path],
+                    stdin=stdin,
+                    cwd=execution_root,
+                    capture_output=True,
+                    text=True,
+                    shell=False,
+                    env=environment,
+                )
+            if os.path.lexists(staged_output):
+                guard.copy_file(staged_output, expected_output)
+            for name in ("batch.out", "phits.out"):
+                staged_root_output = execution_root / name
+                if os.path.lexists(staged_root_output):
+                    guard.copy_file(staged_root_output, sum_input.parent / name)
+            guard.write_text(stdout_path, result.stdout or "")
+            guard.write_text(stderr_path, result.stderr or "")
+        finally:
+            guard.rmtree(execution_root, missing_ok=True)
     return result
 
 
@@ -582,6 +646,8 @@ def run_sumtally(
     command_argv: list[str] | None = None,
     runner=subprocess.run,
 ) -> dict[str, Any]:
+    with WorkspaceOutputGuard(workspace_root):
+        pass
     workspace_root = workspace_root.resolve()
     execution_summary_path = workspace_root / "analysis" / "sumtally_execution_summary.json"
     phits_started = False
@@ -723,14 +789,20 @@ def run_sumtally(
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
 
         environment = phits_environment(selected_sum_input)
-        phits_started = True
+        def mark_phits_started() -> None:
+            nonlocal phits_started
+            phits_started = True
+
         result = run_phits_sumtally(
             phits_executable_path=paths.phits_executable_path,
             sum_input=selected_sum_input,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            workspace_root=workspace_root,
+            expected_output=expected_output,
             environment=environment,
             runner=runner,
+            on_start=mark_phits_started,
         )
         output_after = sumtally_output_snapshot(expected_output)
         output_exists = output_after is not None
@@ -802,7 +874,7 @@ def run_sumtally(
         }
         if geometry_validation_error is not None:
             summary["failure_reason"] = geometry_validation_error
-        write_json(execution_summary_path, summary)
+        write_json(execution_summary_path, summary, case_root=workspace_root)
         return summary
     except Exception as exc:
         write_failure_summary(

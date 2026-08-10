@@ -43,12 +43,14 @@ Python 3.12を`py -3.12`または`python`で検出できない場合は明示し
 スクリプトはZIP作成前に次を自動実行します。
 
 1. 公開ツリー監査を実行する
-2. `pyproject.toml`からversionと実行時依存関係を読む
+2. `pyproject.toml`からversionを、`requirements/offline-win64.txt`から
+   wheelの正確なversion、filename、SHA-256を読む
 3. Python公式の3.12.10 64-bit installerをHTTPSで取得する
 4. Windows Authenticodeが`Valid`で、署名者がPython Software Foundation
    であることを必須とし、署名情報とSHA-256を記録する
-5. pipへCPython 3.12、`win_amd64`、binary-onlyのwheel取得を要求する
-6. `numpy`、`pydicom`、`setuptools`、`wheel`を確認し、NumPyについて
+5. pipへCPython 3.12、`win_amd64`、binary-only、`--require-hashes`での
+   wheel取得を要求する
+6. wheelの不足、追加、rename、hash不一致を拒否し、NumPyについて
    `cp312-cp312-win_amd64`の完全一致を確認する
 7. 監査済みGit indexに存在する通常ファイルblobだけをコピーし、未追跡または
    未stageのbyteはコピーしない
@@ -81,16 +83,21 @@ PowerShellでは`cd install_offline.cmd`ではなく、次のように実行し�
 .\install_offline.cmd
 ```
 
-コマンドは、同梱Python installerを実行する前に保護対象ファイルをすべて検証し、
-次を行います。
+bundle検証前に起動する実行ファイルは、quoted absolute pathの
+`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`だけです。
+PowerShell、`py.exe`、`python.exe`をcurrent directoryまたは`PATH`から探索しません。
+bootstrapは、保護対象pathのreparse pointと展開root直下の想定外の実行ファイルを
+拒否し、全payloadを検証してread-lockした後だけ検証済みinstall stageを実行します。
+その後、次を行います。
 
-- 既存のCPython 3.12 64-bitがあれば使用する
+- bounded absolute pathにあり、Python Software Foundationの有効な
+  Authenticode署名とCPython 3.12 64-bit probeを通る既存Pythonだけを使用する
 - なければ同梱Python 3.12.10をユーザー単位で、pip、Python Launcher、
   Tcl/Tkを有効にして導入する。ただしPATH、Python file association、shortcutは
   変更・作成しない
 - 展開したプロジェクト直下へ`.venv`を作成する
-- すべてのpip installで`--no-index`、`--find-links`、
-  `--no-build-isolation`を使用し、`wheelhouse/`以外へフォールバックしない
+- exact lock済み依存だけを、`--require-hashes`、`--no-index`、
+  `--find-links`、`--no-build-isolation`で`wheelhouse/`から導入する
 - dicomxphitsをeditable installする
 - `tkinter`、`numpy`、`pydicom`、`dicomxphits`をimport確認する
 - Python、NumPy、pydicomのversionを`offline-install.log`へ記録する
@@ -108,6 +115,8 @@ launchers\run_gui_venv.cmd
 `bundle-manifest.json`には、source HEAD commit、正確なGit index entry列の
 SHA-256 fingerprint、target、実行時依存関係、wheel tag、Python installerの
 URLとAuthenticode署名情報、各payloadの役割・size・SHA-256を記録します。
+review済みwheel lockも記録し、通常CIは`requirements/runtime.txt`から同じ
+NumPyおよびpydicom versionを使用します。
 
 `SHA256SUMS.txt`には全payloadとmanifestのdigestを記録します。自己参照になるため、
 `SHA256SUMS.txt`自身のdigestだけは含みません。この検証は転送破損や内容変更を
@@ -139,13 +148,12 @@ binary wheelの問題をオンライン側で解決してください。未レ�
 Pythonはユーザー単位で導入され、machine-wide PATHの変更を必要としません。組織の
 software installation policyによって導入が制限される場合があります。
 
-### `Python 3.12 not found!`をPythonとして実行しようとする
+### 想定外実行ファイルまたはreparse pointのerror
 
-Python Launcherだけが存在し、Python 3.12本体がないPCで、修正前のbundleが
-Launcherのmessageを実行ファイルpathと誤認した場合の症状です。現在のinstallerは、
-取得した値が実在する実行ファイルである場合だけ採用します。この症状が出た古い
-展開済みfolderへ個別のCMDだけをcopyせず、オンラインPCで生成した修正版ZIP全体を
-別のfolderへ展開してください。
+checkを削除したりchecksum保護対象を編集したりせず、新しい通常のlocal directoryへ
+ZIPを再展開してください。現在のinstallerは、展開rootの実行ファイルlookalike、
+またはbundle root・保護対象path上のsymbolic link、junction、reparse pointを
+検出すると安全側で停止します。
 
 ### `offline-install.log`のpath末尾に余分な`"`が表示される
 

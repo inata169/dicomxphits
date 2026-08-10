@@ -45,13 +45,15 @@ If Python 3.12 is not discoverable through `py -3.12` or `python`, specify it:
 The script performs these checks before producing the ZIP:
 
 1. runs the public-tree audit;
-2. reads the version and runtime requirements from `pyproject.toml`;
+2. reads the version from `pyproject.toml` and the exact wheel versions,
+   filenames, and SHA-256 values from `requirements/offline-win64.txt`;
 3. downloads the exact official Python 3.12.10 x64 installer over HTTPS;
 4. requires a valid Windows Authenticode signature from the Python Software
    Foundation and records the signer and installer SHA-256;
-5. asks pip for CPython 3.12 `win_amd64` wheels with binary-only resolution;
-6. verifies `numpy`, `pydicom`, `setuptools`, and `wheel`, including exact
-   `cp312-cp312-win_amd64` compatibility for NumPy;
+5. asks pip for CPython 3.12 `win_amd64` wheels with binary-only resolution and
+   `--require-hashes`;
+6. rejects any missing, additional, renamed, or hash-mismatched wheel and
+   verifies exact `cp312-cp312-win_amd64` compatibility for NumPy;
 7. copies only the audited regular-file blobs already present in the Git index
    (untracked and unstaged bytes are not copied); and
 8. writes `bundle-manifest.json`, `SHA256SUMS.txt`, and the final ZIP.
@@ -84,16 +86,22 @@ In PowerShell, run the file with the following command. Do not use
 .\install_offline.cmd
 ```
 
-The command verifies all protected bundle files before executing the bundled
-Python installer. It then:
+Before bundle verification, the command starts only the quoted absolute
+`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`. It does not use
+current-directory or `PATH` lookup for PowerShell, `py.exe`, or `python.exe`.
+The bootstrap rejects reparse-point protected paths and unexpected executable
+lookalikes at the extracted root, verifies and read-locks every protected
+payload, and only then runs the verified installation stage. It then:
 
-- uses an existing CPython 3.12 x64 when available;
+- uses only a bounded absolute installed CPython path after requiring a valid
+  Python Software Foundation Authenticode signature and CPython 3.12 x64 probe;
 - otherwise installs the bundled Python 3.12.10 for the current user with pip,
   the Python Launcher, and Tcl/Tk enabled, without changing PATH, creating
   Python file associations, or creating shortcuts;
 - creates the extracted project's `.venv`;
-- installs only from `wheelhouse/` with `--no-index`, `--find-links`, and
-  `--no-build-isolation` on every pip install command;
+- installs the exact locked dependencies only from `wheelhouse/` with
+  `--require-hashes`, `--no-index`, `--find-links`, and
+  `--no-build-isolation`;
 - installs dicomxphits in editable mode;
 - imports `tkinter`, `numpy`, `pydicom`, and `dicomxphits`;
 - records the Python, NumPy, and pydicom versions in `offline-install.log`; and
@@ -110,8 +118,9 @@ launchers\run_gui_venv.cmd
 
 `bundle-manifest.json` records the source HEAD commit, a SHA-256 fingerprint of
 the exact Git index entries, target, runtime requirements, wheel tags, Python
-installer URL and Authenticode signer evidence, and the role, size, and
-SHA-256 of every payload.
+installer URL and Authenticode signer evidence, the reviewed wheel lock, and
+the role, size, and SHA-256 of every payload. Normal CI uses the same pinned
+NumPy and pydicom versions from `requirements/runtime.txt`.
 
 `SHA256SUMS.txt` records every payload digest and the manifest digest. It cannot
 contain its own digest because that would be circular. The checksum inventory
@@ -145,14 +154,12 @@ Review `offline-install.log` and `python-installer.log` in the extracted root.
 The Python installation is current-user only and does not require changing
 machine-wide PATH. Organization policy may still control software installation.
 
-### `Python 3.12 not found!` is treated as the Python executable
+### An unexpected executable or reparse-point error is reported
 
-This was possible in a pre-correction bundle when the Python Launcher existed
-but CPython 3.12 did not. The launcher message was captured as though it were an
-executable path. The current installer accepts captured output only when it
-names an existing executable. Do not replace only the CMD file in an extracted
-bundle. Rebuild or obtain the corrected complete ZIP and extract it into a
-separate folder.
+Do not remove the check or edit checksum-protected files. Extract a fresh ZIP
+into a new ordinary local directory. The current installer deliberately stops
+if the extracted root contains executable lookalikes or if the bundle root or
+a protected path crosses a symbolic link, junction, or reparse point.
 
 ### The `offline-install.log` path ends with an extra `"`
 

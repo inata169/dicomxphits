@@ -25,6 +25,7 @@ $PythonInstallerName = "python-$PythonVersion-amd64.exe"
 $PythonInstallerUrl = "https://www.python.org/ftp/python/$PythonVersion/$PythonInstallerName"
 $RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $PyprojectPath = Join-Path $RepoRoot "pyproject.toml"
+$OfflineLockPath = Join-Path $RepoRoot "requirements\offline-win64.txt"
 $HelperPath = Join-Path $RepoRoot "tools\offline_bundle.py"
 $DistRoot = Join-Path $RepoRoot "dist"
 
@@ -168,8 +169,7 @@ try {
     Write-Host "Python installer Authenticode: Valid"
     Write-Host "Python installer SHA-256: $InstallerHash"
 
-    $Requirements = @($Metadata.dependencies) + @("setuptools", "wheel")
-    Write-Host "Downloading binary-only CPython 3.12 Windows x64 wheels..."
+    Write-Host "Downloading hash-locked binary-only CPython 3.12 Windows x64 wheels..."
     Invoke-ProducerPython -Arguments (@(
         "-m",
         "pip",
@@ -185,8 +185,11 @@ try {
         "--implementation",
         "cp",
         "--abi",
-        "cp312"
-    ) + $Requirements)
+        "cp312",
+        "--require-hashes",
+        "--requirement",
+        $OfflineLockPath
+    ))
 
     Invoke-ProducerPython -Arguments @(
         $HelperPath,

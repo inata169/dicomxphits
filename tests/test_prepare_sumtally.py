@@ -19,6 +19,7 @@ from dicomxphits.prepare_sumtally import (
     build_generate_parser,
     generate_sumtally,
     run_main,
+    run_phits_sumtally,
     run_sumtally,
     select_sumtally_base_input,
 )
@@ -808,7 +809,8 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         calls["text"] = kwargs["text"]
         calls["shell"] = kwargs["shell"]
         calls["env"] = kwargs["env"]
-        expected_output.write_text(tally_output_text(), encoding="utf-8")
+        staged_output = Path(kwargs["cwd"]) / expected_output.name
+        staged_output.write_text(tally_output_text(), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="sum warn")
 
     summary = run_sumtally(
@@ -820,8 +822,12 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     )
 
     assert calls["cmd"] == ["/opt/phits-root/bin/phits"]
-    assert calls["cwd"] == Path(generation["outputs"]["sum_input"]).parent
-    assert calls["stdin_name"] == generation["outputs"]["sum_input"]
+    original_cwd = Path(generation["outputs"]["sum_input"]).parent
+    assert calls["cwd"] != original_cwd
+    calls["cwd"].resolve().relative_to(original_cwd.resolve())
+    assert Path(calls["stdin_name"]).name == Path(
+        generation["outputs"]["sum_input"]
+    ).name
     assert calls["capture_output"] is True
     assert calls["text"] is True
     assert calls["shell"] is False
@@ -1011,6 +1017,35 @@ def test_run_sumtally_invalid_omp_records_execution_not_started(tmp_path):
     )
     assert calls == []
     assert summary["phits_execution_started"] is False
+
+
+def test_sumtally_guard_failure_does_not_mark_external_execution_started(tmp_path):
+    workspace = tmp_path / "workspace"
+    sumtally_dir = workspace / "sumtally"
+    sumtally_dir.mkdir(parents=True)
+    sum_input = sumtally_dir / "sum.inp"
+    sum_input.write_text("$OMP = 1\n[ E N D ]\n", encoding="utf-8")
+    invalid_output_parent = workspace / "not-a-directory"
+    invalid_output_parent.write_text("preserve", encoding="utf-8")
+    started = []
+    calls = []
+
+    with pytest.raises(ValueError, match="not a directory"):
+        run_phits_sumtally(
+            phits_executable_path="synthetic-phits",
+            sum_input=sum_input,
+            stdout_path=sumtally_dir / "stdout.txt",
+            stderr_path=sumtally_dir / "stderr.txt",
+            workspace_root=workspace,
+            expected_output=invalid_output_parent / "sum.out",
+            environment={},
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+            on_start=lambda: started.append(True),
+        )
+
+    assert started == []
+    assert calls == []
+    assert invalid_output_parent.read_text(encoding="utf-8") == "preserve"
 
 
 def test_relative_workspace_root_round_trips_generated_paths(

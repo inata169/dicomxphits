@@ -212,8 +212,8 @@ real PHITS, Sumtally, phits2dicom, GPR-comparing, or real DICOM workflows.
 
 ### Requirement: Absolute Active-Treatment-MU Sumtally Normalization
 
-For the public fixed-field 3D-CRT absolute-dose workflow, every active
-treatment-segment PHITS tally SHALL represent dose per MU through the already
+For the public fixed-field 3D-CRT absolute-dose workflow, every active treatment-segment PHITS tally SHALL
+represent dose per MU through the already
 approved `totfact_per_MU` source calibration. When Sumtally uses
 `isumtally = 2` with active `segment_mu` as each file weight, Sumtally Generate
 SHALL set `sumfactor` to the finite positive sum of all active treatment-segment
@@ -280,9 +280,8 @@ or plan MU a second time.
 
 ### Requirement: Incorrect Sumtally Normalization Is Stale Evidence
 
-Sumtally or RTDOSE evidence generated with `isumtally = 2`, active
-`segment_mu` weights, and a factor that does not reproduce the required active
-treatment-dose sum SHALL NOT establish completed full-plan dose provenance.
+Sumtally or RTDOSE evidence generated with `isumtally = 2`, active `segment_mu` weights, and a factor that does not reproduce the required active treatment-dose sum SHALL NOT
+establish completed full-plan dose provenance.
 The workflow SHALL require Sumtally Generate and Sumtally Run to be repeated
 with the corrected contract, followed by RTDOSE Prepare and RTDOSE Run. It
 SHALL permit unchanged, digest-bound active-segment PHITS outputs to be reused

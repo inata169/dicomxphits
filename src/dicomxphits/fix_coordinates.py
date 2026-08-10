@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import io
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 import pydicom
+
+from dicomxphits.safe_output import WorkspaceOutputGuard
 from pydicom.dataset import Dataset
 
 from dicomxphits.rtdose_geometry import validate_rtdose_placement
@@ -163,6 +166,7 @@ def fix_coordinates(
     *,
     summary_path: Path | None = None,
     expected_placement: dict[str, Any] | None = None,
+    guard: WorkspaceOutputGuard | None = None,
 ) -> dict[str, Any]:
     """Place PHITS2DICOM dose voxels on the supported DICOM LPS grid."""
 
@@ -336,8 +340,13 @@ def fix_coordinates(
         },
     }
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    dataset.save_as(str(output_path))
+    if guard is None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset.save_as(str(output_path))
+    else:
+        stream = io.BytesIO()
+        dataset.save_as(stream)
+        guard.write_bytes(output_path, stream.getvalue())
     placement_validation = (
         validate_rtdose_placement(
             output_path,
@@ -348,12 +357,14 @@ def fix_coordinates(
     )
     summary["placement_validation"] = placement_validation
     summary["output_sha256"] = file_sha256(output_path)
-    if summary_path is not None:
+    if summary_path is not None and guard is None:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(
             json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+    elif summary_path is not None:
+        guard.write_json(summary_path, summary)
     return summary
 
 

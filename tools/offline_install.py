@@ -84,6 +84,8 @@ def _safe_relative(value: str) -> PurePosixPath:
         raise OfflineInstallError(f"Integrity path is not normalized: {value}")
     if re.match(r"^[A-Za-z]:", path.parts[0]):
         raise OfflineInstallError(f"Integrity path must not contain a drive: {value}")
+    if any(":" in part for part in path.parts):
+        raise OfflineInstallError(f"Integrity path must not contain an alternate stream: {value}")
     return path
 
 
@@ -230,8 +232,10 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
     required_source = {
         "install_offline.cmd",
         "tools/offline_install.py",
+        "tools/install_offline_verified.ps1",
         "launchers/run_gui_venv.cmd",
         "pyproject.toml",
+        "requirements/offline-win64.txt",
     }
     absent_source = sorted(required_source - manifest_paths)
     if absent_source:
@@ -344,7 +348,7 @@ def ensure_venv(
 
     logger.write("Creating repository-local .venv with CPython 3.12 x64")
     _run_logged(
-        [str(base_python), "-m", "venv", str(venv_root)],
+        [str(base_python), "-I", "-m", "venv", str(venv_root)],
         logger=logger,
         runner=runner,
         cwd=bundle_root,
@@ -377,6 +381,7 @@ def offline_pip_command(
 ) -> list[str]:
     return [
         str(venv_python),
+        "-I",
         "-m",
         "pip",
         "install",
@@ -502,7 +507,8 @@ def install_bundle(
         f"{base_probe.major}.{base_probe.minor}.{base_probe.micro} {base_probe.bits}-bit"
     )
 
-    runtime_requirements = _runtime_requirements(manifest)
+    _runtime_requirements(manifest)
+    lock_path = root / "requirements" / "offline-win64.txt"
     wheelhouse = root / "wheelhouse"
     venv_python = ensure_venv(
         root, Path(base_probe.executable), logger, runner=runner
@@ -512,14 +518,11 @@ def install_bundle(
         offline_pip_command(
             venv_python,
             wheelhouse,
-            ["--force-reinstall", "setuptools", "wheel"],
+            ["--force-reinstall", "--require-hashes", "--requirement", str(lock_path)],
         ),
         offline_pip_command(
-            venv_python,
-            wheelhouse,
-            ["--force-reinstall", *runtime_requirements],
+            venv_python, wheelhouse, ["--no-deps", "--editable", str(root)]
         ),
-        offline_pip_command(venv_python, wheelhouse, ["--editable", str(root)]),
     ]
     for command in commands:
         _run_logged(

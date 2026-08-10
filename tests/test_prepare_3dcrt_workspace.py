@@ -901,16 +901,27 @@ def test_rectangular_3dcrt_success_summary_is_written_only_after_final_writes_su
 def test_rectangular_3dcrt_atomic_writer_cleans_final_outputs_and_staging_on_failure(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
     calls = 0
+    cleanup_paths = []
     original_copy = workspace_module._copy_to_new_file_or_fail
+    original_unlink = workspace_module.WorkspaceOutputGuard.unlink
 
-    def fail_on_second_copy(source, destination):
+    def record_guarded_unlink(guard, path, *, missing_ok=False):
+        cleanup_paths.append(path)
+        return original_unlink(guard, path, missing_ok=missing_ok)
+
+    def fail_on_second_copy(source, destination, *, guard):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise RuntimeError("simulated second final write failure")
-        original_copy(source, destination)
+        original_copy(source, destination, guard=guard)
 
     monkeypatch.setattr("dicomxphits.prepare_3dcrt_workspace._copy_to_new_file_or_fail", fail_on_second_copy)
+    monkeypatch.setattr(
+        workspace_module.WorkspaceOutputGuard,
+        "unlink",
+        record_guarded_unlink,
+    )
 
     with pytest.raises(RuntimeError, match="second final write failure"):
         generate_rectangular_phits_workspace(
@@ -926,6 +937,7 @@ def test_rectangular_3dcrt_atomic_writer_cleans_final_outputs_and_staging_on_fai
         )
 
     assert no_phits_inputs(workspace) == []
+    assert workspace / "CTusrparam.dat" in cleanup_paths
     assert not (workspace / "analysis" / ".rectangular_phits_staging").exists()
     assert not (workspace / "analysis" / "phits_generation_summary.json").exists()
 

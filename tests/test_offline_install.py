@@ -29,8 +29,10 @@ def _make_bundle(root: Path) -> dict:
     payloads = {
         "install_offline.cmd": b"@echo off\r\n",
         "tools/offline_install.py": b"# synthetic helper\n",
+        "tools/install_offline_verified.ps1": b"# synthetic verified stage\n",
         "launchers/run_gui_venv.cmd": b"@echo off\r\n",
         "pyproject.toml": b"[project]\nname='dicomxphits'\n",
+        "requirements/offline-win64.txt": b"# synthetic lock\n",
         "wheelhouse/numpy-2.3.0-cp312-cp312-win_amd64.whl": b"numpy wheel",
         "wheelhouse/pydicom-3.0.1-py3-none-any.whl": b"pydicom wheel",
         "wheelhouse/setuptools-80.0.0-py3-none-any.whl": b"setuptools wheel",
@@ -72,6 +74,9 @@ def _make_cmd_bootstrap_bundle(root: Path) -> tuple[dict, Path]:
     marker = root / "helper-executed.txt"
     payloads = {
         "install_offline.cmd": (ROOT / "install_offline.cmd").read_bytes(),
+        "tools/install_offline_verified.ps1": (
+            ROOT / "tools" / "install_offline_verified.ps1"
+        ).read_bytes(),
         "tools/offline_install.py": (
             "from pathlib import Path\n"
             "Path(__file__).resolve().parents[1].joinpath("
@@ -109,6 +114,29 @@ def _write_cmd_bootstrap_integrity(root: Path, manifest: dict) -> None:
     ]
     lines.append(f"{_sha256(manifest_path)} *bundle-manifest.json")
     (root / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _windows_has_bounded_python312_candidate() -> bool:
+    if sys.platform != "win32":
+        return False
+    candidates: list[Path] = []
+    local_app_data = os.environ.get("LocalAppData")
+    if local_app_data:
+        candidates.append(Path(local_app_data) / "Programs" / "Python" / "Python312" / "python.exe")
+    import winreg
+
+    for hive, key in (
+        (winreg.HKEY_CURRENT_USER, r"Software\Python\PythonCore\3.12\InstallPath"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\Python\PythonCore\3.12\InstallPath"),
+        (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Python\PythonCore\3.12\InstallPath"),
+    ):
+        try:
+            with winreg.OpenKey(hive, key) as handle:
+                value, _kind = winreg.QueryValueEx(handle, None)
+        except OSError:
+            continue
+        candidates.append(Path(value) / "python.exe")
+    return any(path.is_file() for path in candidates)
 
 
 class FakeRunner:
@@ -225,6 +253,8 @@ def test_cmd_rejects_incomplete_or_manifest_inconsistent_inventory_before_python
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
 def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
+    if not _windows_has_bounded_python312_candidate():
+        pytest.skip("requires a canonical installed CPython 3.12 candidate")
     root = tmp_path / "日本語 user" / "valid offline bootstrap"
     root.mkdir(parents=True)
     manifest, marker = _make_cmd_bootstrap_bundle(root)
@@ -232,17 +262,14 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
     helper.write_text(
         "import sys\n"
         "from pathlib import Path\n"
-        "if '--probe' in sys.argv:\n"
-        "    try:\n"
-        "        Path(__file__).write_text('replaced after verification', encoding='utf-8')\n"
-        "    except OSError:\n"
-        "        Path(__file__).resolve().parents[1].joinpath(\n"
-        "            'replacement-blocked.txt'\n"
-        "        ).write_text('blocked', encoding='utf-8')\n"
-        "    else:\n"
-        "        raise SystemExit(99)\n"
-        "    print(sys.executable)\n"
-        "    raise SystemExit(0)\n"
+        "try:\n"
+        "    Path(__file__).write_text('replaced after verification', encoding='utf-8')\n"
+        "except OSError:\n"
+        "    Path(__file__).resolve().parents[1].joinpath(\n"
+        "        'replacement-blocked.txt'\n"
+        "    ).write_text('blocked', encoding='utf-8')\n"
+        "else:\n"
+        "    raise SystemExit(99)\n"
         "Path(__file__).resolve().parents[1].joinpath("
         "'helper-executed.txt').write_text('executed', encoding='utf-8')\n",
         encoding="utf-8",
@@ -362,19 +389,45 @@ def test_offline_install_uses_only_bundled_wheels_in_unicode_space_path(tmp_path
         for command, kwargs in runner.calls
         if "pip" in command and "install" in command
     ]
-    assert len(pip_calls) == 3
+    assert len(pip_calls) == 2
     for index, (command, kwargs) in enumerate(pip_calls):
+        assert command[1:4] == ["-I", "-m", "pip"]
         assert "--no-index" in command
         assert "--find-links" in command
         assert str(root / "wheelhouse") in command
         assert "--no-build-isolation" in command
-        if index < 2:
+        if index == 0:
             assert "--force-reinstall" in command
+            assert "--require-hashes" in command
+            assert "--requirement" in command
+            assert str(root / "requirements" / "offline-win64.txt") in command
+        else:
+            assert "--no-deps" in command
         assert kwargs["env"]["PIP_NO_INDEX"] == "1"
         assert kwargs["env"]["PIP_FIND_LINKS"] == str(root / "wheelhouse")
         assert not any(value.startswith(("http://", "https://")) for value in command)
     assert str(root) in pip_calls[-1][0]
     assert (root / "offline-install.log").is_file()
+
+
+def test_new_venv_creation_uses_isolated_module_resolution(tmp_path):
+    logger = offline_install.InstallLogger(tmp_path / "offline-install.log")
+    runner = FakeRunner()
+
+    with pytest.raises(
+        offline_install.OfflineInstallError,
+        match="venv creation returned success but Python is missing",
+    ):
+        offline_install.ensure_venv(
+            tmp_path,
+            Path(sys.executable),
+            logger,
+            runner=runner,
+        )
+
+    command, kwargs = runner.calls[0]
+    assert command[1:4] == ["-I", "-m", "venv"]
+    assert kwargs["cwd"] == tmp_path.resolve()
 
 
 def test_gui_is_only_started_after_affirmative_choice(tmp_path, monkeypatch):
@@ -414,86 +467,71 @@ def test_existing_public_gui_launcher_remains_the_offline_target():
 
 def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
     text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
+    stage = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
 
     checksum_position = text.index("Get-Sha256")
-    installer_position = text.index('"%Installer%" /quiet')
-    assert checksum_position < installer_position
-    assert "InstallAllUsers=0" in text
-    assert "Include_pip=1" in text
-    assert "Include_launcher=1" in text
-    assert "InstallLauncherAllUsers=0" in text
-    assert "Include_tcltk=1" in text
-    assert "AssociateFiles=0" in text
+    verified_stage_position = text.index("install_offline_verified.ps1')")
+    assert checksum_position < verified_stage_position
+    assert "InstallAllUsers=0" in stage
+    assert "Include_pip=1" in stage
+    assert "Include_launcher=1" in stage
+    assert "InstallLauncherAllUsers=0" in stage
+    assert "Include_tcltk=1" in stage
+    assert "AssociateFiles=0" in stage
     assert "Security.Cryptography.SHA256" in text
     assert "Get-FileHash" not in text
     assert "[IO.FileShare]::Read" in text
     assert "DICOMXPHITS_VERIFIED_STAGE" in text
+    assert 'set "TrustedPowerShell=%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"' in text
+    assert '"%TrustedPowerShell%" -NoLogo' in text
 
 
-def test_cmd_validates_the_new_current_user_python_without_for_f_capture():
-    text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
+def test_verified_stage_uses_only_absolute_bounded_python_candidates():
+    text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(encoding="utf-8")
 
-    expected_probe = (
-        '"%LocalAppData%\\Programs\\Python\\Python312\\python.exe" '
-        '"%Helper%" --probe >nul 2>&1'
-    )
-    assert expected_probe in text
-    assert (
-        'set "SelectedPython=%LocalAppData%\\Programs\\Python\\Python312\\python.exe"'
-        in text
-    )
+    assert 'Programs\\Python\\Python312\\python.exe' in text
+    assert "PythonCore\\3.12\\InstallPath" in text
+    assert "Test-UnderAllowedPythonRoot" in text
+    assert "Get-AuthenticodeSignature" in text
+    assert "Python Software Foundation" in text
+    assert "& $Candidate -I -c" in text
+    assert "& $SelectedPython -I $Helper" in text
 
 
-def test_cmd_rejects_python_launcher_not_found_text_as_an_executable():
-    text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
+def test_installer_never_uses_bare_executable_discovery():
+    bootstrap = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
+    stage = (ROOT / "tools" / "install_offline_verified.ps1").read_text(encoding="utf-8")
 
-    py_probe = (
-        'for /f "usebackq delims=" %%P in (`py.exe -3.12 "%Helper%" '
-        '--probe 2^>nul`) do if not defined SelectedPython if exist "%%P" '
-        'set "SelectedPython=%%P"'
-    )
-    path_probe = (
-        'for /f "usebackq delims=" %%P in (`python.exe "%Helper%" '
-        '--probe 2^>nul`) do if not defined SelectedPython if exist "%%P" '
-        'set "SelectedPython=%%P"'
-    )
-    assert py_probe in text
-    assert path_probe in text
-    assert 'Using Python: "Python 3.12 not found!"' not in text
+    assert "powershell.exe -" not in bootstrap.lower()
+    assert "`py.exe" not in bootstrap.lower()
+    assert "`python.exe" not in bootstrap.lower()
+    assert 'Get-Command "py.exe"' not in stage
+    assert 'Get-Command "python.exe"' not in stage
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows cmd.exe behavior")
-def test_cmd_for_f_guard_ignores_launcher_not_found_stdout(tmp_path):
-    text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
-    py_probe = next(
-        line
-        for line in text.splitlines()
-        if line.startswith('for /f "usebackq delims=" %%P in (`py.exe -3.12')
-    )
-    guarded_probe = py_probe.replace(
-        'in (`py.exe -3.12 "%Helper%" --probe 2^>nul`)',
-        'in (`echo Python 3.12 not found!`)',
-    )
-    probe = tmp_path / "launcher-not-found-probe.cmd"
-    probe.write_text(
-        "@echo off\r\n"
-        "setlocal EnableExtensions DisableDelayedExpansion\r\n"
-        "set \"SelectedPython=\"\r\n"
-        f"{guarded_probe}\r\n"
-        "if defined SelectedPython exit /b 1\r\n"
-        "exit /b 0\r\n",
-        encoding="utf-8",
-    )
+@pytest.mark.parametrize("fake_name", ["powershell.exe", "python.exe", "py.exe"])
+def test_cmd_rejects_top_level_fake_executables_without_running_them(tmp_path, fake_name):
+    root = tmp_path / "日本語 user" / "fake executable bundle"
+    root.mkdir(parents=True)
+    _make_cmd_bootstrap_bundle(root)
+    (root / fake_name).write_text("This is intentionally not an executable.\n", encoding="utf-8")
 
     result = subprocess.run(
-        ["cmd.exe", "/d", "/c", str(probe)],
+        ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
+        cwd=root,
         check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "Unexpected executable or script at bundle root" in result.stderr
+    assert not (root / "helper-executed.txt").exists()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows cmd.exe behavior")

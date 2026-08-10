@@ -296,3 +296,70 @@ def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
     assert "InstallerHashBeforeSignature" in text
     assert "installer_sha256" in text
     assert "changed during Authenticode validation" in text
+    assert '"--require-hashes"' in text
+    assert "$OfflineLockPath" in text
+
+
+def test_reviewed_windows_wheel_lock_has_exact_artifacts_and_hashes():
+    entries = offline_bundle.parse_offline_wheel_lock(
+        (ROOT / "requirements" / "offline-win64.txt").read_text(encoding="utf-8")
+    )
+
+    assert [(entry.distribution, entry.version, entry.filename, entry.sha256) for entry in entries] == [
+        (
+            "numpy",
+            "2.5.1",
+            "numpy-2.5.1-cp312-cp312-win_amd64.whl",
+            "f7d60026c0bdb1380e83bfa7a0419c4577ee4b9a08880afcb6dadeb74c649fa2",
+        ),
+        (
+            "pydicom",
+            "3.0.2",
+            "pydicom-3.0.2-py3-none-any.whl",
+            "abf971a5440f84dbaf42c4b6758e30e62480902584f8b270b9a5d146e278a07b",
+        ),
+        (
+            "setuptools",
+            "84.0.0",
+            "setuptools-84.0.0-py3-none-any.whl",
+            "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670",
+        ),
+        (
+            "wheel",
+            "0.47.0",
+            "wheel-0.47.0-py3-none-any.whl",
+            "212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced",
+        ),
+        (
+            "packaging",
+            "26.3",
+            "packaging-26.3-py3-none-any.whl",
+            "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+        ),
+    ]
+
+
+def test_locked_wheelhouse_rejects_hash_mismatch(tmp_path):
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    artifacts = {
+        "numpy": ("2.5.1", "numpy-2.5.1-cp312-cp312-win_amd64.whl"),
+        "pydicom": ("3.0.2", "pydicom-3.0.2-py3-none-any.whl"),
+        "setuptools": ("84.0.0", "setuptools-84.0.0-py3-none-any.whl"),
+        "wheel": ("0.47.0", "wheel-0.47.0-py3-none-any.whl"),
+    }
+    lock = []
+    for distribution, (version, filename) in artifacts.items():
+        content = f"synthetic:{filename}".encode("ascii")
+        (wheelhouse / filename).write_bytes(content)
+        lock.append(
+            offline_bundle.LockedWheel(
+                distribution=distribution,
+                version=version,
+                filename=filename,
+                sha256=("0" * 64 if distribution == "numpy" else offline_bundle.hashlib.sha256(content).hexdigest()),
+            )
+        )
+
+    with pytest.raises(offline_bundle.OfflineBundleError, match="Locked SHA-256 mismatch"):
+        offline_bundle.validate_locked_wheelhouse(wheelhouse, lock)
