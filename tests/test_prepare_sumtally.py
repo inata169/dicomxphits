@@ -966,9 +966,12 @@ def test_run_sumtally_preserves_execution_evidence_when_geometry_is_invalid(
         command_argv=["generate"],
     )
     expected_output = Path(generation["outputs"]["sumtally_output"])
+    expected_output.write_text(tally_output_text(), encoding="utf-8")
+    previous_output = expected_output.read_bytes()
 
     def fake_runner(cmd, **kwargs):
-        expected_output.write_text("not a tally mesh\n", encoding="utf-8")
+        staged_output = Path(kwargs["cwd"]) / expected_output.name
+        staged_output.write_text("not a tally mesh\n", encoding="utf-8")
         return subprocess.CompletedProcess(
             cmd,
             0,
@@ -988,13 +991,62 @@ def test_run_sumtally_preserves_execution_evidence_when_geometry_is_invalid(
     assert summary["returncode"] == 0
     assert summary["phits_execution_started"] is True
     assert summary["expected_sumtally_output_exists"] is True
-    assert summary["expected_sumtally_output_updated_by_run"] is True
+    assert summary["expected_sumtally_output_updated_by_run"] is False
     assert summary["expected_sumtally_output_after_run"]["sha256"]
     assert summary["expected_sumtally_output_sha256"]
+    assert (
+        summary["expected_sumtally_output_after_run"]["sha256"]
+        == summary["expected_sumtally_output_before_run"]["sha256"]
+    )
+    assert expected_output.read_bytes() == previous_output
     assert summary["sumtally_output_geometry_evidence"] is None
     assert "geometry validation failed" in summary["failure_reason"]
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "sum completed"
     assert Path(summary["stderr_path"]).read_text(encoding="utf-8") == "geometry warning"
+
+
+def test_run_sumtally_preserves_preexisting_output_when_phits_fails(tmp_path):
+    workspace, _ = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+    expected_output.write_text(tally_output_text(), encoding="utf-8")
+    previous_output = expected_output.read_bytes()
+
+    def fake_runner(cmd, **kwargs):
+        staged_output = Path(kwargs["cwd"]) / expected_output.name
+        staged_output.write_text(
+            tally_output_text() + "# failed run output\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(
+            cmd,
+            9,
+            stdout="sum failed",
+            stderr="runner error",
+        )
+
+    summary = run_sumtally(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=None),
+        sum_input=Path(generation["outputs"]["sum_input"]),
+        command_argv=["run"],
+        runner=fake_runner,
+    )
+
+    assert summary["stage_status"] == "failed"
+    assert summary["returncode"] == 9
+    assert summary["expected_sumtally_output_updated_by_run"] is False
+    assert (
+        summary["expected_sumtally_output_after_run"]["sha256"]
+        == summary["expected_sumtally_output_before_run"]["sha256"]
+    )
+    assert expected_output.read_bytes() == previous_output
+    assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "sum failed"
+    assert Path(summary["stderr_path"]).read_text(encoding="utf-8") == "runner error"
 
 
 def test_run_sumtally_rejects_legacy_normalization_before_execution(tmp_path):

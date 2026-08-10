@@ -602,10 +602,11 @@ def run_phits_sumtally(
     stderr_path: Path,
     workspace_root: Path,
     expected_output: Path,
+    expected_geometry: dict[str, Any] | None = None,
     environment: dict[str, str] | None = None,
     runner=subprocess.run,
     on_start: Callable[[], None] | None = None,
-) -> subprocess.CompletedProcess[str]:
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any] | None, str | None]:
     if environment is None:
         environment = phits_environment(sum_input)
     with WorkspaceOutputGuard(workspace_root) as guard:
@@ -663,8 +664,29 @@ def run_phits_sumtally(
                     shell=False,
                     env=environment,
                 )
+            geometry_evidence = None
+            geometry_validation_error = None
             if os.path.lexists(staged_output):
-                guard.copy_file(staged_output, expected_output)
+                guard.prepare_file_target(staged_output)
+                staged_output_non_empty = staged_output.stat().st_size > 0
+                if result.returncode == 0 and staged_output_non_empty:
+                    if expected_geometry is not None:
+                        try:
+                            geometry_evidence = sumtally_output_geometry_evidence(
+                                staged_output,
+                                expected_geometry=expected_geometry,
+                            )
+                        except Exception as exc:
+                            geometry_validation_error = (
+                                "Sumtally output geometry validation failed: " + str(exc)
+                            )
+                    if geometry_validation_error is None:
+                        guard.copy_file(staged_output, expected_output)
+                        if geometry_evidence is not None:
+                            geometry_evidence = {
+                                **geometry_evidence,
+                                "path": str(expected_output.resolve()),
+                            }
             for name in ("batch.out", "phits.out"):
                 staged_root_output = execution_root / name
                 if os.path.lexists(staged_root_output):
@@ -673,7 +695,7 @@ def run_phits_sumtally(
             guard.write_text(stderr_path, result.stderr or "")
         finally:
             guard.rmtree(execution_root, missing_ok=True)
-    return result
+    return result, geometry_evidence, geometry_validation_error
 
 
 def sumtally_output_snapshot(path: Path) -> dict[str, Any] | None:
@@ -847,13 +869,18 @@ def run_sumtally(
             nonlocal phits_started
             phits_started = True
 
-        result = run_phits_sumtally(
+        (
+            result,
+            sumtally_geometry_evidence,
+            geometry_validation_error,
+        ) = run_phits_sumtally(
             phits_executable_path=paths.phits_executable_path,
             sum_input=selected_sum_input,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             workspace_root=workspace_root,
             expected_output=expected_output,
+            expected_geometry=current_tally_geometry_binding["mesh_geometry"],
             environment=environment,
             runner=runner,
             on_start=mark_phits_started,
@@ -867,18 +894,6 @@ def run_sumtally(
             output_before is None
             or output_after["sha256"] != output_before["sha256"]
         )
-        sumtally_geometry_evidence = None
-        geometry_validation_error = None
-        if result.returncode == 0 and output_updated and output_non_empty:
-            try:
-                sumtally_geometry_evidence = sumtally_output_geometry_evidence(
-                    expected_output,
-                    expected_geometry=current_tally_geometry_binding["mesh_geometry"],
-                )
-            except Exception as exc:
-                geometry_validation_error = (
-                    "Sumtally output geometry validation failed: " + str(exc)
-                )
         summary = {
             "schema_version": "dicomxphits_public_sumtally_execution_v1",
             "stage": "run_sumtally",
