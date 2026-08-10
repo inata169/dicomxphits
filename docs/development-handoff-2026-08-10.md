@@ -6,6 +6,196 @@ cross-check it on Linux. It is a restart aid for the current change set. It is
 not a new implementation backlog, clinical validation record, or authorization
 to run real external tools or use real DICOM.
 
+## End-of-Day Addendum (2026-08-10)
+
+This addendum records a later stopping state than the sections written earlier
+on the same day. On restart, treat this addendum as authoritative and treat the
+later statements about the work being uncommitted or no pull request existing
+as historical. The earlier record remains below to preserve the development
+history; it does not describe the current state.
+
+### Closing Baseline
+
+- Repository: `C:\Repositories\dicomxphits`
+- Branch: `harden-offline-csv-output`
+- Runtime head before this addendum: `3d02733`
+  (`Preserve validated Sumtally outputs`)
+- Remote branch head: `3d02733`
+- Pull request: [#33](https://github.com/inata169/dicomxphits/pull/33),
+  **Harden offline, CSV, and workspace output boundaries**
+- The pull request is open and not a draft. It has not been merged, and its
+  branch has not been deleted.
+- The public tags remain `v1.0.1` and `v1.0.0`; neither was changed.
+- The worktree was clean immediately before this addendum was written. This
+  addendum is the only end-of-day change and is recorded in a documentation-only
+  child commit after `3d02733`. That documentation commit has not been pushed.
+
+The runtime commits after pull request #33's `cbcc59b` base are:
+
+```text
+3d02733 Preserve validated Sumtally outputs
+bda8a3c Harden offline PowerShell resolution
+4eb606a Preserve lexical workspace paths
+281933a Preserve PHITS statistical error outputs
+a40a3ed Preflight all segment output paths
+d527aac Reject non-portable Sumtally filenames
+9f2f150 Reject traversing Sumtally output names
+7ffe1ef Fix staged Sumtally and RTDOSE output guards
+824157f Fix guarded output regression import
+be65bb4 Preflight guarded output targets
+9e7cb2f Fix Windows CI Python prerequisite detection
+ee19735 Harden offline, CSV, and workspace output boundaries
+```
+
+### Main Corrections Completed Today
+
+- Corrected a Windows CI prerequisite that treated a Python installation
+  outside the production code's permitted roots as a valid candidate even
+  though the product code correctly rejected it.
+- Added regular-file target preflight for known persistent PHITS segment,
+  Sumtally, and RTDOSE destinations before starting an external runner.
+- Made Sumtally output names reject parent traversal, absolute paths, Windows
+  reserved names, invalid characters, NTFS alternate data streams, and trailing
+  dots or spaces.
+- Added batch-wide preflight of persistent destinations for every segment
+  before executing any segment.
+- Preserved lexical mutation paths for segment and rectangular-workspace
+  outputs so the guard can reject symlinks or junctions even when they point
+  elsewhere inside the workspace.
+- Read the user-provided non-patient phantom GUI log and Sumtally summary and
+  identified that segment staging failed to preserve the PHITS statistical
+  error files named `*_err.out`, causing Sumtally to fail. Commit `281933a`
+  corrected this, but the agent did not rerun real PHITS, Sumtally, or DICOM.
+- Corrected `install_offline.cmd` so its trusted PowerShell selection uses
+  cmd.exe's internal `__APPDIR__` instead of caller-controlled `SystemRoot`.
+- In `3d02733`, kept candidate Sumtally output in staging and promoted it
+  atomically only when the runner returned zero, the output was non-empty, and
+  its mesh geometry matched the active segment tallies. Added regressions
+  proving that a runner failure or invalid geometry preserves an existing final
+  output byte for byte.
+
+### Final Validated State
+
+The following checks were completed against code head `3d02733`:
+
+```text
+python -m compileall src
+  passed
+
+python -m pytest -q -p no:cacheprovider \
+  --basetemp=C:\tmp\dicomxphits-p2-full-20260810
+  701 passed, 8 skipped in 38.93s
+
+python -m pytest -q -p no:cacheprovider \
+  --basetemp=C:\tmp\dicomxphits-p2-module-20260810 \
+  tests/test_prepare_sumtally.py
+  81 passed in 4.34s
+
+python tools/verify_public_tree.py
+  Public tree audit passed (173 tracked files checked).
+
+git diff --check
+  passed
+```
+
+The exact-head GitHub Actions run
+[`31373632050`](https://github.com/inata169/dicomxphits/actions/runs/31373632050)
+also succeeded. Tests used only synthetic inputs and mock or fake runners. The
+agent did not execute PHITS, RT-PHITS, CT2PHITS, Sumtally, phits2dicom, GPR,
+real DICOM, or a long Monte Carlo calculation.
+
+### Unresolved Codex Review Findings
+
+`@codex review` reviewed `3d02733` and reported two new unresolved candidates at
+18:21 JST on 2026-08-10. Both paths were confirmed in the code and are treated
+as potential merge blockers. Neither has been corrected yet.
+
+1. **P1: Authenticate Python runtime DLLs before execution**
+
+   - Target: `Select-Python312` in `tools/install_offline_verified.ps1`
+   - Condition: An allowed existing Python directory contains a genuine
+     PSF-signed `python.exe` beside a malicious `python312.dll`.
+   - Current behavior: Only `python.exe` is Authenticode-validated and held with
+     a read lock before the first `-I` probe is launched.
+   - Impact: The Windows loader can load the adjacent DLL before `-I` or the
+     probe takes effect, allowing unvalidated code to execute.
+   - Minimal correction candidate: Before first launching a candidate, require
+     its necessary adjacent Python runtime DLLs to be regular, non-reparse
+     files, validate their expected signers, and retain read locks until
+     installation finishes. Reject any candidate that cannot be validated
+     without executing it.
+   - Remaining uncertainty: Before implementation, bound the exact validation
+     and lock set and its permitted signers against the official CPython 3.12
+     x64 distribution and the existing specification. Repeating the
+     `python.exe` check alone does not close this path.
+
+2. **P2: Preserve the lexical Sumtally output before guarding it**
+
+   - Target: `run_sumtally` in `src/dicomxphits/prepare_sumtally.py`
+   - Condition: The Sumtally output recorded in the generation summary is an
+     existing symlink or junction to a regular file elsewhere inside the
+     workspace.
+   - Current behavior: `resolve_workspace_path(...).resolve()` removes the link
+     component before passing the path to `WorkspaceOutputGuard`.
+   - Impact: The guard sees only the canonical target and can start the PHITS
+     runner without rejecting the unsafe lexical output path.
+   - Minimal correction candidate: Retain a normalized lexical path for
+     mutation and snapshots, and use `.resolve()` only for workspace containment
+     or path comparison. Add a regression proving that an in-workspace symlink
+     or junction is rejected before the runner starts.
+
+All inline review threads had been resolved before this final review created
+these two new threads. The repository's pull request stopping rule requires a
+human decision, rather than another automatic recursive correction, when a new
+blocker candidate appears after the final correction round. No further
+correction was started today.
+
+### Restart Procedure
+
+1. Read `AGENTS.md`, `AI_AGENT_RULES.md`, this addendum, and the latest review
+   on pull request #33.
+2. Confirm the repository root, branch, `HEAD`, status, recent history, remote,
+   tags, and worktree. The expected branch is `harden-offline-csv-output`; the
+   expected local head is the documentation-only commit immediately after
+   `3d02733`; the worktree should be clean; and the remote branch should still
+   point to `3d02733`.
+3. Obtain explicit human direction before pushing the documentation commit.
+4. Treat P1 and P2 as independent decisions. Obtain a human yes/no decision on
+   the minimal P1 correction first. After P1 is complete, obtain a separate
+   yes/no decision for P2.
+5. If approved, keep each correction minimal and on the same branch and pull
+   request #33. Run focused regressions, the full pytest suite, compileall, the
+   public-tree audit, and diff and status checks.
+6. Confirm the new exact-head CI and Codex re-review result. If another blocker
+   candidate appears, follow the stopping rule, report the evidence, and stop
+   again for a human decision.
+7. Do not merge while an unresolved thread, failing check, or unresolved
+   blocker remains. Do not automatically merge, delete the branch, create or
+   modify a tag, publish a release, or force-push.
+
+Continue to use the GitHub plugin rather than `gh` for GitHub operations. Keep
+the normal code-review boundary used in this session: do not use the Codex
+Security plugin, security-diff-scan, threat modeling, parallel agents, or audit
+artifact generation.
+
+### Scope and Stopping State
+
+Today's changes hardened offline installation, CSV output, workspace output
+guards, and failure behavior in the existing documented fixed-field 3D-CRT
+workflow. They did not change public physics, DICOM meaning, coordinates, dose,
+MU, normalization, the machine model, the field-size guard, supported treatment
+techniques, or clinical-suitability boundaries. No new clinical claim, patient
+data, facility configuration, credential, licensed PHITS material, or real
+calculation output was added.
+
+The stopping state is an open pull request #33 whose remote head is `3d02733`,
+successful local full validation and exact-head CI, one unresolved P1 and one
+unresolved P2, no merge, and an unpushed documentation-only local commit after
+`3d02733`. The next development work begins with a human yes/no decision on the
+P1 correction scope.
+
+## Earlier Same-Day Handoff Record (Historical)
+
 ## Handoff baseline
 
 - Repository-relative worktree: the repository root mounted by the Dev
