@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ from dicomxphits.prepare_3dcrt_workspace import (
     validate_public_strict_3dcrt_gate,
     write_libpath,
 )
+from dicomxphits.safe_output import UnsafeWorkspacePathError
 
 
 def active_segment(**overrides):
@@ -810,6 +812,53 @@ def test_rectangular_3dcrt_failure_does_not_modify_existing_phits_input(tmp_path
         )
 
     assert existing.read_text(encoding="utf-8") == "OLD\n"
+
+
+def test_rectangular_3dcrt_rejects_linked_segment_parent_before_write(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    actual_segments = workspace / "actual-segments"
+    actual_segments.mkdir()
+    linked_segments = workspace / "segments"
+    try:
+        linked_segments.symlink_to(actual_segments, target_is_directory=True)
+    except OSError as exc:
+        if sys.platform != "win32":
+            pytest.skip(f"directory symlinks are unavailable: {exc}")
+        trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        result = subprocess.run(
+            [
+                str(trusted_cmd),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(linked_segments),
+                str(actual_segments),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            pytest.skip(
+                "directory links are unavailable: "
+                f"{exc}; {result.stdout}{result.stderr}"
+            )
+
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse"):
+        generate_rectangular_phits_workspace(
+            manifest=manifest_with(rectangular_segment()),
+            case_root=workspace,
+            machine_config_path=write_machine_config(tmp_path),
+            apply_approved_totfact=False,
+            ct_asset_root=write_ct_assets(tmp_path),
+            confirmed_non_patient_phantom=True,
+        )
+
+    assert list(actual_segments.iterdir()) == []
 
 
 @pytest.mark.parametrize("bad_path", ["/private/output.out", "../output.out", "segments/../output.out"])

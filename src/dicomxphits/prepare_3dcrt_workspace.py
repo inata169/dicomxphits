@@ -237,10 +237,10 @@ def public_relative_path(value: str, *, label: str) -> str:
 
 
 def path_inside_workspace(workspace_root: Path, relative_path: str) -> Path:
-    root = workspace_root.resolve()
-    candidate = (root / relative_path).resolve()
+    root = Path(os.path.abspath(os.fspath(workspace_root)))
+    candidate = Path(os.path.abspath(os.fspath(root / relative_path)))
     try:
-        candidate.relative_to(root)
+        candidate.resolve().relative_to(root.resolve())
     except ValueError as exc:
         raise ValueError(f"output path escapes workspace: {relative_path}") from exc
     return candidate
