@@ -256,11 +256,18 @@ def persistent_segment_outputs(
     output_dir = expected_output.parent
     return [
         *declared_outputs,
+        *(phits_error_output_path(output) for output in declared_outputs),
         output_dir / "phits_stdout.txt",
         output_dir / "phits_stderr.txt",
         output_dir / ROOT_BATCH_OUT,
         output_dir / ROOT_PHITS_OUT,
     ]
+
+
+def phits_error_output_path(output: Path) -> Path:
+    """Return the PHITS statistical-error companion for a tally output."""
+
+    return output.with_name(f"{output.stem}_err{output.suffix}")
 
 
 def stage_phits_segment_run(
@@ -332,12 +339,18 @@ def run_one_segment(
             guard=guard,
         )
         try:
+            error_outputs = [
+                phits_error_output_path(output) for output in declared_outputs
+            ]
             persistent_outputs = persistent_segment_outputs(
                 expected_output=expected_output,
                 declared_outputs=declared_outputs,
             )
             for output in persistent_outputs:
                 guard.prepare_file_target(output, create_parents=True)
+            for output in error_outputs:
+                if os.path.lexists(output):
+                    guard.unlink(output)
             result = runner(
                 [phits_executable_path],
                 input=phits_launcher_input(
@@ -354,8 +367,28 @@ def run_one_segment(
                 execution_root
                 / expected_output.resolve().relative_to(workspace_root.resolve())
             )
-            if result.returncode == 0 and staged_expected_output.is_file():
-                for output in declared_outputs:
+            expected_error_output = phits_error_output_path(expected_output)
+            staged_expected_error_output = (
+                execution_root
+                / expected_error_output.resolve().relative_to(
+                    workspace_root.resolve()
+                )
+            )
+            if (
+                result.returncode == 0
+                and staged_expected_output.is_file()
+                and staged_expected_error_output.is_file()
+            ):
+                non_expected_outputs = [
+                    output
+                    for output in declared_outputs
+                    if output.resolve() != expected_output.resolve()
+                ]
+                for output in [
+                    *error_outputs,
+                    *non_expected_outputs,
+                    expected_output,
+                ]:
                     relative = output.resolve().relative_to(workspace_root.resolve())
                     staged_output = execution_root / relative
                     if not os.path.lexists(staged_output):
