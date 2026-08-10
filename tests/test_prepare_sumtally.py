@@ -176,6 +176,29 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
         "..",
         "",
         "custom.out\nfile = bypass.out",
+        "CON",
+        "con.txt",
+        "PRN",
+        "AUX.log",
+        "NUL.out",
+        "CONIN$",
+        "conout$.txt",
+        "COM1",
+        "com9.log",
+        "LPT1",
+        "lpt9.out",
+        "COM¹.txt",
+        "LPT³.out",
+        "result?.out",
+        "name:stream",
+        "result.",
+        "result ",
+        "result<.out",
+        "result>.out",
+        'result".out',
+        "result|.out",
+        "result*.out",
+        "control\t.out",
     ],
 )
 def test_generate_sumtally_rejects_non_filename_output_name(
@@ -204,17 +227,24 @@ def test_generate_sumtally_rejects_non_filename_output_name(
     assert failure["phits_execution_started"] is False
 
 
-def test_generate_sumtally_accepts_portable_custom_output_name(tmp_path):
+@pytest.mark.parametrize(
+    "output_name",
+    ["custom-total.out", "COM0.out", "LPT10.out", "日本語.out"],
+)
+def test_generate_sumtally_accepts_portable_custom_output_name(
+    tmp_path,
+    output_name,
+):
     workspace, _ = write_workspace(tmp_path)
 
     summary = generate_sumtally(
         workspace_root=workspace,
         paths=paths(),
-        output_name="custom-total.out",
+        output_name=output_name,
         command_argv=["generate"],
     )
 
-    assert Path(summary["outputs"]["sumtally_output"]).name == "custom-total.out"
+    assert Path(summary["outputs"]["sumtally_output"]).name == output_name
 
 
 def test_generate_sumtally_factor_reproduces_analytic_active_treatment_dose(

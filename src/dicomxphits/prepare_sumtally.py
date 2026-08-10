@@ -50,20 +50,42 @@ RT_DOSE_CONVERSION_HINT = {
     "is_beam_mu_output": False,
     "phits2dicom_factor": 1.0,
 }
+WINDOWS_INVALID_FILENAME_CHARACTERS = frozenset('<>:"/\\|?*')
+WINDOWS_RESERVED_FILENAME_STEMS = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "CONIN$",
+        "CONOUT$",
+        "COM¹",
+        "COM²",
+        "COM³",
+        "LPT¹",
+        "LPT²",
+        "LPT³",
+    }
+    | {f"COM{index}" for index in range(1, 10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
 
 
 def validate_sumtally_output_name(value: str) -> str:
     """Require a portable single filename for the staged Sumtally output."""
 
+    if not isinstance(value, str) or not value:
+        raise ValueError("Sumtally output name must be a single portable file name")
+    windows_stem = value.split(".", 1)[0].upper()
     if (
-        not isinstance(value, str)
-        or not value
-        or value in {".", ".."}
-        or "/" in value
-        or "\\" in value
-        or "\r" in value
-        or "\n" in value
-        or "\x00" in value
+        value in {".", ".."}
+        or any(
+            character in WINDOWS_INVALID_FILENAME_CHARACTERS
+            for character in value
+        )
+        or any(ord(character) < 32 for character in value)
+        or value.endswith((" ", "."))
+        or windows_stem in WINDOWS_RESERVED_FILENAME_STEMS
         or Path(value).is_absolute()
         or bool(PureWindowsPath(value).drive)
     ):
