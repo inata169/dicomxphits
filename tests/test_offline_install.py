@@ -120,9 +120,16 @@ def _windows_has_bounded_python312_candidate() -> bool:
     if sys.platform != "win32":
         return False
     candidates: list[Path] = []
+    allowed_roots: list[Path] = []
     local_app_data = os.environ.get("LocalAppData")
     if local_app_data:
-        candidates.append(Path(local_app_data) / "Programs" / "Python" / "Python312" / "python.exe")
+        python_root = Path(local_app_data) / "Programs" / "Python"
+        allowed_roots.append(python_root)
+        candidates.append(python_root / "Python312" / "python.exe")
+    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+        value = os.environ.get(variable)
+        if value:
+            allowed_roots.append(Path(value))
     import winreg
 
     for hive, key in (
@@ -136,7 +143,13 @@ def _windows_has_bounded_python312_candidate() -> bool:
         except OSError:
             continue
         candidates.append(Path(value) / "python.exe")
-    return any(path.is_file() for path in candidates)
+    return any(
+        path.is_file()
+        and any(
+            path.resolve().is_relative_to(root.resolve()) for root in allowed_roots
+        )
+        for path in candidates
+    )
 
 
 class FakeRunner:
