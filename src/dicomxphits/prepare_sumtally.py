@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable
 
 from dicomxphits.prepare_3dcrt_workspace import (
@@ -50,6 +50,27 @@ RT_DOSE_CONVERSION_HINT = {
     "is_beam_mu_output": False,
     "phits2dicom_factor": 1.0,
 }
+
+
+def validate_sumtally_output_name(value: str) -> str:
+    """Require a portable single filename for the staged Sumtally output."""
+
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or "/" in value
+        or "\\" in value
+        or "\r" in value
+        or "\n" in value
+        or "\x00" in value
+        or Path(value).is_absolute()
+        or bool(PureWindowsPath(value).drive)
+    ):
+        raise ValueError("Sumtally output name must be a single portable file name")
+    return value
+
+
 PHITS_INCLUDE_PATTERN = re.compile(
     r"^\s*infl:\s*\{\s*([^}]+?)\s*\}",
     re.IGNORECASE,
@@ -394,6 +415,7 @@ def generate_sumtally(
     workspace_root = workspace_root.resolve()
     generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
     try:
+        output_name = validate_sumtally_output_name(output_name)
         require_generation_paths(paths)
 
         manifest, manifest_path = load_manifest(workspace_root)

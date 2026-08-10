@@ -164,6 +164,59 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert "seg_002/deposit-target-3D.out  60" in content
 
 
+@pytest.mark.parametrize(
+    "output_name",
+    [
+        "../sumtally/custom.out",
+        "..\\sumtally\\custom.out",
+        "/tmp/custom.out",
+        "C:custom.out",
+        "C:\\custom.out",
+        ".",
+        "..",
+        "",
+        "custom.out\nfile = bypass.out",
+    ],
+)
+def test_generate_sumtally_rejects_non_filename_output_name(
+    tmp_path,
+    output_name,
+):
+    workspace, _ = write_workspace(tmp_path)
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_before = manifest_path.read_bytes()
+
+    with pytest.raises(ValueError, match="single portable file name"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            output_name=output_name,
+            command_argv=["generate"],
+        )
+
+    assert manifest_path.read_bytes() == manifest_before
+    failure = json.loads(
+        (workspace / "analysis" / "sumtally_generation_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "gate_failed"
+    assert failure["phits_execution_started"] is False
+
+
+def test_generate_sumtally_accepts_portable_custom_output_name(tmp_path):
+    workspace, _ = write_workspace(tmp_path)
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        output_name="custom-total.out",
+        command_argv=["generate"],
+    )
+
+    assert Path(summary["outputs"]["sumtally_output"]).name == "custom-total.out"
+
+
 def test_generate_sumtally_factor_reproduces_analytic_active_treatment_dose(
     tmp_path,
 ):
