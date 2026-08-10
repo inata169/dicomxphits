@@ -246,6 +246,18 @@ class WorkspaceOutputGuard:
                 ) from exc
         return target
 
+    def prepare_file_target(
+        self, target: Path, *, create_parents: bool = False
+    ) -> Path:
+        """Prepare a file output and reject existing non-regular targets."""
+
+        target = self.prepare(target, create_parents=create_parents)
+        if _lexists(target) and not target.is_file():
+            raise UnsafeWorkspacePathError(
+                f"Output target is not a regular file: {target}"
+            )
+        return target
+
     def mkdir(self, path: Path) -> Path:
         marker = path / ".dicomxphits-directory-boundary"
         self.prepare(marker, create_parents=True)
@@ -278,7 +290,7 @@ class WorkspaceOutputGuard:
         *,
         overwrite: bool = True,
     ) -> Path:
-        target = self.prepare(path, create_parents=True)
+        target = self.prepare_file_target(path, create_parents=True)
         if not overwrite:
             descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
             with os.fdopen(descriptor, "wb") as stream:
@@ -296,7 +308,7 @@ class WorkspaceOutputGuard:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            self.prepare(target)
+            self.prepare_file_target(target)
             os.replace(temporary, target)
         finally:
             if _lexists(temporary):
@@ -315,7 +327,7 @@ class WorkspaceOutputGuard:
         source = self.prepare(source)
         if not source.is_file():
             raise UnsafeWorkspacePathError(f"Copy source is not a regular file: {source}")
-        target = self.prepare(destination, create_parents=True)
+        target = self.prepare_file_target(destination, create_parents=True)
 
         if not overwrite:
             descriptor: int | None = None
@@ -357,7 +369,7 @@ class WorkspaceOutputGuard:
                 shutil.copyfileobj(source_stream, target_stream)
                 target_stream.flush()
                 os.fsync(target_stream.fileno())
-            self.prepare(target)
+            self.prepare_file_target(target)
             os.replace(temporary, target)
         finally:
             if _lexists(temporary):

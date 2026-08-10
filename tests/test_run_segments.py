@@ -314,6 +314,35 @@ def test_run_segments_validates_all_omp_directives_before_removing_outputs(tmp_p
     assert read_summary(workspace)["status"] == "gate_failed"
 
 
+def test_run_segments_rejects_linked_log_before_external_execution(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    expected = workspace / manifest["segments"][0]["expected_output_path"]
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("preserve\n", encoding="utf-8")
+    stdout_log = expected.parent / "phits_stdout.txt"
+    try:
+        stdout_log.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symbolic links are unavailable: {exc}")
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+    assert outside.read_text(encoding="utf-8") == "preserve\n"
+
+
 def test_run_segments_keeps_failure_outputs_diagnostic_only(tmp_path):
     workspace, manifest = write_workspace(tmp_path)
     expected = workspace / manifest["segments"][0]["expected_output_path"]

@@ -136,6 +136,26 @@ def test_workspace_copy_new_only_preserves_an_existing_regular_file(tmp_path):
     assert destination.read_bytes() == b"preserve"
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are unavailable")
+@pytest.mark.parametrize("writer", ["write_bytes", "copy_file"])
+def test_workspace_overwrite_rejects_existing_fifo(tmp_path, writer):
+    case_root = tmp_path / "case"
+    case_root.mkdir()
+    source = case_root / "source.out"
+    source.write_bytes(b"replacement")
+    destination = case_root / "result.out"
+    os.mkfifo(destination)
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        with WorkspaceOutputGuard(case_root) as guard:
+            if writer == "write_bytes":
+                guard.write_bytes(destination, b"replacement")
+            else:
+                guard.copy_file(source, destination)
+
+    assert destination.is_fifo()
+
+
 def test_workspace_writer_rejects_symlinked_case_root(tmp_path):
     actual_root = tmp_path / "actual"
     actual_root.mkdir()

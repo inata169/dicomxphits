@@ -307,6 +307,15 @@ def run_one_segment(
             guard=guard,
         )
         try:
+            persistent_outputs = [
+                *declared_outputs,
+                stdout_path,
+                stderr_path,
+                output_dir / ROOT_BATCH_OUT,
+                output_dir / ROOT_PHITS_OUT,
+            ]
+            for output in persistent_outputs:
+                guard.prepare_file_target(output, create_parents=True)
             result = runner(
                 [phits_executable_path],
                 input=phits_launcher_input(
@@ -429,6 +438,9 @@ def run_segments(
             if not phits_input.is_file():
                 raise FileNotFoundError(f"PHITS input file not found: {phits_input}")
             phits_environment(phits_input)
+
+        with WorkspaceOutputGuard(workspace_root) as guard:
+            guard.prepare_file_target(summary_file, create_parents=True)
 
         for summary_index, segment in active_segments:
             segment_summaries[summary_index] = (
