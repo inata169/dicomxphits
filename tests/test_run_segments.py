@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -342,6 +343,86 @@ def test_run_segments_rejects_linked_log_before_external_execution(tmp_path):
 
     assert calls == []
     assert outside.read_text(encoding="utf-8") == "preserve\n"
+
+
+def test_run_segments_rejects_linked_output_parent_before_external_execution(tmp_path):
+    segment = active_segment(
+        0,
+        expected_output_path="linked-output/deposit-target-3D.out",
+    )
+    workspace, _manifest = write_workspace(tmp_path, segment)
+    actual_output_dir = workspace / "actual-output"
+    actual_output_dir.mkdir()
+    linked_output_dir = workspace / "linked-output"
+    try:
+        linked_output_dir.symlink_to(actual_output_dir, target_is_directory=True)
+    except OSError as exc:
+        if sys.platform != "win32":
+            pytest.skip(f"directory symlinks are unavailable: {exc}")
+        trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        result = subprocess.run(
+            [
+                str(trusted_cmd),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(linked_output_dir),
+                str(actual_output_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            pytest.skip(
+                "directory links are unavailable: "
+                f"{exc}; {result.stdout}{result.stderr}"
+            )
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+    assert list(actual_output_dir.iterdir()) == []
+
+
+def test_run_segments_preflights_later_segment_outputs_before_execution(tmp_path):
+    workspace, manifest = write_workspace(
+        tmp_path,
+        active_segment(0),
+        active_segment(1),
+    )
+    later_expected = workspace / manifest["segments"][1]["expected_output_path"]
+    unsafe_log = later_expected.parent / "phits_stdout.txt"
+    unsafe_log.mkdir(parents=True)
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
 
 
 def test_run_segments_keeps_failure_outputs_diagnostic_only(tmp_path):

@@ -75,13 +75,15 @@ def resolve_workspace_file(workspace_root: Path, value: str, *, label: str) -> P
     if not value:
         raise ValueError(f"{label} is required")
     path = Path(value)
-    resolved = path.resolve() if path.is_absolute() else (workspace_root / path).resolve()
+    candidate = path if path.is_absolute() else workspace_root / path
+    absolute = Path(os.path.abspath(os.fspath(candidate)))
+    resolved = absolute.resolve()
     workspace_resolved = workspace_root.resolve()
     try:
         resolved.relative_to(workspace_resolved)
     except ValueError as exc:
         raise ValueError(f"{label} must resolve inside workspace root: {value}") from exc
-    return resolved
+    return absolute
 
 
 def require_execution_paths(paths: ExternalToolPaths) -> None:
@@ -191,39 +193,42 @@ def phits_staging_contract(
     *,
     workspace_root: Path,
     phits_input: Path,
+    guard: WorkspaceOutputGuard,
 ) -> tuple[list[Path], list[Path]]:
     """Return workspace-local input dependencies and declared output paths."""
 
-    root = workspace_root.resolve()
-    pending = [phits_input.resolve()]
+    root = Path(os.path.abspath(os.fspath(workspace_root)))
+    root_resolved = root.resolve()
+    pending = [phits_input]
     inputs: list[Path] = []
     outputs: list[Path] = []
     seen_inputs: set[Path] = set()
     seen_outputs: set[Path] = set()
     while pending:
         source = pending.pop()
-        if source in seen_inputs:
+        source_resolved = source.resolve()
+        if source_resolved in seen_inputs:
             continue
         try:
-            source.relative_to(root)
+            source_resolved.relative_to(root_resolved)
         except ValueError as exc:
             raise ValueError(
                 f"PHITS input dependency must resolve inside workspace root: {source}"
             ) from exc
+        guard.prepare(source)
         if not source.is_file():
             raise FileNotFoundError(f"PHITS input dependency not found: {source}")
-        seen_inputs.add(source)
+        seen_inputs.add(source_resolved)
         inputs.append(source)
         with source.open("r", encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 include_match = PHITS_INCLUDE_PATTERN.match(line)
                 if include_match is not None:
                     value = os.path.expandvars(os.path.expanduser(include_match.group(1)))
-                    include = Path(value)
-                    dependency = (
-                        include.resolve()
-                        if include.is_absolute()
-                        else (root / include).resolve()
+                    dependency = resolve_workspace_file(
+                        root,
+                        value,
+                        label="PHITS input dependency",
                     )
                     pending.append(dependency)
                 output_match = PHITS_OUTPUT_PATTERN.match(line)
@@ -239,6 +244,25 @@ def phits_staging_contract(
     return inputs, outputs
 
 
+def persistent_segment_outputs(
+    *,
+    expected_output: Path,
+    declared_outputs: list[Path],
+) -> list[Path]:
+    if expected_output.resolve() not in {path.resolve() for path in declared_outputs}:
+        raise ValueError(
+            "expected_output_path is not declared by the selected PHITS input"
+        )
+    output_dir = expected_output.parent
+    return [
+        *declared_outputs,
+        output_dir / "phits_stdout.txt",
+        output_dir / "phits_stderr.txt",
+        output_dir / ROOT_BATCH_OUT,
+        output_dir / ROOT_PHITS_OUT,
+    ]
+
+
 def stage_phits_segment_run(
     *,
     workspace_root: Path,
@@ -249,11 +273,12 @@ def stage_phits_segment_run(
     inputs, outputs = phits_staging_contract(
         workspace_root=workspace_root,
         phits_input=phits_input,
+        guard=guard,
     )
-    if expected_output.resolve() not in {path.resolve() for path in outputs}:
-        raise ValueError(
-            "expected_output_path is not declared by the selected PHITS input"
-        )
+    persistent_segment_outputs(
+        expected_output=expected_output,
+        declared_outputs=outputs,
+    )
     execution_root = guard.make_staging_directory(
         workspace_root / "analysis",
         prefix=".phits-segment-run-",
@@ -287,15 +312,15 @@ def run_one_segment(
         str(segment.get("expected_output_path") or ""),
         label="expected_output_path",
     )
-    if not phits_input.is_file():
-        raise FileNotFoundError(f"PHITS input file not found: {phits_input}")
-    environment = phits_environment(phits_input)
-
     output_dir = expected_output.parent
     stdout_path = output_dir / "phits_stdout.txt"
     stderr_path = output_dir / "phits_stderr.txt"
 
     with WorkspaceOutputGuard(workspace_root) as guard:
+        guard.prepare(phits_input)
+        if not phits_input.is_file():
+            raise FileNotFoundError(f"PHITS input file not found: {phits_input}")
+        environment = phits_environment(phits_input)
         guard.mkdir(output_dir)
         guard.prepare(expected_output)
         remove_stale_expected_output(expected_output, guard=guard)
@@ -307,13 +332,10 @@ def run_one_segment(
             guard=guard,
         )
         try:
-            persistent_outputs = [
-                *declared_outputs,
-                stdout_path,
-                stderr_path,
-                output_dir / ROOT_BATCH_OUT,
-                output_dir / ROOT_PHITS_OUT,
-            ]
+            persistent_outputs = persistent_segment_outputs(
+                expected_output=expected_output,
+                declared_outputs=declared_outputs,
+            )
             for output in persistent_outputs:
                 guard.prepare_file_target(output, create_parents=True)
             result = runner(
@@ -424,23 +446,35 @@ def run_segments(
             else:
                 segment_summaries.append(blank_segment_summary(item, status="skipped", reason=skip_reason))
 
-        for _summary_index, segment in active_segments:
-            phits_input = resolve_workspace_file(
-                workspace_root,
-                str(segment.get("phits_input_path") or ""),
-                label="phits_input_path",
-            )
-            resolve_workspace_file(
-                workspace_root,
-                str(segment.get("expected_output_path") or ""),
-                label="expected_output_path",
-            )
-            if not phits_input.is_file():
-                raise FileNotFoundError(f"PHITS input file not found: {phits_input}")
-            phits_environment(phits_input)
-
         with WorkspaceOutputGuard(workspace_root) as guard:
             guard.prepare_file_target(summary_file, create_parents=True)
+            for _summary_index, segment in active_segments:
+                phits_input = resolve_workspace_file(
+                    workspace_root,
+                    str(segment.get("phits_input_path") or ""),
+                    label="phits_input_path",
+                )
+                expected_output = resolve_workspace_file(
+                    workspace_root,
+                    str(segment.get("expected_output_path") or ""),
+                    label="expected_output_path",
+                )
+                guard.prepare(phits_input)
+                if not phits_input.is_file():
+                    raise FileNotFoundError(
+                        f"PHITS input file not found: {phits_input}"
+                    )
+                phits_environment(phits_input)
+                _inputs, declared_outputs = phits_staging_contract(
+                    workspace_root=workspace_root,
+                    phits_input=phits_input,
+                    guard=guard,
+                )
+                for output in persistent_segment_outputs(
+                    expected_output=expected_output,
+                    declared_outputs=declared_outputs,
+                ):
+                    guard.prepare_file_target(output, create_parents=True)
 
         for summary_index, segment in active_segments:
             segment_summaries[summary_index] = (
