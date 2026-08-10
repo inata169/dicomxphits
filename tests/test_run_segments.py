@@ -18,6 +18,7 @@ from dicomxphits.run_segments import (
     phits_environment,
     run_segments,
 )
+from dicomxphits.safe_output import UnsafeWorkspacePathError
 
 
 def active_segment(index=0, **overrides):
