@@ -82,32 +82,69 @@ function Get-PythonCandidates {
 
 function Select-Python312 {
     foreach ($CandidateValue in Get-PythonCandidates) {
+        $CandidateStreams = New-Object System.Collections.Generic.List[System.IO.Stream]
         try {
             $Candidate = [System.IO.Path]::GetFullPath([string]$CandidateValue)
             if (-not [System.IO.File]::Exists($Candidate)) { continue }
             if (-not (Test-UnderAllowedPythonRoot $Candidate)) { continue }
             if ($Candidate.StartsWith($BundlePrefix, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
-            Assert-NoReparsePath $Candidate "Python executable path"
 
-            $Stream = [System.IO.File]::Open($Candidate, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-            try {
-                $Signature = Get-AuthenticodeSignature -LiteralPath $Candidate
-                if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) { continue }
-                if ($null -eq $Signature.SignerCertificate -or [string]$Signature.SignerCertificate.Subject -notlike "*Python Software Foundation*") { continue }
-                $Probe = & $Candidate -I -c "import json,struct,sys;print(json.dumps({'implementation':sys.implementation.name,'major':sys.version_info.major,'minor':sys.version_info.minor,'bits':struct.calcsize('P')*8}))" 2>$null
-                if ($LASTEXITCODE -ne 0) { continue }
-                $Data = ($Probe | Select-Object -Last 1) | ConvertFrom-Json
-                if ($Data.implementation -ne "cpython" -or $Data.major -ne 3 -or $Data.minor -ne 12 -or $Data.bits -ne 64) { continue }
-                $LockedPythonFiles.Add($Stream)
+            $CandidateDirectory = [System.IO.Path]::GetDirectoryName($Candidate)
+            $ProtectedCandidateFiles = @(
+                @{
+                    Path = $Candidate
+                    Label = "Python executable path"
+                    Signer = "*Python Software Foundation*"
+                },
+                @{
+                    Path = Join-Path $CandidateDirectory "python312.dll"
+                    Label = "Python runtime DLL path"
+                    Signer = "*Python Software Foundation*"
+                },
+                @{
+                    Path = Join-Path $CandidateDirectory "vcruntime140.dll"
+                    Label = "Visual C++ runtime DLL path"
+                    Signer = "*CN=Microsoft Windows Software Compatibility Publisher, O=Microsoft Corporation,*"
+                }
+            )
+            foreach ($ProtectedFile in $ProtectedCandidateFiles) {
+                $ProtectedPath = [System.IO.Path]::GetFullPath([string]$ProtectedFile.Path)
+                if (-not [System.IO.File]::Exists($ProtectedPath)) {
+                    throw "$($ProtectedFile.Label) is missing or is not a regular file: $ProtectedPath"
+                }
+                Assert-NoReparsePath $ProtectedPath ([string]$ProtectedFile.Label)
+
                 $Stream = $null
-                return $Candidate
+                try {
+                    $Stream = [System.IO.File]::Open($ProtectedPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+                    $Signature = Get-AuthenticodeSignature -LiteralPath $ProtectedPath
+                    if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+                        throw "$($ProtectedFile.Label) Authenticode validation failed: $ProtectedPath"
+                    }
+                    if ($null -eq $Signature.SignerCertificate -or [string]$Signature.SignerCertificate.Subject -notlike [string]$ProtectedFile.Signer) {
+                        throw "$($ProtectedFile.Label) has an unexpected Authenticode signer: $ProtectedPath"
+                    }
+                    $CandidateStreams.Add($Stream)
+                    $Stream = $null
+                }
+                finally {
+                    if ($null -ne $Stream) { $Stream.Dispose() }
+                }
             }
-            finally {
-                if ($null -ne $Stream) { $Stream.Dispose() }
-            }
+
+            $Probe = & $Candidate -I -c "import sys;print('|'.join((sys.implementation.name,str(sys.version_info.major),str(sys.version_info.minor),'64' if sys.maxsize > 2**32 else '32')))" 2>$null
+            if ($LASTEXITCODE -ne 0) { continue }
+            $Data = @(($Probe | Select-Object -Last 1) -split '\|')
+            if ($Data.Count -ne 4 -or $Data[0] -ne "cpython" -or $Data[1] -ne "3" -or $Data[2] -ne "12" -or $Data[3] -ne "64") { continue }
+            foreach ($HeldStream in $CandidateStreams) { $LockedPythonFiles.Add($HeldStream) }
+            $CandidateStreams.Clear()
+            return $Candidate
         }
         catch {
             continue
+        }
+        finally {
+            foreach ($Stream in $CandidateStreams) { $Stream.Dispose() }
         }
     }
     return $null

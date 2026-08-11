@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 
@@ -514,8 +516,99 @@ def test_verified_stage_uses_only_absolute_bounded_python_candidates():
     assert "Test-UnderAllowedPythonRoot" in text
     assert "Get-AuthenticodeSignature" in text
     assert "Python Software Foundation" in text
+    assert '"python312.dll"' in text
+    assert '"vcruntime140.dll"' in text
+    assert "Microsoft Windows Software Compatibility Publisher" in text
     assert "& $Candidate -I -c" in text
     assert "& $SelectedPython -I $Helper" in text
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Authenticode behavior")
+def test_verified_stage_rejects_malicious_adjacent_runtime_dll_before_candidate_start(
+    tmp_path,
+):
+    base_executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+    local_app_data = tmp_path / "local-app-data"
+    candidate_dir = local_app_data / "Programs" / "Python" / "Python312"
+    candidate_dir.mkdir(parents=True)
+    candidate = candidate_dir / "python.exe"
+    shutil.copyfile(base_executable, candidate)
+    (candidate_dir / "python312.dll").write_bytes(b"malicious adjacent DLL")
+
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        "\ntry {\n    Assert-NoReparsePath $BundleRoot \"Bundle root\""
+    )
+    assert separator
+    instrumented, replacements = re.subn(
+        r"(?m)^\s*\$Probe = & \$Candidate -I -c .*$",
+        """                Set-Content -LiteralPath $env:DICOMXPHITS_TEST_CANDIDATE_STARTED -Value \"started\"
+                $Probe = \"cpython|3|12|64\"
+                $global:LASTEXITCODE = 0""",
+        function_text,
+    )
+    assert replacements == 1
+
+    harness = tmp_path / "select-python-harness.ps1"
+    marker = tmp_path / "candidate-started.txt"
+    harness.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        + instrumented
+        + "\nfunction Get-PythonCandidates { return @($env:DICOMXPHITS_TEST_CANDIDATE) }\n"
+        "$Signature = Get-AuthenticodeSignature -LiteralPath $env:DICOMXPHITS_TEST_CANDIDATE\n"
+        "if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) { exit 8 }\n"
+        "if ($null -eq $Signature.SignerCertificate -or [string]$Signature.SignerCertificate.Subject -notlike '*Python Software Foundation*') { exit 9 }\n"
+        "try {\n"
+        "    $Selected = Select-Python312\n"
+        "    if ($null -eq $Selected) { exit 7 }\n"
+        "    exit 0\n"
+        "}\n"
+        "finally {\n"
+        "    foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "LocalAppData": str(local_app_data),
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path / "bundle"),
+            "DICOMXPHITS_TEST_CANDIDATE": str(candidate),
+            "DICOMXPHITS_TEST_CANDIDATE_STARTED": str(marker),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode == 7, result.stdout + result.stderr
+    assert not marker.exists()
 
 
 def test_installer_never_uses_bare_executable_discovery():
