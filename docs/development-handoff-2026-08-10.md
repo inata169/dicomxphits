@@ -6,6 +6,60 @@ cross-check it on Linux. It is a restart aid for the current change set. It is
 not a new implementation backlog, clinical validation record, or authorization
 to run real external tools or use real DICOM.
 
+## Pull Request #33 Continuation Addendum (2026-08-12)
+
+This later addendum supersedes the 2026-08-10 stopping instructions for pull
+request #33. The primary user authorized correction of the remaining review
+findings, repeated `@codex review`, and merge with source-branch deletion only
+after review and exact-head CI are clean.
+
+The earlier executable-and-adjacent-DLL correction was insufficient because
+`-I -S` still loads unsigned source from an installed Python's `Lib` directory.
+After an evidence-backed yes/no decision, the user approved replacing host
+Python discovery with an authenticated application-local runtime. The approved
+OpenSpec change is `bundle-authenticated-python-runtime`.
+
+The producer now bundles the official CPython 3.12.10 `python` NuGet package,
+the official x64 `tcltk.msi` component, and pinned NuGet CLI 7.9.0. It validates
+the expected NuGet repository signer fingerprint, Python Software Foundation
+Authenticode signer, and Microsoft Authenticode signer and binds the resulting
+provenance to the exact bundled bytes. The offline stage revalidates and
+read-locks those sources, safely extracts a fresh `.python-runtime`, rejects
+unsafe or reparse content, validates required signed binaries, and read-locks
+the complete runtime before its first `python.exe -I -S -B` launch. It never
+discovers or executes a host Python candidate.
+
+Windows focused validation used only synthetic temporary paths plus public
+official runtime artifacts. A malicious host candidate whose modified
+`Lib\encodings\__init__.py` demonstrably executed when launched directly was
+not started by the offline stage. The final official-artifact probe accepted
+CPython 3.12.10 and Tcl/Tk 8.6.15, imported Tkinter, and confirmed that a helper
+could not modify the locked standard library. The offline focused suite passed
+with 44 tests.
+
+The complete suite passed with the repository's locked pydicom 3.0.2 and NumPy
+2.5.1 dependencies made available from `.venv` to system pytest:
+
+```text
+python -m pytest -q -p no:cacheprovider \
+  --basetemp=C:\tmp\dicomxphits-p1-full-20260812-l
+  707 passed, 8 skipped in 35.38s
+```
+
+An initial non-acceptance invocation used system pydicom 2.4.4 and reproduced
+the already documented dependency-mismatch failures in DICOM test helpers. No
+repository correction was made for that environment error. No PHITS,
+RT-PHITS, CT2PHITS, Sumtally, phits2dicom, GPR, or real DICOM was executed.
+Public physics, DICOM meaning, coordinates, dose, MU, normalization, machine
+model, field-size guards, and supported treatment techniques were unchanged.
+
+The remaining completion order is: finish required public checks, commit and
+push the single application-local-runtime correction, reply to and resolve the
+standard-library P1 thread, confirm exact-head CI, request and address
+`@codex review` until clean, promote and archive the OpenSpec change, then
+merge pull request #33 and delete its source branch. Do not create or modify a
+tag or release, and do not force-push.
+
 ## End-of-Day Addendum (2026-08-10)
 
 This addendum records a later stopping state than the sections written earlier

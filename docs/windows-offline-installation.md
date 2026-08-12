@@ -47,9 +47,12 @@ The script performs these checks before producing the ZIP:
 1. runs the public-tree audit;
 2. reads the version from `pyproject.toml` and the exact wheel versions,
    filenames, and SHA-256 values from `requirements/offline-win64.txt`;
-3. downloads the exact official Python 3.12.10 x64 installer over HTTPS;
-4. requires a valid Windows Authenticode signature from the Python Software
-   Foundation and records the signer and installer SHA-256;
+3. downloads the exact official CPython 3.12.10 application-local NuGet
+   package, CPython x64 Tcl/Tk MSI component, and pinned NuGet CLI over HTTPS;
+4. requires the expected NuGet repository signature and package identity for
+   CPython, a valid Python Software Foundation Authenticode signature for the
+   Tcl/Tk component, and a valid Microsoft Authenticode signature for the
+   NuGet CLI, then records their provenance and SHA-256 values;
 5. asks pip for CPython 3.12 `win_amd64` wheels with binary-only resolution and
    `--require-hashes`;
 6. rejects any missing, additional, renamed, or hash-mismatched wheel and
@@ -66,7 +69,8 @@ dist/dicomxphits-offline-win64-<version>.zip
 
 If that file already exists, the script stops. Use `-Force` only after
 confirming that the existing generated ZIP may be replaced. `dist/`, downloaded
-installers, wheels, and staging files are ignored and must not be committed.
+runtime sources, wheels, and staging files are ignored and must not be
+committed.
 
 Copy the completed ZIP to the USB storage. Keep the ZIP SHA-256 printed by the
 preparation script as transfer evidence if your organization has a controlled
@@ -95,11 +99,14 @@ The bootstrap rejects reparse-point protected paths and unexpected executable
 lookalikes at the extracted root, verifies and read-locks every protected
 payload, and only then runs the verified installation stage. It then:
 
-- uses only a bounded absolute installed CPython path after requiring a valid
-  Python Software Foundation Authenticode signature and CPython 3.12 x64 probe;
-- otherwise installs the bundled Python 3.12.10 for the current user with pip,
-  the Python Launcher, and Tcl/Tk enabled, without changing PATH, creating
-  Python file associations, or creating shortcuts;
+- validates and read-locks the bundled NuGet verifier, CPython package, and
+  Tcl/Tk component before using them;
+- safely constructs a complete `.python-runtime` from those authenticated
+  sources, validates its required files, and read-locks every runtime file
+  through the end of installation before the first Python launch;
+- uses only that application-local CPython 3.12.10 x64 interpreter with
+  `-I -S -B`; it never discovers, probes, installs, repairs, or executes a host
+  Python, registry candidate, `py.exe`, or bare `python.exe`;
 - creates the extracted project's `.venv`;
 - installs the exact locked dependencies only from `wheelhouse/` with
   `--require-hashes`, `--no-index`, `--find-links`, and
@@ -119,9 +126,9 @@ launchers\run_gui_venv.cmd
 ## Integrity files
 
 `bundle-manifest.json` records the source HEAD commit, a SHA-256 fingerprint of
-the exact Git index entries, target, runtime requirements, wheel tags, Python
-installer URL and Authenticode signer evidence, the reviewed wheel lock, and
-the role, size, and SHA-256 of every payload. Normal CI uses the same pinned
+the exact Git index entries, target, runtime requirements, wheel tags, runtime
+source URLs, NuGet and Authenticode signer evidence, the reviewed wheel lock,
+and the role, size, and SHA-256 of every payload. Normal CI uses the same pinned
 NumPy and pydicom versions from `requirements/runtime.txt`.
 
 `SHA256SUMS.txt` records every payload digest and the manifest digest. It cannot
@@ -150,11 +157,13 @@ There is no internet fallback. Recreate the bundle on the online computer and
 resolve the reported binary wheel problem there. Do not copy an unreviewed
 source archive into `wheelhouse/`.
 
-### Python installation fails
+### Python runtime construction fails
 
-Review `offline-install.log` and `python-installer.log` in the extracted root.
-The Python installation is current-user only and does not require changing
-machine-wide PATH. Organization policy may still control software installation.
+Review `offline-install.log` and `python-runtime.log` in the extracted root.
+Do not substitute a locally installed Python or edit checksum-protected runtime
+sources. Extract the producer-created ZIP into a fresh ordinary local folder
+and retry. Organization policy may still control Windows Installer
+administrative extraction even though no host Python product is installed.
 
 ### An unexpected executable or reparse-point error is reported
 

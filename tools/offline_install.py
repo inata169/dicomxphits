@@ -1,8 +1,8 @@
 """Install dicomxphits from a verified offline Windows bundle.
 
-The module is standard-library only so it can run immediately after the
-bundled CPython installer completes. Its pure command-building and validation
-helpers are also used by synthetic tests.
+The module is standard-library only so it can run immediately from the
+authenticated application-local CPython runtime. Its pure command-building
+and validation helpers are also used by synthetic tests.
 """
 
 from __future__ import annotations
@@ -264,7 +264,7 @@ def python_probe_command(executable: Path) -> list[str]:
         "'major':sys.version_info.major,'minor':sys.version_info.minor,"
         "'micro':sys.version_info.micro,'bits':struct.calcsize('P')*8}))"
     )
-    return [str(executable), "-I", "-S", "-c", program]
+    return [str(executable), "-I", "-S", "-B", "-c", program]
 
 
 def probe_python(
@@ -348,7 +348,7 @@ def ensure_venv(
 
     logger.write("Creating repository-local .venv with CPython 3.12 x64")
     _run_logged(
-        [str(base_python), "-I", "-S", "-m", "venv", str(venv_root)],
+        [str(base_python), "-I", "-S", "-B", "-m", "venv", str(venv_root)],
         logger=logger,
         runner=runner,
         cwd=bundle_root,

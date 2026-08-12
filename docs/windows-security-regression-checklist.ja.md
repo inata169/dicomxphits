@@ -57,8 +57,10 @@ python -m pytest tests/test_prepare_rtdose.py::test_run_requires_executable_and_
 .\install_offline.cmd
 ```
 
-- `Initial SHA-256 verification passed.`より前にbundle内installer/helperが動かない
-- 表示されるPython pathがabsolute pathで、3.12 x64である
+- `Initial SHA-256 verification passed.`より前にbundle内verifier、Windows
+  Installer、Python、helperが動かない
+- 表示されるPython pathがbundle内`.python-runtime`のabsolute pathで、3.12 x64である
+- host Pythonを探索・実行せず、最初のPython起動前から全runtime fileがread-lockされる
 - networkを切断した状態で`.venv`作成、hash-lock済みwheel導入、import確認が完了する
 - `offline-install.log`にNumPy 2.5.1とpydicom 3.0.2が記録される
 
@@ -70,8 +72,8 @@ Set-Content -LiteralPath .\powershell.exe -Value "not executable"
 ```
 
 `powershell.exe`を削除して`python.exe`、次に`py.exe`でも繰り返します。各回で
-`Unexpected executable or script at bundle root`により停止し、Python installer、
-helper、`.venv`が起動・作成されないことを確認します。
+`Unexpected executable or script at bundle root`により停止し、runtime verifier、
+Windows Installer、Python helper、`.venv`が起動・作成されないことを確認します。
 
 ## 実junction/reparse point
 

@@ -251,33 +251,64 @@ def test_snapshot_audit_executes_indexed_verifier_not_worktree(tmp_path):
         offline_bundle._run_public_tree_audit(repo, snapshot)
 
 
-def test_authenticode_metadata_is_bound_to_installer_bytes(tmp_path):
-    validated_bytes = b"validated signed installer"
-    validated_hash = offline_bundle.hashlib.sha256(validated_bytes).hexdigest()
-    metadata_path = tmp_path / "python-authenticode.json"
+def test_runtime_metadata_is_bound_to_all_authenticated_source_bytes(tmp_path):
+    artifacts = {
+        offline_bundle.PYTHON_NUGET_NAME: b"signed python nupkg",
+        offline_bundle.TCLTK_MSI_NAME: b"signed tcltk msi",
+        offline_bundle.NUGET_CLI_NAME: b"signed nuget verifier",
+    }
+    hashes = {
+        name: offline_bundle.hashlib.sha256(content).hexdigest()
+        for name, content in artifacts.items()
+    }
+    metadata_path = tmp_path / "python-runtime-provenance.json"
     metadata_path.write_text(
         offline_bundle.json.dumps(
             {
-                "status": "Valid",
-                "signer_subject": "CN=Python Software Foundation",
-                "signer_thumbprint": "A" * 40,
-                "installer_sha256": validated_hash,
+                "schema_version": 1,
+                "nuget_cli": {
+                    "status": "Valid",
+                    "signer_subject": "CN=Microsoft Corporation",
+                    "signer_thumbprint": "A" * 40,
+                    "sha256": hashes[offline_bundle.NUGET_CLI_NAME],
+                    "version": offline_bundle.NUGET_CLI_VERSION,
+                    "url": offline_bundle.NUGET_CLI_URL,
+                },
+                "python_nuget": {
+                    "status": "Valid",
+                    "signature_type": "Repository",
+                    "signer_subject": "CN=NuGet.org Repository by Microsoft",
+                    "signer_sha256": offline_bundle.PYTHON_NUGET_SIGNER_SHA256,
+                    "package_id": "python",
+                    "version": offline_bundle.PYTHON_VERSION,
+                    "sha256": hashes[offline_bundle.PYTHON_NUGET_NAME],
+                    "url": offline_bundle.PYTHON_NUGET_URL,
+                },
+                "tcltk_msi": {
+                    "status": "Valid",
+                    "signer_subject": "CN=Python Software Foundation",
+                    "signer_thumbprint": "B" * 40,
+                    "sha256": hashes[offline_bundle.TCLTK_MSI_NAME],
+                    "url": offline_bundle.TCLTK_MSI_URL,
+                },
             }
         ),
         encoding="utf-8",
     )
 
+    replaced = dict(artifacts)
+    replaced[offline_bundle.PYTHON_NUGET_NAME] = b"replaced package"
     with pytest.raises(
         offline_bundle.OfflineBundleError,
-        match="do not match the Authenticode-validated SHA-256",
+        match="Python NuGet package bytes do not match",
     ):
-        offline_bundle._load_signature_metadata(
+        offline_bundle._load_runtime_metadata(
             metadata_path,
-            offline_bundle.hashlib.sha256(b"replaced installer").hexdigest(),
+            replaced,
         )
 
-    value = offline_bundle._load_signature_metadata(metadata_path, validated_hash)
-    assert value["installer_sha256"] == validated_hash
+    value = offline_bundle._load_runtime_metadata(metadata_path, artifacts)
+    assert value["python_nuget"]["sha256"] == hashes[offline_bundle.PYTHON_NUGET_NAME]
 
 
 def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
@@ -285,7 +316,9 @@ def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
         encoding="utf-8"
     )
 
-    assert "https://www.python.org/ftp/python/$PythonVersion/" in text
+    assert "https://api.nuget.org/v3-flatcontainer/python/" in text
+    assert "https://www.python.org/ftp/python/$PythonVersion/amd64/tcltk.msi" in text
+    assert "https://dist.nuget.org/win-x86-commandline/v$NuGetVersion/nuget.exe" in text
     assert '"--only-binary=:all:"' in text
     assert '"--platform"' in text and '"win_amd64"' in text
     assert '"--python-version"' in text and '"3.12"' in text
@@ -293,9 +326,10 @@ def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
     assert '"--abi"' in text and '"cp312"' in text
     assert "Get-AuthenticodeSignature" in text
     assert "Python Software Foundation" in text
-    assert "InstallerHashBeforeSignature" in text
-    assert "installer_sha256" in text
-    assert "changed during Authenticode validation" in text
+    assert "Microsoft Corporation" in text
+    assert "verify" in text and "-CertificateFingerprint" in text
+    assert "NUGET_CERT_REVOCATION_MODE" in text
+    assert "python-runtime-provenance.json" in text
     assert '"--require-hashes"' in text
     assert "$OfflineLockPath" in text
 

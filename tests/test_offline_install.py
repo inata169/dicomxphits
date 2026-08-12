@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -84,7 +83,9 @@ def _make_cmd_bootstrap_bundle(root: Path) -> tuple[dict, Path]:
             "Path(__file__).resolve().parents[1].joinpath("
             "'helper-executed.txt').write_text('executed', encoding='utf-8')\n"
         ).encode("utf-8"),
-        "python/python-3.12.10-amd64.exe": b"synthetic installer",
+        "python/python.3.12.10.nupkg": b"synthetic runtime package",
+        "python/tcltk.msi": b"synthetic Tcl/Tk component",
+        "python/verifier/nuget.exe": b"synthetic verifier",
     }
     records = []
     for relative, content in payloads.items():
@@ -116,42 +117,6 @@ def _write_cmd_bootstrap_integrity(root: Path, manifest: dict) -> None:
     ]
     lines.append(f"{_sha256(manifest_path)} *bundle-manifest.json")
     (root / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _windows_has_bounded_python312_candidate() -> bool:
-    if sys.platform != "win32":
-        return False
-    candidates: list[Path] = []
-    allowed_roots: list[Path] = []
-    local_app_data = os.environ.get("LocalAppData")
-    if local_app_data:
-        python_root = Path(local_app_data) / "Programs" / "Python"
-        allowed_roots.append(python_root)
-        candidates.append(python_root / "Python312" / "python.exe")
-    for variable in ("ProgramFiles", "ProgramFiles(x86)"):
-        value = os.environ.get(variable)
-        if value:
-            allowed_roots.append(Path(value))
-    import winreg
-
-    for hive, key in (
-        (winreg.HKEY_CURRENT_USER, r"Software\Python\PythonCore\3.12\InstallPath"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\Python\PythonCore\3.12\InstallPath"),
-        (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Python\PythonCore\3.12\InstallPath"),
-    ):
-        try:
-            with winreg.OpenKey(hive, key) as handle:
-                value, _kind = winreg.QueryValueEx(handle, None)
-        except OSError:
-            continue
-        candidates.append(Path(value) / "python.exe")
-    return any(
-        path.is_file()
-        and any(
-            path.resolve().is_relative_to(root.resolve()) for root in allowed_roots
-        )
-        for path in candidates
-    )
 
 
 class FakeRunner:
@@ -268,11 +233,17 @@ def test_cmd_rejects_incomplete_or_manifest_inconsistent_inventory_before_python
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
 def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
-    if not _windows_has_bounded_python312_candidate():
-        pytest.skip("requires a canonical installed CPython 3.12 candidate")
     root = tmp_path / "日本語 user" / "valid offline bootstrap"
     root.mkdir(parents=True)
     manifest, marker = _make_cmd_bootstrap_bundle(root)
+    stage = root / "tools" / "install_offline_verified.ps1"
+    stage.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        "$Helper = Join-Path $env:DICOMXPHITS_BUNDLE_ROOT 'tools\\offline_install.py'\n"
+        "& $env:DICOMXPHITS_TEST_PYTHON -I -S -B $Helper\n"
+        "exit $LASTEXITCODE\n",
+        encoding="utf-8",
+    )
     helper = root / "tools" / "offline_install.py"
     helper.write_text(
         "import sys\n"
@@ -296,9 +267,18 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
     )
     helper_record["size"] = helper.stat().st_size
     helper_record["sha256"] = _sha256(helper)
+    stage_record = next(
+        record
+        for record in manifest["files"]
+        if record["path"] == "tools/install_offline_verified.ps1"
+    )
+    stage_record["size"] = stage.stat().st_size
+    stage_record["sha256"] = _sha256(stage)
     _write_cmd_bootstrap_integrity(root, manifest)
     environment = os.environ.copy()
-    environment["PYTHONUTF8"] = "1"
+    environment.update(
+        {"PYTHONUTF8": "1", "DICOMXPHITS_TEST_PYTHON": sys.executable}
+    )
 
     result = subprocess.run(
         ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
@@ -441,14 +421,14 @@ def test_new_venv_creation_uses_isolated_module_resolution(tmp_path):
         )
 
     command, kwargs = runner.calls[0]
-    assert command[1:5] == ["-I", "-S", "-m", "venv"]
+    assert command[1:6] == ["-I", "-S", "-B", "-m", "venv"]
     assert kwargs["cwd"] == tmp_path.resolve()
 
 
 def test_python_probe_disables_site_customization():
     command = offline_install.python_probe_command(Path("python.exe"))
 
-    assert command[1:4] == ["-I", "-S", "-c"]
+    assert command[1:5] == ["-I", "-S", "-B", "-c"]
 
 
 def test_gui_is_only_started_after_affirmative_choice(tmp_path, monkeypatch):
@@ -486,7 +466,7 @@ def test_existing_public_gui_launcher_remains_the_offline_target():
     assert "-m dicomxphits.gui" in launcher_text
 
 
-def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
+def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
     stage = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
         encoding="utf-8"
@@ -500,12 +480,9 @@ def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
     error_preference_position = text.index("$ErrorActionPreference='Stop'")
     assert module_path_position < error_preference_position < checksum_position
     assert checksum_position < verified_stage_position
-    assert "InstallAllUsers=0" in stage
-    assert "Include_pip=1" in stage
-    assert "Include_launcher=1" in stage
-    assert "InstallLauncherAllUsers=0" in stage
-    assert "Include_tcltk=1" in stage
-    assert "AssociateFiles=0" in stage
+    assert "python.3.12.10.nupkg" in stage
+    assert "tcltk.msi" in stage
+    assert "python\\verifier\\nuget.exe" in stage
     assert "Security.Cryptography.SHA256" in text
     assert "Get-FileHash" not in text
     assert "[IO.FileShare]::Read" in text
@@ -519,66 +496,126 @@ def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
     assert '"%TrustedPowerShell%" -NoLogo' in text
 
 
-def test_verified_stage_uses_only_absolute_bounded_python_candidates():
+def test_verified_stage_uses_only_authenticated_application_local_python():
     text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(encoding="utf-8")
 
-    assert 'Programs\\Python\\Python312\\python.exe' in text
-    assert "PythonCore\\3.12\\InstallPath" in text
-    assert "Test-UnderAllowedPythonRoot" in text
+    assert "LocalAppData" not in text
+    assert "ProgramFiles" not in text
+    assert "PythonCore\\3.12\\InstallPath" not in text
+    assert "Get-PythonCandidates" not in text
+    assert "Assert-IsolatedVerifierDirectory" in text
+    assert "Invoke-NuGetPackageVerification" in text
+    assert "NUGET_CERT_REVOCATION_MODE = \"offline\"" in text
+    assert "-CertificateFingerprint $PythonNuGetSignerSha256" in text
+    assert "Expand-VerifiedPythonPackage" in text
+    assert "Invoke-TclTkAdministrativeExtraction" in text
+    assert "Get-SafeRuntimeDestination" in text
+    assert "Add-RuntimeTreeLocks $RuntimeRoot" in text
     assert "Get-AuthenticodeSignature" in text
     assert "Python Software Foundation" in text
     assert '"python312.dll"' in text
     assert '"vcruntime140.dll"' in text
     assert "Microsoft Windows Software Compatibility Publisher" in text
-    assert "& $Candidate -I -S -c" in text
-    assert "& $SelectedPython -I -S $Helper" in text
+    assert "& $SelectedPython -I -S -B -c" in text
+    assert "& $SelectedPython -I -S -B $Helper" in text
+    assert text.index("Add-RuntimeTreeLocks $RuntimeRoot") < text.index(
+        "$Probe = & $SelectedPython"
+    )
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Authenticode behavior")
-def test_verified_stage_rejects_malicious_adjacent_runtime_dll_before_candidate_start(
+def test_verified_stage_never_starts_host_python_with_malicious_standard_library(
     tmp_path,
 ):
     base_executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
     local_app_data = tmp_path / "local-app-data"
     candidate_dir = local_app_data / "Programs" / "Python" / "Python312"
     candidate_dir.mkdir(parents=True)
-    candidate = candidate_dir / "python.exe"
-    shutil.copyfile(base_executable, candidate)
-    (candidate_dir / "python312.dll").write_bytes(b"malicious adjacent DLL")
+    runtime_files = [
+        base_executable,
+        base_executable.parent / "python312.dll",
+        base_executable.parent / "vcruntime140.dll",
+    ]
+    encodings = Path(sys.base_prefix) / "Lib" / "encodings"
+    if not all(path.is_file() for path in runtime_files) or not encodings.is_dir():
+        pytest.skip("requires an installed CPython 3.12 runtime layout")
+    for source in runtime_files:
+        shutil.copyfile(source, candidate_dir / source.name)
+    shutil.copytree(encodings, candidate_dir / "Lib" / "encodings")
+    (candidate_dir / "python312._pth").write_text("Lib\n.\n", encoding="utf-8")
+    candidate_marker = tmp_path / "host-python-started.txt"
+    init_path = candidate_dir / "Lib" / "encodings" / "__init__.py"
+    init_path.write_text(
+        f"import _io; _io.open({str(candidate_marker)!r}, 'wb').write(b'started')\n"
+        + init_path.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    candidate = candidate_dir / base_executable.name
+    fixture_probe = subprocess.run(
+        [str(candidate), "-I", "-S", "-B", "-c", "pass"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert fixture_probe.returncode == 0, fixture_probe.stdout + fixture_probe.stderr
+    assert candidate_marker.read_text(encoding="utf-8") == "started"
+    candidate_marker.unlink()
 
+    root = tmp_path / "bundle"
+    root.mkdir()
+    _manifest, helper_marker = _make_cmd_bootstrap_bundle(root)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "LocalAppData": str(local_app_data),
+            "PYTHONUTF8": "1",
+        }
+    )
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert "Initial SHA-256 verification passed." in result.stdout
+    assert not candidate_marker.exists()
+    assert not helper_marker.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_verified_runtime_extractor_rejects_escaping_archive_path(tmp_path):
+    import zipfile
+
+    root = tmp_path / "bundle"
+    package = root / "python" / "python.3.12.10.nupkg"
+    package.parent.mkdir(parents=True)
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("tools/../escaped.py", "malicious")
     stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
         encoding="utf-8"
     )
     function_text, separator, _main = stage_text.partition(
-        "\ntry {\n    Assert-NoReparsePath $BundleRoot \"Bundle root\""
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
     )
     assert separator
-    instrumented, replacements = re.subn(
-        r"(?m)^\s*\$Probe = & \$Candidate -I(?: -S)? -c .*$",
-        """                Set-Content -LiteralPath $env:DICOMXPHITS_TEST_CANDIDATE_STARTED -Value \"started\"
-                $Probe = \"cpython|3|12|64\"
-                $global:LASTEXITCODE = 0""",
-        function_text,
-    )
-    assert replacements == 1
-
-    harness = tmp_path / "select-python-harness.ps1"
-    marker = tmp_path / "candidate-started.txt"
+    harness = tmp_path / "extract-harness.ps1"
     harness.write_text(
-        "$ErrorActionPreference = 'Stop'\n"
-        + instrumented
-        + "\nfunction Get-PythonCandidates { return @($env:DICOMXPHITS_TEST_CANDIDATE) }\n"
-        "$Signature = Get-AuthenticodeSignature -LiteralPath $env:DICOMXPHITS_TEST_CANDIDATE\n"
-        "if ($Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) { exit 8 }\n"
-        "if ($null -eq $Signature.SignerCertificate -or [string]$Signature.SignerCertificate.Subject -notlike '*Python Software Foundation*') { exit 9 }\n"
-        "try {\n"
-        "    $Selected = Select-Python312\n"
-        "    if ($null -eq $Selected) { exit 7 }\n"
-        "    exit 0\n"
+        function_text
+        + "\ntry {\n"
+        "    $Destination = New-BoundedWorkingDirectory 'test'\n"
+        "    Expand-VerifiedPythonPackage $Destination\n"
+        "    exit 8\n"
         "}\n"
-        "finally {\n"
-        "    foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() }\n"
-        "}\n",
+        "catch { exit 0 }\n"
+        "finally { foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() } }\n",
         encoding="utf-8",
     )
     trusted_powershell = (
@@ -589,17 +626,13 @@ def test_verified_stage_rejects_malicious_adjacent_runtime_dll_before_candidate_
         / "powershell.exe"
     )
     environment = os.environ.copy()
-    environment["PSModulePath"] = str(trusted_powershell.parent / "Modules")
     environment.update(
         {
-            "LocalAppData": str(local_app_data),
             "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
-            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path / "bundle"),
-            "DICOMXPHITS_TEST_CANDIDATE": str(candidate),
-            "DICOMXPHITS_TEST_CANDIDATE_STARTED": str(marker),
+            "DICOMXPHITS_BUNDLE_ROOT": str(root),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
         }
     )
-
     result = subprocess.run(
         [
             str(trusted_powershell),
@@ -618,9 +651,74 @@ def test_verified_stage_rejects_malicious_adjacent_runtime_dll_before_candidate_
         errors="replace",
         env=environment,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (root / "escaped.py").exists()
 
-    assert result.returncode == 7, result.stdout + result.stderr
-    assert not marker.exists()
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_complete_runtime_tree_remains_read_locked(tmp_path):
+    root = tmp_path / "bundle"
+    runtime = root / ".python-runtime"
+    target = runtime / "Lib" / "encodings" / "__init__.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("trusted", encoding="utf-8")
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "lock-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\ntry {\n"
+        "    Add-RuntimeTreeLocks $RuntimeRoot\n"
+        "    try {\n"
+        "        [IO.File]::WriteAllText($env:DICOMXPHITS_TEST_LOCKED_FILE, 'changed')\n"
+        "        exit 8\n"
+        "    }\n"
+        "    catch [IO.IOException] { exit 0 }\n"
+        "}\n"
+        "finally { foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() } }\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(root),
+            "DICOMXPHITS_TEST_LOCKED_FILE": str(target),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        }
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert target.read_text(encoding="utf-8") == "trusted"
 
 
 def test_installer_never_uses_bare_executable_discovery():

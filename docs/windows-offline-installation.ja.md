@@ -45,9 +45,11 @@ Python 3.12を`py -3.12`または`python`で検出できない場合は明示し
 1. 公開ツリー監査を実行する
 2. `pyproject.toml`からversionを、`requirements/offline-win64.txt`から
    wheelの正確なversion、filename、SHA-256を読む
-3. Python公式の3.12.10 64-bit installerをHTTPSで取得する
-4. Windows Authenticodeが`Valid`で、署名者がPython Software Foundation
-   であることを必須とし、署名情報とSHA-256を記録する
+3. Python公式のCPython 3.12.10 application-local NuGet package、x64 Tcl/Tk
+   MSI component、固定versionのNuGet CLIをHTTPSで取得する
+4. CPython packageの期待するNuGet repository署名とpackage identity、Tcl/Tk
+   componentのPython Software Foundation Authenticode署名、NuGet CLIの
+   Microsoft Authenticode署名を必須とし、provenanceとSHA-256を記録する
 5. pipへCPython 3.12、`win_amd64`、binary-only、`--require-hashes`での
    wheel取得を要求する
 6. wheelの不足、追加、rename、hash不一致を拒否し、NumPyについて
@@ -63,7 +65,7 @@ dist/dicomxphits-offline-win64-<version>.zip
 ```
 
 同名ファイルがある場合は停止します。既存の生成済みZIPを置き換えてよいことを
-確認した場合だけ`-Force`を使用してください。`dist/`、取得したinstaller、
+確認した場合だけ`-Force`を使用してください。`dist/`、取得したruntime source、
 wheel、作業用ファイルはGit管理対象外であり、コミットしないでください。
 
 完成したZIPをUSBストレージへコピーします。組織で媒体持込み手順がある場合は、
@@ -92,11 +94,12 @@ bootstrapは、保護対象pathのreparse pointと展開root直下の想定外�
 拒否し、全payloadを検証してread-lockした後だけ検証済みinstall stageを実行します。
 その後、次を行います。
 
-- bounded absolute pathにあり、Python Software Foundationの有効な
-  Authenticode署名とCPython 3.12 64-bit probeを通る既存Pythonだけを使用する
-- なければ同梱Python 3.12.10をユーザー単位で、pip、Python Launcher、
-  Tcl/Tkを有効にして導入する。ただしPATH、Python file association、shortcutは
-  変更・作成しない
+- 同梱NuGet verifier、CPython package、Tcl/Tk componentを検証してread-lockする
+- 認証済みsourceだけから完全な`.python-runtime`を安全に構成し、必要fileを
+  検証して、最初のPython起動前から導入終了まで全runtime fileをread-lockする
+- そのapplication-local CPython 3.12.10 x64だけを`-I -S -B`で使用する。
+  host Python、registry candidate、`py.exe`、bare `python.exe`を探索、probe、
+  install、repair、実行しない
 - 展開したプロジェクト直下へ`.venv`を作成する
 - exact lock済み依存だけを、`--require-hashes`、`--no-index`、
   `--find-links`、`--no-build-isolation`で`wheelhouse/`から導入する
@@ -115,8 +118,8 @@ launchers\run_gui_venv.cmd
 ## 整合性ファイル
 
 `bundle-manifest.json`には、source HEAD commit、正確なGit index entry列の
-SHA-256 fingerprint、target、実行時依存関係、wheel tag、Python installerの
-URLとAuthenticode署名情報、各payloadの役割・size・SHA-256を記録します。
+SHA-256 fingerprint、target、実行時依存関係、wheel tag、runtime sourceの
+URLとNuGet・Authenticode署名情報、各payloadの役割・size・SHA-256を記録します。
 review済みwheel lockも記録し、通常CIは`requirements/runtime.txt`から同じ
 NumPyおよびpydicom versionを使用します。
 
@@ -144,11 +147,13 @@ ZIPを再コピーして、作成時に表示されたZIP SHA-256と比較して
 binary wheelの問題をオンライン側で解決してください。未レビューのsource archiveを
 `wheelhouse/`へ追加しないでください。
 
-### Python導入失敗
+### Python runtime構成失敗
 
-展開先の`offline-install.log`と`python-installer.log`を確認してください。
-Pythonはユーザー単位で導入され、machine-wide PATHの変更を必要としません。組織の
-software installation policyによって導入が制限される場合があります。
+展開先の`offline-install.log`と`python-runtime.log`を確認してください。
+localに導入済みのPythonへ差し替えたり、checksum保護されたruntime sourceを編集
+したりせず、producer作成済みZIPを新しい通常のlocal folderへ再展開してください。
+host Python productはinstallしませんが、組織policyによってWindows Installerの
+administrative extractionが制限される場合があります。
 
 ### 想定外実行ファイルまたはreparse pointのerror
 

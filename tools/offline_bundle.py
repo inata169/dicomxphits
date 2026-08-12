@@ -21,9 +21,23 @@ import zipfile
 
 
 PYTHON_VERSION = "3.12.10"
-PYTHON_INSTALLER_NAME = f"python-{PYTHON_VERSION}-amd64.exe"
-PYTHON_INSTALLER_URL = (
-    f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{PYTHON_INSTALLER_NAME}"
+PYTHON_NUGET_NAME = f"python.{PYTHON_VERSION}.nupkg"
+PYTHON_NUGET_URL = (
+    f"https://api.nuget.org/v3-flatcontainer/python/{PYTHON_VERSION}/"
+    f"{PYTHON_NUGET_NAME}"
+)
+PYTHON_NUGET_SIGNER_SHA256 = (
+    "1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D"
+)
+TCLTK_MSI_NAME = "tcltk.msi"
+TCLTK_MSI_URL = (
+    f"https://www.python.org/ftp/python/{PYTHON_VERSION}/amd64/{TCLTK_MSI_NAME}"
+)
+NUGET_CLI_VERSION = "7.9.0"
+NUGET_CLI_NAME = "nuget.exe"
+NUGET_CLI_URL = (
+    f"https://dist.nuget.org/win-x86-commandline/v{NUGET_CLI_VERSION}/"
+    f"{NUGET_CLI_NAME}"
 )
 TARGET_PLATFORM = "win_amd64"
 TARGET_IMPLEMENTATION = "cp"
@@ -641,34 +655,87 @@ def _git_head(repo_root: Path) -> str:
     return value
 
 
-def _load_signature_metadata(
-    path: Path, installer_sha256: str
+def _load_runtime_metadata(
+    path: Path, artifacts: dict[str, bytes]
 ) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise OfflineBundleError(f"Cannot read Authenticode metadata: {exc}") from exc
+        raise OfflineBundleError(f"Cannot read runtime provenance metadata: {exc}") from exc
     if not isinstance(value, dict):
-        raise OfflineBundleError("Authenticode metadata must be an object")
-    if value.get("status") != "Valid":
-        raise OfflineBundleError("Python installer Authenticode status is not Valid")
-    subject = value.get("signer_subject")
-    if not isinstance(subject, str) or "Python Software Foundation" not in subject:
-        raise OfflineBundleError("Python installer signer is not the Python Software Foundation")
-    thumbprint = value.get("signer_thumbprint")
+        raise OfflineBundleError("Runtime provenance metadata must be an object")
+    if value.get("schema_version") != 1:
+        raise OfflineBundleError("Runtime provenance schema_version must be 1")
+
+    expected = {
+        "nuget_cli": (
+            NUGET_CLI_NAME,
+            "Microsoft Corporation",
+            "NuGet CLI",
+            NUGET_CLI_URL,
+        ),
+        "python_nuget": (
+            PYTHON_NUGET_NAME,
+            "NuGet.org Repository by Microsoft",
+            "Python NuGet package",
+            PYTHON_NUGET_URL,
+        ),
+        "tcltk_msi": (
+            TCLTK_MSI_NAME,
+            "Python Software Foundation",
+            "Tcl/Tk MSI",
+            TCLTK_MSI_URL,
+        ),
+    }
+    for key, (name, signer, label, url) in expected.items():
+        record = value.get(key)
+        if not isinstance(record, dict):
+            raise OfflineBundleError(f"{label} provenance must be an object")
+        if record.get("status") != "Valid":
+            raise OfflineBundleError(f"{label} signature status is not Valid")
+        subject = record.get("signer_subject")
+        if not isinstance(subject, str) or signer not in subject:
+            raise OfflineBundleError(f"{label} has an unexpected signer")
+        if record.get("url") != url:
+            raise OfflineBundleError(f"{label} URL is not the pinned source")
+        recorded_hash = record.get("sha256")
+        if not isinstance(recorded_hash, str) or not _SHA256_RE.fullmatch(
+            recorded_hash
+        ):
+            raise OfflineBundleError(f"{label} SHA-256 is invalid")
+        content = artifacts.get(name)
+        if content is None:
+            raise OfflineBundleError(f"{label} artifact is missing: {name}")
+        if recorded_hash != hashlib.sha256(content).hexdigest():
+            raise OfflineBundleError(
+                f"{label} bytes do not match the signature-validated SHA-256"
+            )
+
+    nuget_cli = value["nuget_cli"]
+    if nuget_cli.get("version") != NUGET_CLI_VERSION:
+        raise OfflineBundleError("NuGet CLI version is not the pinned version")
+    thumbprint = nuget_cli.get("signer_thumbprint")
     if not isinstance(thumbprint, str) or not re.fullmatch(
         r"[0-9A-Fa-f]{40,64}", thumbprint
     ):
-        raise OfflineBundleError("Python installer signer thumbprint is invalid")
-    recorded_hash = value.get("installer_sha256")
-    if not isinstance(recorded_hash, str) or not _SHA256_RE.fullmatch(
-        recorded_hash
+        raise OfflineBundleError("NuGet CLI signer thumbprint is invalid")
+
+    python_nuget = value["python_nuget"]
+    if python_nuget.get("signature_type") != "Repository":
+        raise OfflineBundleError("Python NuGet signature type is not Repository")
+    if python_nuget.get("signer_sha256") != PYTHON_NUGET_SIGNER_SHA256:
+        raise OfflineBundleError("Python NuGet repository signer fingerprint is unexpected")
+    if python_nuget.get("package_id") != "python":
+        raise OfflineBundleError("Python NuGet package identity is unexpected")
+    if python_nuget.get("version") != PYTHON_VERSION:
+        raise OfflineBundleError("Python NuGet package version is unexpected")
+
+    tcltk = value["tcltk_msi"]
+    tcltk_thumbprint = tcltk.get("signer_thumbprint")
+    if not isinstance(tcltk_thumbprint, str) or not re.fullmatch(
+        r"[0-9A-Fa-f]{40,64}", tcltk_thumbprint
     ):
-        raise OfflineBundleError("Authenticode metadata installer SHA-256 is invalid")
-    if recorded_hash != installer_sha256:
-        raise OfflineBundleError(
-            "Python installer bytes do not match the Authenticode-validated SHA-256"
-        )
+        raise OfflineBundleError("Tcl/Tk MSI signer thumbprint is invalid")
     return value
 
 
@@ -696,8 +763,10 @@ def build_bundle(
     *,
     repo_root: Path,
     wheelhouse: Path,
-    python_installer: Path,
-    signature_metadata_path: Path,
+    python_nuget: Path,
+    tcltk_msi: Path,
+    nuget_cli: Path,
+    runtime_metadata_path: Path,
     output_zip: Path,
 ) -> dict[str, object]:
     snapshot = _capture_git_index(repo_root)
@@ -707,19 +776,25 @@ def build_bundle(
     constraints = load_indexed_runtime_constraints(repo_root, snapshot)
     validate_dependency_consistency(metadata, lock, constraints)
     wheels, wheel_artifacts = _capture_locked_wheelhouse(wheelhouse, lock)
-    if python_installer.name.lower() != PYTHON_INSTALLER_NAME.lower():
-        raise OfflineBundleError(
-            f"Expected Python installer named {PYTHON_INSTALLER_NAME}, got {python_installer.name}"
-        )
-    if not python_installer.is_file():
-        raise OfflineBundleError(f"Python installer is missing: {python_installer}")
-    try:
-        python_installer_bytes = python_installer.read_bytes()
-    except OSError as exc:
-        raise OfflineBundleError(f"Cannot read Python installer: {exc}") from exc
-    installer_sha256 = hashlib.sha256(python_installer_bytes).hexdigest()
-    signature = _load_signature_metadata(
-        signature_metadata_path, installer_sha256
+    runtime_paths = {
+        PYTHON_NUGET_NAME: python_nuget,
+        TCLTK_MSI_NAME: tcltk_msi,
+        NUGET_CLI_NAME: nuget_cli,
+    }
+    runtime_artifacts: dict[str, bytes] = {}
+    for expected_name, source in runtime_paths.items():
+        if source.name.lower() != expected_name.lower():
+            raise OfflineBundleError(
+                f"Expected runtime artifact named {expected_name}, got {source.name}"
+            )
+        if not source.is_file():
+            raise OfflineBundleError(f"Runtime artifact is missing: {source}")
+        try:
+            runtime_artifacts[expected_name] = source.read_bytes()
+        except OSError as exc:
+            raise OfflineBundleError(f"Cannot read runtime artifact {source}: {exc}") from exc
+    runtime_provenance = _load_runtime_metadata(
+        runtime_metadata_path, runtime_artifacts
     )
 
     top_level = f"dicomxphits-offline-win64-{metadata['version']}"
@@ -732,10 +807,15 @@ def build_bundle(
             repo_root, staging_root, snapshot, run_audit=False
         )
 
-        installer_relative = f"python/{PYTHON_INSTALLER_NAME}"
-        installer_destination = staging_root / installer_relative
-        installer_destination.parent.mkdir(parents=True)
-        installer_destination.write_bytes(python_installer_bytes)
+        runtime_relatives = {
+            PYTHON_NUGET_NAME: f"python/{PYTHON_NUGET_NAME}",
+            TCLTK_MSI_NAME: f"python/{TCLTK_MSI_NAME}",
+            NUGET_CLI_NAME: f"python/verifier/{NUGET_CLI_NAME}",
+        }
+        for name, relative in runtime_relatives.items():
+            destination = staging_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(runtime_artifacts[name])
 
         wheel_relatives: list[str] = []
         wheel_destination = staging_root / "wheelhouse"
@@ -747,7 +827,21 @@ def build_bundle(
 
         records = [
             *(_artifact_record(staging_root, path, "public-source") for path in source_paths),
-            _artifact_record(staging_root, installer_relative, "python-installer"),
+            _artifact_record(
+                staging_root,
+                runtime_relatives[PYTHON_NUGET_NAME],
+                "python-runtime-package",
+            ),
+            _artifact_record(
+                staging_root,
+                runtime_relatives[TCLTK_MSI_NAME],
+                "python-tcltk-component",
+            ),
+            _artifact_record(
+                staging_root,
+                runtime_relatives[NUGET_CLI_NAME],
+                "python-package-verifier",
+            ),
             *(
                 _artifact_record(staging_root, relative, "dependency-wheel")
                 for relative in wheel_relatives
@@ -784,11 +878,23 @@ def build_bundle(
                 "lock_path": OFFLINE_LOCK_PATH,
                 "locked_artifacts": [entry.__dict__ for entry in lock],
             },
-            "python_installer": {
-                "path": installer_relative,
+            "python_runtime": {
                 "version": PYTHON_VERSION,
-                "url": PYTHON_INSTALLER_URL,
-                "authenticode": signature,
+                "layout": "application-local-nuget-with-tcltk",
+                "artifacts": {
+                    "python_nuget": {
+                        "path": runtime_relatives[PYTHON_NUGET_NAME],
+                        **runtime_provenance["python_nuget"],
+                    },
+                    "tcltk_msi": {
+                        "path": runtime_relatives[TCLTK_MSI_NAME],
+                        **runtime_provenance["tcltk_msi"],
+                    },
+                    "nuget_cli": {
+                        "path": runtime_relatives[NUGET_CLI_NAME],
+                        **runtime_provenance["nuget_cli"],
+                    },
+                },
             },
             "integrity": {
                 "algorithm": "SHA-256",
@@ -854,8 +960,10 @@ def _build_command(args: argparse.Namespace) -> int:
     result = build_bundle(
         repo_root=args.repo_root.resolve(),
         wheelhouse=args.wheelhouse.resolve(),
-        python_installer=args.python_installer.resolve(),
-        signature_metadata_path=args.signature_metadata.resolve(),
+        python_nuget=args.python_nuget.resolve(),
+        tcltk_msi=args.tcltk_msi.resolve(),
+        nuget_cli=args.nuget_cli.resolve(),
+        runtime_metadata_path=args.runtime_metadata.resolve(),
         output_zip=args.output_zip.resolve(),
     )
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
@@ -883,8 +991,10 @@ def build_parser() -> argparse.ArgumentParser:
     build = subparsers.add_parser("build")
     build.add_argument("--repo-root", type=Path, required=True)
     build.add_argument("--wheelhouse", type=Path, required=True)
-    build.add_argument("--python-installer", type=Path, required=True)
-    build.add_argument("--signature-metadata", type=Path, required=True)
+    build.add_argument("--python-nuget", type=Path, required=True)
+    build.add_argument("--tcltk-msi", type=Path, required=True)
+    build.add_argument("--nuget-cli", type=Path, required=True)
+    build.add_argument("--runtime-metadata", type=Path, required=True)
     build.add_argument("--output-zip", type=Path, required=True)
     build.set_defaults(handler=_build_command)
     return parser
