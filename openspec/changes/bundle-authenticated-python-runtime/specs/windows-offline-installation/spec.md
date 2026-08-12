@@ -138,42 +138,81 @@ source installation.
 ### Requirement: One-Entry Offline Python Setup
 
 The extracted bundle SHALL provide `install_offline.cmd` as the normal entry
-point. It SHALL construct and use only the authenticated application-local
-CPython 3.12.10 x64 runtime derived from the bundled Python package and Tcl/Tk
-component. It MUST NOT discover, probe, repair, install, or execute an existing
-host Python interpreter, registry candidate, `py.exe`, or bare `python.exe`.
-Before its first Python launch, it MUST validate the complete runtime tree as
-regular non-reparse content, compare every runtime file to its authenticated
-source-derived digest while acquiring its read lock, reject any additional
-file, and retain every lock through the end of installation.
+point. It SHALL complete bundle verification and payload read locking before
+requesting elevation. The elevated stage MUST perform only source verification
+and protected runtime and bundle-source construction; Python, the helper, venv, and
+pip MUST run in the original non-elevated stage after it validates the
+protected receipt and runtime. It SHALL construct and use only the authenticated
+installation-specific CPython 3.12.10 x64 runtime derived from the bundled
+Python package and Tcl/Tk component. It MUST NOT discover, probe, repair,
+install, or execute an existing host Python interpreter, registry candidate,
+`py.exe`, or bare `python.exe`.
+
+The runtime MUST be created below a protected Windows Common Application Data
+root that is owned by built-in Administrators, grants mutation only to `SYSTEM`
+and elevated Administrators, grants the installing user read/execute access,
+and uses an inheritable `OWNER RIGHTS` rule that does not grant `WRITE_DAC`.
+Before its first Python launch, the stage MUST validate the complete runtime
+tree as regular non-reparse content with the exact protected owner and access
+rules, compare every runtime file to its authenticated source-derived digest
+while acquiring its read lock, reject any missing or additional entry, and
+repeat the complete inventory while all file handles are held. Every file
+handle MUST remain held through the end of installation.
+The protected runtime SHALL contain an exact read-only snapshot of the
+inventoried bundle. The installing user MUST NOT be able to add or replace a
+source entry, and helper and pip paths MUST resolve from that snapshot while
+`.venv`, the log, and the launcher remain at the extracted installation root.
+
+#### Scenario: Elevation is denied or unavailable
+
+- **WHEN** the verified stage cannot obtain and confirm administrator authority
+- **THEN** setup stops before executing the NuGet verifier, Windows Installer,
+  Python, helper, or pip and makes no runtime or dependency change
+
+#### Scenario: Non-elevated process attempts runtime injection
+
+- **WHEN** another process running as the installing user without elevation
+  attempts to add `python312._pth`, a shadow module, or another entry after the
+  authenticated runtime inventory
+- **THEN** protected storage denies the addition, the final inventory remains
+  complete, and no unauthenticated startup code executes
+
+#### Scenario: Protected runtime boundary is not exact
+
+- **WHEN** a protected parent or runtime path is existing, linked, incorrectly
+  owned, has additional or writable access rules,
+  or otherwise cannot prove the required protected state
+- **THEN** setup stops before Python execution and does not repair, reuse,
+  delete, or weaken that path
+
+#### Scenario: Application-specific runtime is complete
+
+- **WHEN** authenticated extraction produces the required CPython, standard
+  library, venv, pip, and Tcl/Tk files under the exact protected boundary and
+  every file and directory passes the final protected inventory
+- **THEN** the absolute protected interpreter is probed as CPython 3.12 x64 and
+  may run the verified helper
 
 #### Scenario: Host Python is malicious
 
 - **WHEN** an existing host installation contains signed Python binaries but a
   modified standard library or additional shadow module
 - **THEN** the bootstrap does not inspect or execute that installation and uses
-  only the authenticated application-local runtime
-
-#### Scenario: Application-local runtime is complete
-
-- **WHEN** authenticated extraction produces the required CPython, standard
-  library, venv, pip, and Tcl/Tk files
-- **THEN** the locked absolute application-local interpreter is probed as
-  CPython 3.12 x64 and may run the verified helper
-
-#### Scenario: Runtime already exists or cannot be locked
-
-- **WHEN** the runtime target has unexpected pre-existing content or any
-  runtime path is missing, additional, changed, linked, non-regular, or cannot
-  be read-locked
-- **THEN** setup stops before Python execution and does not repair or delete the
-  runtime
+  only the authenticated protected runtime
 
 #### Scenario: Current-directory Python lookalikes
 
 - **WHEN** the extraction or current directory contains `python.exe` or
   `py.exe`
 - **THEN** neither file executes during runtime construction or installation
+
+#### Scenario: Runtime already exists or cannot be locked
+
+- **WHEN** the protected runtime target has unexpected pre-existing content or
+  any runtime path is missing, additional, changed, linked, non-regular, or
+  cannot be read-locked
+- **THEN** setup stops before Python execution and does not repair, reuse, or
+  delete the runtime
 
 ### Requirement: Synthetic Offline-Installer Validation Boundary
 
