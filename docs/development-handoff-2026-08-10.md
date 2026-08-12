@@ -6,6 +6,126 @@ cross-check it on Linux. It is a restart aid for the current change set. It is
 not a new implementation backlog, clinical validation record, or authorization
 to run real external tools or use real DICOM.
 
+## Pull Request #33 Final Closure Addendum (2026-08-12)
+
+This addendum is the authoritative final state for pull request
+[#33](https://github.com/inata169/dicomxphits/pull/33). It supersedes every
+earlier restart instruction, stopping state, unresolved-finding list, and
+remaining-completion sequence in this document. The older sections remain only
+as a chronological development record.
+
+Pull request #33 was squash-merged into `main` on 2026-08-12 at 07:08:45 UTC.
+The merged commit is `650685b6fa22b60fd3b4007db9cda57a189bfc58`. The final
+source-branch head was `9de7a348f262b544df164d15a60890a0f90e703f`, and the
+remote source branch `harden-offline-csv-output` was deleted after the merge.
+The public tags remain `v1.0.1` and `v1.0.0`; no tag or release was created or
+modified, and no force-push or history rewrite was used.
+
+### Final Review and Validation Gates
+
+All required completion gates were closed before merge:
+
+- GitHub Actions exact-head run
+  [#301](https://github.com/inata169/dicomxphits/actions/runs/31572035389)
+  completed successfully for `9de7a348f262b544df164d15a60890a0f90e703f`.
+- The final Codex review explicitly reported no major issues for reviewed
+  commit `9de7a348f2`.
+- The pull request had zero unresolved review threads and was reported
+  mergeable immediately before the expected-head squash merge.
+- Local `HEAD` and the remote source branch were identical, and the worktree
+  was clean immediately before merge.
+- The accepted `bundle-authenticated-python-runtime` and
+  `protect-offline-runtime-staging` changes were promoted and archived under
+  `openspec/changes/archive/2026-08-12-*` before merge.
+
+The principal local validation evidence accumulated during the final review
+sequence was:
+
+```text
+python -m compileall src
+  passed
+
+python -m pytest -q -p no:cacheprovider \
+  --basetemp=C:\tmp\dicomxphits-p1-race-full-20260812-r
+  709 passed, 8 skipped in 41.15s
+
+focused Windows offline-installer regression suite
+  46 passed after the extracted-file revalidation correction
+
+python tools/verify_public_tree.py
+  passed
+
+openspec.cmd validate --all --strict
+  8 passed, 0 failed after final specification promotion and archive
+
+git diff --check
+  passed
+
+git status --short
+  clean immediately before merge
+```
+
+Later review-driven corrections were each covered by focused synthetic Windows
+regressions and successful exact-head CI. The final documentation-only archive
+commit did not alter runtime behavior.
+
+The closure addendum itself was validated on the merged `main` tree from the
+documentation-only branch `docs/record-pr33-closure`:
+
+```text
+python -m compileall src
+  passed
+
+python -m pytest -q -p no:cacheprovider \
+  --basetemp=C:\tmp\dicomxphits-pr33-close-20260812-162050-742
+  38 failed, 685 passed, 10 skipped
+  non-acceptance environment: system pydicom 2.4.4 and NumPy 1.26.4
+
+PYTHONPATH=.venv\Lib\site-packages python -m pytest -q \
+  -p no:cacheprovider \
+  --basetemp=C:\tmp\dicomxphits-pr33-close-locked-20260812-162221-791
+  723 passed, 10 skipped in 56.07s
+  acceptance environment: pydicom 3.0.2 and NumPy 2.5.1
+
+python tools/verify_public_tree.py
+  Public tree audit passed (182 tracked files checked).
+
+openspec.cmd validate --all --strict
+  8 passed, 0 failed
+
+git diff --check
+  passed
+```
+
+The first pytest result reproduced the previously documented dependency
+mismatch in DICOM-writing helpers. The same tree passed completely with the
+repository's locked dependency versions, so no source or test correction was
+made for the system-environment failure.
+
+### Completed Scope and Remaining Boundaries
+
+The merged pull request hardened the verified offline Windows bootstrap and
+authenticated application-local Python runtime, spreadsheet-safe CSV output,
+guarded workspace output creation and promotion, and failure handling around
+synthetic or explicitly authorized external runners. All review threads that
+belonged to pull request #33, including the earlier Python-runtime and lexical
+Sumtally-output findings, were resolved before merge. No further correction,
+review request, merge action, or source-branch cleanup remains for pull request
+#33.
+
+No PHITS, RT-PHITS, CT2PHITS, Sumtally, phits2dicom, GPR, real DICOM, or long
+Monte Carlo calculation was executed to obtain final acceptance. Compatibility
+with real external-tool installations therefore remains outside this automated
+validation evidence. No patient data, facility configuration, credential,
+licensed PHITS material, or real calculation output was added.
+
+The work did not change public physics, DICOM meaning, coordinates, dose, MU,
+normalization, machine-model values, the centered `20 x 20 cm2` field-size
+guard, supported treatment techniques, or clinical-suitability boundaries.
+The unrelated active OpenSpec proposal
+`support-portable-workspace-recovery` remains proposal-only and was not part of
+pull request #33.
+
 ## Pull Request #33 Continuation Addendum (2026-08-12)
 
 This later addendum supersedes the 2026-08-10 stopping instructions for pull
