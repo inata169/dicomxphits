@@ -60,10 +60,12 @@ succeed and required files are present.
 
 Before the first `python.exe` launch, the bootstrap recursively walks the
 application-local runtime without following reparse points. It requires every
-entry to be a regular file or ordinary directory and holds each file open for
-read sharing only. Required executable and DLL files receive Authenticode
-signer checks. The read locks remain held until the offline installation stage
-exits.
+entry to be a regular file or ordinary directory, opens each file for read
+sharing only, and compares its SHA-256 to the digest captured directly from
+the authenticated package entry or MSI-validated source. Any additional or
+changed file is rejected while the inspected handle is still held. Required
+executable and DLL files receive Authenticode signer checks. The read locks
+remain held until the offline installation stage exits.
 
 The first probe imports only built-in `sys` and runs with `-I -S -B`. The same
 base-interpreter flags are used for the verified helper and `venv` creation.

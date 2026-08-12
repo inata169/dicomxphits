@@ -510,7 +510,9 @@ def test_verified_stage_uses_only_authenticated_application_local_python():
     assert "Expand-VerifiedPythonPackage" in text
     assert "Invoke-TclTkAdministrativeExtraction" in text
     assert "Get-SafeRuntimeDestination" in text
-    assert "Add-RuntimeTreeLocks $RuntimeRoot" in text
+    assert "MsiFileHash" in text
+    assert "ExpectedRuntimeHashes" in text
+    assert "Lock-AuthenticatedRuntimeTree $RuntimeRoot" in text
     assert "Get-AuthenticodeSignature" in text
     assert "Python Software Foundation" in text
     assert '"python312.dll"' in text
@@ -518,7 +520,7 @@ def test_verified_stage_uses_only_authenticated_application_local_python():
     assert "Microsoft Windows Software Compatibility Publisher" in text
     assert "& $SelectedPython -I -S -B -c" in text
     assert "& $SelectedPython -I -S -B $Helper" in text
-    assert text.index("Add-RuntimeTreeLocks $RuntimeRoot") < text.index(
+    assert text.index("Lock-AuthenticatedRuntimeTree $RuntimeRoot") < text.index(
         "$Probe = & $SelectedPython"
     )
 
@@ -656,12 +658,16 @@ def test_verified_runtime_extractor_rejects_escaping_archive_path(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
-def test_complete_runtime_tree_remains_read_locked(tmp_path):
+def test_runtime_substitution_is_rejected_before_lock(tmp_path):
+    import zipfile
+
     root = tmp_path / "bundle"
+    package = root / "python" / "python.3.12.10.nupkg"
+    package.parent.mkdir(parents=True)
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("tools/Lib/encodings/__init__.py", "trusted")
     runtime = root / ".python-runtime"
     target = runtime / "Lib" / "encodings" / "__init__.py"
-    target.parent.mkdir(parents=True)
-    target.write_text("trusted", encoding="utf-8")
     stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
         encoding="utf-8"
     )
@@ -673,7 +679,78 @@ def test_complete_runtime_tree_remains_read_locked(tmp_path):
     harness.write_text(
         function_text
         + "\ntry {\n"
-        "    Add-RuntimeTreeLocks $RuntimeRoot\n"
+        "    [IO.Directory]::CreateDirectory($RuntimeRoot) | Out-Null\n"
+        "    Expand-VerifiedPythonPackage $RuntimeRoot\n"
+        "    [IO.File]::WriteAllText($env:DICOMXPHITS_TEST_LOCKED_FILE, 'changed')\n"
+        "    try { Lock-AuthenticatedRuntimeTree $RuntimeRoot; exit 8 }\n"
+        "    catch { exit 0 }\n"
+        "}\n"
+        "finally { foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() } }\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(root),
+            "DICOMXPHITS_TEST_LOCKED_FILE": str(target),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        }
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert target.read_text(encoding="utf-8") == "changed"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_authenticated_runtime_tree_remains_read_locked(tmp_path):
+    import zipfile
+
+    root = tmp_path / "bundle"
+    package = root / "python" / "python.3.12.10.nupkg"
+    package.parent.mkdir(parents=True)
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("tools/Lib/encodings/__init__.py", "trusted")
+    runtime = root / ".python-runtime"
+    target = runtime / "Lib" / "encodings" / "__init__.py"
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "locked-tree-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\ntry {\n"
+        "    [IO.Directory]::CreateDirectory($RuntimeRoot) | Out-Null\n"
+        "    Expand-VerifiedPythonPackage $RuntimeRoot\n"
+        "    Lock-AuthenticatedRuntimeTree $RuntimeRoot\n"
         "    try {\n"
         "        [IO.File]::WriteAllText($env:DICOMXPHITS_TEST_LOCKED_FILE, 'changed')\n"
         "        exit 8\n"
@@ -719,6 +796,74 @@ def test_complete_runtime_tree_remains_read_locked(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert target.read_text(encoding="utf-8") == "trusted"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_authenticated_runtime_inventory_rejects_injected_file(tmp_path):
+    import zipfile
+
+    root = tmp_path / "bundle"
+    package = root / "python" / "python.3.12.10.nupkg"
+    package.parent.mkdir(parents=True)
+    with zipfile.ZipFile(package, "w") as archive:
+        archive.writestr("tools/Lib/encodings/__init__.py", "trusted")
+    runtime = root / ".python-runtime"
+    injected = runtime / "Lib" / "evil.py"
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "inventory-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\ntry {\n"
+        "    [IO.Directory]::CreateDirectory($RuntimeRoot) | Out-Null\n"
+        "    Expand-VerifiedPythonPackage $RuntimeRoot\n"
+        "    [IO.File]::WriteAllText($env:DICOMXPHITS_TEST_INJECTED_FILE, 'evil')\n"
+        "    try { Lock-AuthenticatedRuntimeTree $RuntimeRoot; exit 8 }\n"
+        "    catch { exit 0 }\n"
+        "}\n"
+        "finally { foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() } }\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(root),
+            "DICOMXPHITS_TEST_INJECTED_FILE": str(injected),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        }
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_installer_never_uses_bare_executable_discovery():

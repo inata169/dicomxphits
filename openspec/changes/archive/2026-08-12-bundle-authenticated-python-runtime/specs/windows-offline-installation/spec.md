@@ -131,8 +131,9 @@ CPython 3.12.10 x64 runtime derived from the bundled Python package and Tcl/Tk
 component. It MUST NOT discover, probe, repair, install, or execute an existing
 host Python interpreter, registry candidate, `py.exe`, or bare `python.exe`.
 Before its first Python launch, it MUST validate the complete runtime tree as
-regular non-reparse content and read-lock every runtime file through the end of
-installation.
+regular non-reparse content, compare every runtime file to its authenticated
+source-derived digest while acquiring its read lock, reject any additional
+file, and retain every lock through the end of installation.
 
 #### Scenario: Host Python is malicious
 

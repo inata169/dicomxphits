@@ -19,6 +19,7 @@ $RuntimeLog = Join-Path $BundleRoot "python-runtime.log"
 $PythonNuGetSignerSha256 = "1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D"
 $LockedPythonFiles = New-Object System.Collections.Generic.List[System.IO.Stream]
 $CreatedWorkingDirectories = New-Object System.Collections.Generic.List[string]
+$ExpectedRuntimeHashes = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
 function Write-InstallLog([string]$Message) {
     Add-Content -LiteralPath $LogFile -Encoding UTF8 -Value $Message
@@ -198,18 +199,37 @@ function Expand-VerifiedPythonPackage([string]$DestinationRoot) {
             Assert-NoReparsePath $Parent "Python runtime extraction parent"
             $Input = $null
             $Output = $null
+            $Content = $null
             try {
                 $Input = $Entry.Open()
+                $Content = New-Object System.IO.MemoryStream
+                $Input.CopyTo($Content)
+                $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $ExpectedHash = [System.BitConverter]::ToString(
+                        $Sha256.ComputeHash($Content.ToArray())
+                    ).Replace("-", "").ToLowerInvariant()
+                }
+                finally {
+                    $Sha256.Dispose()
+                }
                 $Output = [System.IO.File]::Open(
                     $Destination,
                     [System.IO.FileMode]::CreateNew,
                     [System.IO.FileAccess]::Write,
                     [System.IO.FileShare]::None
                 )
-                $Input.CopyTo($Output)
+                $Content.Position = 0
+                $Content.CopyTo($Output)
+                $Output.Flush()
+                if ($ExpectedRuntimeHashes.ContainsKey($Destination)) {
+                    throw "Python runtime package contains a duplicate hashed destination: $Relative"
+                }
+                $ExpectedRuntimeHashes.Add($Destination, $ExpectedHash)
             }
             finally {
                 if ($null -ne $Output) { $Output.Dispose() }
+                if ($null -ne $Content) { $Content.Dispose() }
                 if ($null -ne $Input) { $Input.Dispose() }
             }
         }
@@ -217,6 +237,143 @@ function Expand-VerifiedPythonPackage([string]$DestinationRoot) {
     finally {
         $Archive.Dispose()
     }
+}
+
+function Get-TclTkMsiRuntimeRecords {
+    $Installer = New-Object -ComObject WindowsInstaller.Installer
+    $Database = $Installer.GetType().InvokeMember(
+        "OpenDatabase",
+        [System.Reflection.BindingFlags]::InvokeMethod,
+        $null,
+        $Installer,
+        [object[]]@([string]$TclTkMsi, [int]0)
+    )
+
+    function Get-MsiRows([string]$Sql) {
+        $View = $Database.GetType().InvokeMember(
+            "OpenView",
+            [System.Reflection.BindingFlags]::InvokeMethod,
+            $null,
+            $Database,
+            [object[]]@([string]$Sql)
+        )
+        $View.GetType().InvokeMember(
+            "Execute",
+            [System.Reflection.BindingFlags]::InvokeMethod,
+            $null,
+            $View,
+            $null
+        ) | Out-Null
+        $Rows = @()
+        while ($true) {
+            $Record = $View.GetType().InvokeMember(
+                "Fetch",
+                [System.Reflection.BindingFlags]::InvokeMethod,
+                $null,
+                $View,
+                $null
+            )
+            if ($null -eq $Record) { break }
+            $Rows += $Record
+        }
+        return $Rows
+    }
+
+    function Get-MsiString($Record, [int]$Field) {
+        return [string]$Record.GetType().InvokeMember(
+            "StringData",
+            [System.Reflection.BindingFlags]::GetProperty,
+            $null,
+            $Record,
+            $Field
+        )
+    }
+
+    function Get-MsiInteger($Record, [int]$Field) {
+        return [int]$Record.GetType().InvokeMember(
+            "IntegerData",
+            [System.Reflection.BindingFlags]::GetProperty,
+            $null,
+            $Record,
+            $Field
+        )
+    }
+
+    function Get-MsiTargetName([string]$Value) {
+        $Target = @($Value -split ":", 2)[0]
+        if ($Target.Contains("|")) {
+            $Target = @($Target -split "\|", 2)[1]
+        }
+        return $Target
+    }
+
+    $Directories = @{}
+    foreach ($Record in Get-MsiRows 'SELECT `Directory`,`Directory_Parent`,`DefaultDir` FROM `Directory`') {
+        $Directories[(Get-MsiString $Record 1)] = @(
+            (Get-MsiString $Record 2),
+            (Get-MsiString $Record 3)
+        )
+    }
+
+    function Get-MsiDirectoryPath([string]$DirectoryId) {
+        $Parts = New-Object System.Collections.Generic.List[string]
+        $Visited = @{}
+        while (-not [string]::IsNullOrEmpty($DirectoryId) -and $Directories.ContainsKey($DirectoryId)) {
+            if ($Visited.ContainsKey($DirectoryId)) {
+                throw "Tcl/Tk MSI directory table contains a cycle."
+            }
+            $Visited[$DirectoryId] = $true
+            $Parent, $DefaultDir = $Directories[$DirectoryId]
+            $Name = Get-MsiTargetName $DefaultDir
+            if (-not [string]::IsNullOrEmpty($Name) -and $Name -ne "." -and $Name -ne "SourceDir") {
+                $Parts.Insert(0, $Name)
+            }
+            $DirectoryId = $Parent
+        }
+        return ($Parts -join "\")
+    }
+
+    $Components = @{}
+    foreach ($Record in Get-MsiRows 'SELECT `Component`,`Directory_` FROM `Component`') {
+        $Components[(Get-MsiString $Record 1)] = Get-MsiString $Record 2
+    }
+    $Hashes = @{}
+    foreach ($Record in Get-MsiRows 'SELECT `File_`,`HashPart1`,`HashPart2`,`HashPart3`,`HashPart4` FROM `MsiFileHash`') {
+        $Hashes[(Get-MsiString $Record 1)] = @(
+            (Get-MsiInteger $Record 2),
+            (Get-MsiInteger $Record 3),
+            (Get-MsiInteger $Record 4),
+            (Get-MsiInteger $Record 5)
+        )
+    }
+
+    $RuntimeRecords = @{}
+    foreach ($Record in Get-MsiRows 'SELECT `File`,`Component_`,`FileName`,`FileSize`,`Version` FROM `File`') {
+        $FileId = Get-MsiString $Record 1
+        $ComponentId = Get-MsiString $Record 2
+        if (-not $Components.ContainsKey($ComponentId)) {
+            throw "Tcl/Tk MSI file references an unknown component: $FileId"
+        }
+        $Directory = Get-MsiDirectoryPath $Components[$ComponentId]
+        $FileName = Get-MsiTargetName (Get-MsiString $Record 3)
+        $Relative = if ([string]::IsNullOrEmpty($Directory)) {
+            $FileName
+        }
+        else {
+            [System.IO.Path]::Combine($Directory, $FileName)
+        }
+        $Key = $Relative.ToLowerInvariant()
+        if ($RuntimeRecords.ContainsKey($Key)) {
+            throw "Tcl/Tk MSI contains a duplicate target path: $Relative"
+        }
+        $RuntimeRecords[$Key] = [pscustomobject]@{
+            RelativePath = $Relative
+            Size = [int64](Get-MsiInteger $Record 4)
+            Version = Get-MsiString $Record 5
+            HashParts = if ($Hashes.ContainsKey($FileId)) { @($Hashes[$FileId]) } else { $null }
+        }
+    }
+    return $RuntimeRecords
 }
 
 function Invoke-TclTkAdministrativeExtraction([string]$DestinationRoot) {
@@ -243,7 +400,11 @@ function Invoke-TclTkAdministrativeExtraction([string]$DestinationRoot) {
     Assert-NoReparsePath $DestinationRoot "Tcl/Tk administrative image"
 }
 
-function Copy-VerifiedFile([string]$Source, [string]$Destination) {
+function Copy-AuthenticatedTclTkFile(
+    [string]$Source,
+    [string]$Destination,
+    $Record
+) {
     $SourceFull = [System.IO.Path]::GetFullPath($Source)
     $DestinationFull = [System.IO.Path]::GetFullPath($Destination)
     if (-not [System.IO.File]::Exists($SourceFull)) {
@@ -258,16 +419,80 @@ function Copy-VerifiedFile([string]$Source, [string]$Destination) {
     }
     $Input = [System.IO.File]::Open($SourceFull, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
     try {
-        $Output = [System.IO.File]::Open($DestinationFull, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        try { $Input.CopyTo($Output) } finally { $Output.Dispose() }
+        if ($Input.Length -ne $Record.Size) {
+            throw "Tcl/Tk runtime file size does not match the signed MSI: $($Record.RelativePath)"
+        }
+        if ($null -ne $Record.HashParts) {
+            $Md5 = [System.Security.Cryptography.MD5]::Create()
+            try {
+                $Input.Position = 0
+                $ActualHash = $Md5.ComputeHash($Input)
+            }
+            finally {
+                $Md5.Dispose()
+            }
+            for ($Index = 0; $Index -lt 4; $Index++) {
+                if ([System.BitConverter]::ToInt32($ActualHash, $Index * 4) -ne $Record.HashParts[$Index]) {
+                    throw "Tcl/Tk runtime file hash does not match the signed MSI: $($Record.RelativePath)"
+                }
+            }
+        }
+        else {
+            if ([string]::IsNullOrWhiteSpace($Record.Version)) {
+                throw "Tcl/Tk MSI provides neither a file hash nor version metadata: $($Record.RelativePath)"
+            }
+            $Signature = Get-AuthenticodeSignature -LiteralPath $SourceFull
+            if (
+                $Signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+                $null -eq $Signature.SignerCertificate -or
+                [string]$Signature.SignerCertificate.Subject -notlike "*Python Software Foundation*"
+            ) {
+                throw "Versioned Tcl/Tk runtime file has an unexpected Authenticode signature: $($Record.RelativePath)"
+            }
+        }
+        $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $Input.Position = 0
+            $ExpectedHash = [System.BitConverter]::ToString(
+                $Sha256.ComputeHash($Input)
+            ).Replace("-", "").ToLowerInvariant()
+        }
+        finally {
+            $Sha256.Dispose()
+        }
+        $Input.Position = 0
+        $Output = [System.IO.File]::Open(
+            $DestinationFull,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None
+        )
+        try {
+            $Input.CopyTo($Output)
+            $Output.Flush()
+            if ($ExpectedRuntimeHashes.ContainsKey($DestinationFull)) {
+                throw "Tcl/Tk runtime has a duplicate hashed destination: $DestinationFull"
+            }
+            $ExpectedRuntimeHashes.Add($DestinationFull, $ExpectedHash)
+        }
+        finally {
+            if ($null -ne $Output) { $Output.Dispose() }
+        }
     }
     finally {
         $Input.Dispose()
     }
 }
 
-function Copy-VerifiedTree([string]$SourceRoot, [string]$DestinationRoot) {
+function Copy-AuthenticatedTclTkTree(
+    [string]$SourceRoot,
+    [string]$DestinationRoot,
+    [string]$SourceBase,
+    [hashtable]$Records,
+    [System.Collections.Generic.HashSet[string]]$Copied
+) {
     $SourceFull = [System.IO.Path]::GetFullPath($SourceRoot)
+    $SourceBaseFull = [System.IO.Path]::GetFullPath($SourceBase).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
     if (-not [System.IO.Directory]::Exists($SourceFull)) {
         throw "Required Tcl/Tk runtime directory is missing: $SourceFull"
     }
@@ -287,13 +512,21 @@ function Copy-VerifiedTree([string]$SourceRoot, [string]$DestinationRoot) {
                 $Pending.Push([System.IO.DirectoryInfo]$Entry.FullName)
             }
             else {
-                Copy-VerifiedFile $Entry.FullName $Destination
+                $MsiRelative = $Entry.FullName.Substring($SourceBaseFull.Length + 1)
+                $Key = $MsiRelative.ToLowerInvariant()
+                if (-not $Records.ContainsKey($Key)) {
+                    throw "Tcl/Tk administrative image contains an unexpected runtime file: $MsiRelative"
+                }
+                Copy-AuthenticatedTclTkFile $Entry.FullName $Destination $Records[$Key]
+                if (-not $Copied.Add($Key)) {
+                    throw "Tcl/Tk administrative image contains a duplicate runtime file: $MsiRelative"
+                }
             }
         }
     }
 }
 
-function Add-RuntimeTreeLocks([string]$Root) {
+function Lock-AuthenticatedRuntimeTree([string]$Root) {
     $RootFull = [System.IO.Path]::GetFullPath($Root)
     Assert-NoReparsePath $RootFull "Application-local Python runtime"
     $Pending = New-Object System.Collections.Generic.Stack[System.IO.DirectoryInfo]
@@ -311,14 +544,39 @@ function Add-RuntimeTreeLocks([string]$Root) {
             if (-not [System.IO.File]::Exists($Entry.FullName)) {
                 throw "Application-local Python runtime contains a non-regular file: $($Entry.FullName)"
             }
+            $Path = [System.IO.Path]::GetFullPath($Entry.FullName)
+            if (-not $ExpectedRuntimeHashes.ContainsKey($Path)) {
+                throw "Application-local Python runtime contains a file not created from an authenticated source: $($Entry.FullName)"
+            }
             $Stream = [System.IO.File]::Open(
-                $Entry.FullName,
+                $Path,
                 [System.IO.FileMode]::Open,
                 [System.IO.FileAccess]::Read,
                 [System.IO.FileShare]::Read
             )
-            $LockedPythonFiles.Add($Stream)
+            try {
+                $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $ActualHash = [System.BitConverter]::ToString(
+                        $Sha256.ComputeHash($Stream)
+                    ).Replace("-", "").ToLowerInvariant()
+                }
+                finally {
+                    $Sha256.Dispose()
+                }
+                if ($ActualHash -ne $ExpectedRuntimeHashes[$Path]) {
+                    throw "Application-local Python runtime file changed after authenticated extraction: $Path"
+                }
+                $LockedPythonFiles.Add($Stream)
+                $Stream = $null
+            }
+            finally {
+                if ($null -ne $Stream) { $Stream.Dispose() }
+            }
         }
+    }
+    if (@([System.IO.Directory]::EnumerateFiles($RootFull, "*", [System.IO.SearchOption]::AllDirectories)).Count -ne $ExpectedRuntimeHashes.Count) {
+        throw "Application-local Python runtime inventory is incomplete."
     }
 }
 
@@ -363,20 +621,51 @@ function New-AuthenticatedPythonRuntime {
     $LockedPythonFiles.Add($PackageStream)
 
     Invoke-NuGetPackageVerification
-    $PythonStaging = New-BoundedWorkingDirectory "python"
+    $TclTkRecords = Get-TclTkMsiRuntimeRecords
+    [System.IO.Directory]::CreateDirectory($RuntimeRoot) | Out-Null
+    Assert-NoReparsePath $RuntimeRoot "Application-local Python runtime"
     $TclTkStaging = New-BoundedWorkingDirectory "tcltk"
-    Expand-VerifiedPythonPackage $PythonStaging
+    Expand-VerifiedPythonPackage $RuntimeRoot
     Invoke-TclTkAdministrativeExtraction $TclTkStaging
 
+    $CopiedTclTkFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $ExpectedTclTkFiles = @(
+        $TclTkRecords.Keys | Where-Object {
+            $_ -like "lib\tkinter\*" -or
+            $_ -like "tcl\*" -or
+            $_ -in @("dlls\_tkinter.pyd", "dlls\tcl86t.dll", "dlls\tk86t.dll", "dlls\zlib1.dll")
+        }
+    )
     foreach ($Name in @("_tkinter.pyd", "tcl86t.dll", "tk86t.dll", "zlib1.dll")) {
-        Copy-VerifiedFile (Join-Path $TclTkStaging "DLLs\$Name") (Join-Path $PythonStaging "DLLs\$Name")
+        $Relative = "dlls\$Name"
+        if (-not $TclTkRecords.ContainsKey($Relative)) {
+            throw "Signed Tcl/Tk MSI is missing a required runtime record: $Relative"
+        }
+        Copy-AuthenticatedTclTkFile `
+            (Join-Path $TclTkStaging "DLLs\$Name") `
+            (Join-Path $RuntimeRoot "DLLs\$Name") `
+            $TclTkRecords[$Relative]
+        if (-not $CopiedTclTkFiles.Add($Relative)) {
+            throw "Tcl/Tk runtime contains a duplicate selected file: $Relative"
+        }
     }
-    Copy-VerifiedTree (Join-Path $TclTkStaging "Lib\tkinter") (Join-Path $PythonStaging "Lib\tkinter")
-    Copy-VerifiedTree (Join-Path $TclTkStaging "tcl") (Join-Path $PythonStaging "tcl")
-    Assert-RequiredRuntimeFiles $PythonStaging
-    [System.IO.Directory]::Move($PythonStaging, $RuntimeRoot)
+    Copy-AuthenticatedTclTkTree `
+        (Join-Path $TclTkStaging "Lib\tkinter") `
+        (Join-Path $RuntimeRoot "Lib\tkinter") `
+        $TclTkStaging $TclTkRecords $CopiedTclTkFiles
+    Copy-AuthenticatedTclTkTree `
+        (Join-Path $TclTkStaging "tcl") `
+        (Join-Path $RuntimeRoot "tcl") `
+        $TclTkStaging $TclTkRecords $CopiedTclTkFiles
+    if (
+        $CopiedTclTkFiles.Count -ne $ExpectedTclTkFiles.Count -or
+        @($ExpectedTclTkFiles | Where-Object { -not $CopiedTclTkFiles.Contains($_) }).Count -ne 0
+    ) {
+        throw "Tcl/Tk administrative image does not match the signed MSI runtime inventory."
+    }
+    Assert-RequiredRuntimeFiles $RuntimeRoot
     Assert-NoReparsePath $RuntimeRoot "Application-local Python runtime"
-    Add-RuntimeTreeLocks $RuntimeRoot
+    Lock-AuthenticatedRuntimeTree $RuntimeRoot
 
     Add-SignedFileLock (Join-Path $RuntimeRoot "python.exe") "Python executable" "*Python Software Foundation*"
     Add-SignedFileLock (Join-Path $RuntimeRoot "python312.dll") "Python runtime DLL" "*Python Software Foundation*"

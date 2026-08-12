@@ -96,7 +96,8 @@ bootstrapは、保護対象pathのreparse pointと展開root直下の想定外�
 
 - 同梱NuGet verifier、CPython package、Tcl/Tk componentを検証してread-lockする
 - 認証済みsourceだけから完全な`.python-runtime`を安全に構成し、必要fileを
-  検証して、最初のPython起動前から導入終了まで全runtime fileをread-lockする
+  検証する。各fileを認証済みsource由来digestと比較しながらread-lockし、追加fileを
+  拒否して、最初のPython起動前から導入終了まで全runtime lockを保持する
 - そのapplication-local CPython 3.12.10 x64だけを`-I -S -B`で使用する。
   host Python、registry candidate、`py.exe`、bare `python.exe`を探索、probe、
   install、repair、実行しない

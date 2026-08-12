@@ -102,8 +102,9 @@ payload, and only then runs the verified installation stage. It then:
 - validates and read-locks the bundled NuGet verifier, CPython package, and
   Tcl/Tk component before using them;
 - safely constructs a complete `.python-runtime` from those authenticated
-  sources, validates its required files, and read-locks every runtime file
-  through the end of installation before the first Python launch;
+  sources, validates every file against its authenticated source-derived
+  digest while acquiring its read lock, rejects additional files, and retains
+  every lock through the end of installation before the first Python launch;
 - uses only that application-local CPython 3.12.10 x64 interpreter with
   `-I -S -B`; it never discovers, probes, installs, repairs, or executes a host
   Python, registry candidate, `py.exe`, or bare `python.exe`;

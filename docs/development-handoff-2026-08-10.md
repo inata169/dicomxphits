@@ -35,15 +35,15 @@ official runtime artifacts. A malicious host candidate whose modified
 not started by the offline stage. The final official-artifact probe accepted
 CPython 3.12.10 and Tcl/Tk 8.6.15, imported Tkinter, and confirmed that a helper
 could not modify the locked standard library. The offline focused suite passed
-with 44 tests.
+with 46 tests after the final extracted-file revalidation correction.
 
 The complete suite passed with the repository's locked pydicom 3.0.2 and NumPy
 2.5.1 dependencies made available from `.venv` to system pytest:
 
 ```text
 python -m pytest -q -p no:cacheprovider \
-  --basetemp=C:\tmp\dicomxphits-p1-full-20260812-l
-  707 passed, 8 skipped in 35.38s
+  --basetemp=C:\tmp\dicomxphits-p1-race-full-20260812-r
+  709 passed, 8 skipped in 41.15s
 ```
 
 An initial non-acceptance invocation used system pydicom 2.4.4 and reproduced
@@ -52,6 +52,14 @@ repository correction was made for that environment error. No PHITS,
 RT-PHITS, CT2PHITS, Sumtally, phits2dicom, GPR, or real DICOM was executed.
 Public physics, DICOM meaning, coordinates, dose, MU, normalization, machine
 model, field-size guards, and supported treatment techniques were unchanged.
+
+A later exact-head Codex review identified a write window between extraction
+and the original recursive runtime lock. The final stage now derives SHA-256
+expectations directly from each authenticated NuGet entry and from each
+MSI-table-validated Tcl/Tk source file. It opens every final runtime file,
+compares the digest while the handle blocks writes, retains that same handle,
+and rejects additional files before Python startup. Regression tests cover
+substitution, additional-file injection, and post-validation lock lifetime.
 
 The remaining completion order is: finish required public checks, commit and
 push the single application-local-runtime correction, reply to and resolve the
