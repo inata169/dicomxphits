@@ -11,17 +11,27 @@ computers without changing the dicomxphits runtime or external-tool boundary.
 
 The project SHALL provide an online Windows preparation command that creates
 `dist/dicomxphits-offline-win64-<version>.zip` for Windows 10/11 x64 and Python
-3.12. The bundle SHALL contain the audited Git-indexed public project blobs, the
-offline entry point, documentation, the official Python 3.12.10 x64 installer,
-the complete compatible wheelhouse, and integrity metadata. It MUST NOT copy
-arbitrary untracked or ignored worktree content.
+3.12. The bundle SHALL contain the audited Git-indexed public project blobs,
+the offline entry point, documentation, an authenticated application-local
+CPython 3.12.10 x64 NuGet package, an authenticated CPython Tcl/Tk component,
+a pinned authenticated NuGet signature verifier, the complete compatible
+wheelhouse, and integrity metadata. It MUST NOT copy arbitrary untracked or
+ignored worktree content.
 
 #### Scenario: Successful online preparation
 
 - **WHEN** the public-tree audit passes, every required indexed source file is
-  available, the Python installer is authentic, and compatible wheels resolve
+  available, all Python runtime sources are authentic, and compatible wheels
+  resolve
 - **THEN** preparation writes one versioned ZIP whose extracted root is the
-  editable project root
+  editable project root and whose authenticated sources can construct the
+  complete application-local Python runtime without host Python installation
+
+#### Scenario: Runtime source is not authentic
+
+- **WHEN** the NuGet verifier, Python package, or Tcl/Tk component lacks its
+  expected valid signature or identity
+- **THEN** preparation stops and does not create a final ZIP
 
 #### Scenario: Untracked local material exists
 
@@ -45,24 +55,25 @@ arbitrary untracked or ignored worktree content.
 
 ### Requirement: Authenticated Python Runtime Artifact
 
-The preparation command SHALL download the exact official Python 3.12.10
-64-bit Windows installer over HTTPS. It MUST accept the installer only when
-Windows Authenticode validation reports a valid signature identifying the
-Python Software Foundation, and SHALL record its URL, SHA-256, size, signature
-status, signer subject, certificate thumbprint, and certificate validity
-metadata in the bundle manifest.
+The preparation command SHALL download the exact official application-local
+CPython 3.12.10 x64 NuGet package and exact official CPython 3.12.10 x64 Tcl/Tk
+MSI component over HTTPS. It MUST validate the Python package's NuGet repository
+signature, MUST validate a Python Software Foundation Authenticode signature
+on the Tcl/Tk component, and MUST validate the expected Microsoft
+Authenticode signature on the pinned NuGet verifier. It SHALL record artifact
+URLs, SHA-256 values, sizes, signature status and signer evidence, package
+identity, and versions in the bundle manifest.
 
-#### Scenario: Valid official installer
+#### Scenario: Valid application-local runtime sources
 
-- **WHEN** the downloaded Python 3.12.10 x64 installer has a valid expected
-  Authenticode signature
-- **THEN** preparation records its provenance and may add it to the staging
-  bundle
+- **WHEN** all three artifacts have the expected valid signatures and the
+  Python package identifies version 3.12.10
+- **THEN** preparation records their provenance and may add them to the bundle
 
-#### Scenario: Missing, invalid, or unexpected signature
+#### Scenario: Missing, invalid, or unexpected runtime signature
 
-- **WHEN** Authenticode validation is not valid or the signer does not identify
-  the Python Software Foundation
+- **WHEN** any signature validation fails or reports an unexpected signer,
+  package identity, or version
 - **THEN** preparation stops and does not create a final ZIP
 
 ### Requirement: Complete Binary-Only Wheelhouse
@@ -118,12 +129,12 @@ The preparation command SHALL generate `bundle-manifest.json` and
 and artifact roles for every payload, and SHALL identify the source HEAD commit
 and exact Git index-entry fingerprint. `SHA256SUMS.txt` SHALL also contain the
 manifest digest and, as the unavoidable self-reference exception, MUST NOT
-claim to contain its own digest. Every downloaded installer and wheel MUST be
-listed in both inventories. Offline bootstrap verification MUST use an absolute
-PowerShell executable below the Windows system directory, MUST reject a
-reparse-point bundle root, checksum file, or protected payload component, and
-MUST NOT execute any bundle-provided executable or Python helper until the
-inventory has passed and protected payloads are read-locked.
+claim to contain its own digest. Every runtime source, verifier, and wheel MUST
+be listed in both inventories. Offline bootstrap verification MUST use an
+absolute PowerShell executable below the Windows system directory, MUST reject
+reparse-point paths, and MUST NOT execute a bundle verifier, Windows Installer,
+Python executable, helper, or pip until its required input has passed the
+applicable inventory and signature checks and has been read-locked.
 
 #### Scenario: Complete inventory
 
@@ -135,13 +146,13 @@ inventory has passed and protected payloads are read-locked.
 
 - **WHEN** an inventory entry is absolute, duplicated, escapes the bundle root,
   or traverses a symbolic link, junction, or other reparse point
-- **THEN** verification rejects the bundle before executing an installer,
-  helper, or pip
+- **THEN** verification rejects the bundle before executing a verifier,
+  Windows Installer, Python, helper, or pip
 
 #### Scenario: Payload changed after preparation
 
 - **WHEN** any inventoried payload has a different size or SHA-256
-- **THEN** offline installation stops before Python installation or dependency
+- **THEN** offline installation stops before runtime extraction or dependency
   changes
 
 #### Scenario: Current-directory PowerShell lookalike
@@ -150,44 +161,57 @@ inventory has passed and protected payloads are read-locked.
 - **THEN** bootstrap uses only the quoted absolute Windows system PowerShell
   path and the lookalike is not executed
 
+#### Scenario: Runtime artifact changed after preparation
+
+- **WHEN** the verifier, Python package, Tcl/Tk component, or another payload
+  differs from its inventory
+- **THEN** offline installation stops before extracting or executing runtime
+  content
+
+#### Scenario: Unsafe runtime extraction path
+
+- **WHEN** a runtime archive entry is absolute, drive-relative, duplicated,
+  escaping, link-like, non-regular, or traverses a reparse point
+- **THEN** extraction fails before any Python process starts
+
 ### Requirement: One-Entry Offline Python Setup
 
 The extracted bundle SHALL provide `install_offline.cmd` as the normal entry
-point. It SHALL accept an existing interpreter only when a bounded absolute
-installed path has a valid expected Authenticode signer, is protected against
-replacement for the installation lifetime, and reports CPython 3.12 64-bit. If
-none is found, it SHALL install the verified bundled Python 3.12.10 x64
-installer for the current user with pip, the Python Launcher, and Tcl/Tk
-enabled, without changing PATH, creating Python file associations, or creating
-shortcuts, then locate, authenticate, lock, and revalidate the resulting
-absolute interpreter before continuing. It MUST NOT execute `py.exe`,
-`python.exe`, or another candidate by bare name.
+point. It SHALL construct and use only the authenticated application-local
+CPython 3.12.10 x64 runtime derived from the bundled Python package and Tcl/Tk
+component. It MUST NOT discover, probe, repair, install, or execute an existing
+host Python interpreter, registry candidate, `py.exe`, or bare `python.exe`.
+Before its first Python launch, it MUST validate the complete runtime tree as
+regular non-reparse content and read-lock every runtime file through the end of
+installation.
 
-#### Scenario: Existing supported interpreter
+#### Scenario: Host Python is malicious
 
-- **WHEN** a bounded installed interpreter has the expected valid signature and
-  reports CPython 3.12 x64
-- **THEN** installation locks and uses its absolute path without starting the
-  bundled Python installer
+- **WHEN** an existing host installation contains signed Python binaries but a
+  modified standard library or additional shadow module
+- **THEN** the bootstrap does not inspect or execute that installation and uses
+  only the authenticated application-local runtime
 
-#### Scenario: No supported interpreter
+#### Scenario: Application-local runtime is complete
 
-- **WHEN** no bounded signed CPython 3.12 x64 candidate validates
-- **THEN** the bundled installer runs only after bundle verification, and its
-  result is found and validated through the same absolute-path contract
+- **WHEN** authenticated extraction produces the required CPython, standard
+  library, venv, pip, and Tcl/Tk files
+- **THEN** the locked absolute application-local interpreter is probed as
+  CPython 3.12 x64 and may run the verified helper
 
-#### Scenario: Python setup fails
+#### Scenario: Runtime already exists or cannot be locked
 
-- **WHEN** the installer returns failure or the resulting interpreter, pip, or
-  tkinter validation fails
-- **THEN** setup stops with a controlled error recorded in
-  `offline-install.log`
+- **WHEN** the runtime target has unexpected pre-existing content or any
+  runtime path is missing, additional, changed, linked, non-regular, or cannot
+  be read-locked
+- **THEN** setup stops before Python execution and does not repair or delete the
+  runtime
 
 #### Scenario: Current-directory Python lookalikes
 
 - **WHEN** the extraction or current directory contains `python.exe` or
   `py.exe`
-- **THEN** neither file executes during interpreter discovery or installation
+- **THEN** neither file executes during runtime construction or installation
 
 ### Requirement: Safe Repository-Local Virtual Environment
 
@@ -290,10 +314,18 @@ users to run the editable environment from USB or imply clinical suitability.
 
 ### Requirement: Synthetic Offline-Installer Validation Boundary
 
-Automated tests SHALL use temporary synthetic paths, fabricated wheel files,
-mock or fake subprocesses, and synthetic metadata. They MUST NOT perform actual
-Python installation, network access, PHITS-related execution, or real DICOM
-processing.
+Automated tests SHALL use temporary synthetic paths, fabricated wheel and
+runtime packages, mock or fake subprocesses, synthetic metadata, and copied
+signed test binaries when Windows signature behavior is required. They MUST NOT
+install or modify a host Python product, access the network, run PHITS-related
+tools, or process real DICOM.
+
+#### Scenario: Automated runtime trust test
+
+- **WHEN** runtime provenance, extraction, locking, or malicious-host behavior
+  is tested
+- **THEN** the test remains in controlled temporary storage and no host Python
+  installation or external scientific tool is changed or executed
 
 #### Scenario: Automated installer failure test
 

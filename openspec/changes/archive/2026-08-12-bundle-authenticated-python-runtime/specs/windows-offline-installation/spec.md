@@ -28,6 +28,26 @@ ignored worktree content.
   expected valid signature or identity
 - **THEN** preparation stops and does not create a final ZIP
 
+#### Scenario: Untracked local material exists
+
+- **WHEN** the preparation worktree contains an unrelated untracked or ignored
+  file
+- **THEN** source collection does not include or recursively inspect that file
+
+#### Scenario: Indexed path has an unstaged modification
+
+- **WHEN** a Git-indexed source path differs in the working tree after its
+  indexed blob was audited
+- **THEN** source collection uses the audited indexed blob and does not copy
+  the unstaged bytes
+
+#### Scenario: Required offline source is not indexed
+
+- **WHEN** an installer, helper, or required document is absent from Git's
+  indexed path set
+- **THEN** preparation stops instead of adding that untracked file to the
+  bundle
+
 ### Requirement: Authenticated Python Runtime Artifact
 
 The preparation command SHALL download the exact official application-local
@@ -56,12 +76,39 @@ identity, and versions in the bundle manifest.
 The preparation command SHALL generate `bundle-manifest.json` and
 `SHA256SUMS.txt` with normalized relative paths, byte sizes, SHA-256 values,
 and artifact roles for every payload, and SHALL identify the source HEAD commit
-and exact Git index-entry fingerprint. Every runtime source, verifier, and wheel
-MUST be listed in both inventories. Offline bootstrap verification MUST use an
+and exact Git index-entry fingerprint. `SHA256SUMS.txt` SHALL also contain the
+manifest digest and, as the unavoidable self-reference exception, MUST NOT
+claim to contain its own digest. Every runtime source, verifier, and wheel MUST
+be listed in both inventories. Offline bootstrap verification MUST use an
 absolute PowerShell executable below the Windows system directory, MUST reject
 reparse-point paths, and MUST NOT execute a bundle verifier, Windows Installer,
 Python executable, helper, or pip until its required input has passed the
 applicable inventory and signature checks and has been read-locked.
+
+#### Scenario: Complete inventory
+
+- **WHEN** staging finishes successfully
+- **THEN** every downloaded and source payload has matching size and SHA-256
+  metadata and the checksum file includes the completed manifest
+
+#### Scenario: Unsafe inventory path
+
+- **WHEN** an inventory entry is absolute, duplicated, escapes the bundle root,
+  or traverses a symbolic link, junction, or other reparse point
+- **THEN** verification rejects the bundle before executing a verifier,
+  Windows Installer, Python, helper, or pip
+
+#### Scenario: Payload changed after preparation
+
+- **WHEN** any inventoried payload has a different size or SHA-256
+- **THEN** offline installation stops before runtime extraction or dependency
+  changes
+
+#### Scenario: Current-directory PowerShell lookalike
+
+- **WHEN** the extraction or current directory contains `powershell.exe`
+- **THEN** bootstrap uses only the quoted absolute Windows system PowerShell
+  path and the lookalike is not executed
 
 #### Scenario: Runtime artifact changed after preparation
 
@@ -109,6 +156,12 @@ installation.
 - **THEN** setup stops before Python execution and does not repair or delete the
   runtime
 
+#### Scenario: Current-directory Python lookalikes
+
+- **WHEN** the extraction or current directory contains `python.exe` or
+  `py.exe`
+- **THEN** neither file executes during runtime construction or installation
+
 ### Requirement: Synthetic Offline-Installer Validation Boundary
 
 Automated tests SHALL use temporary synthetic paths, fabricated wheel and
@@ -123,3 +176,10 @@ tools, or process real DICOM.
   is tested
 - **THEN** the test remains in controlled temporary storage and no host Python
   installation or external scientific tool is changed or executed
+
+#### Scenario: Automated installer failure test
+
+- **WHEN** wheel, checksum, virtual-environment, path, or launcher behavior is
+  tested
+- **THEN** the test remains in controlled temporary storage and uses no real
+  installer, network, licensed external tool, or patient data
