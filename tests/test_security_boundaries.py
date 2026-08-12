@@ -121,6 +121,34 @@ def test_workspace_writer_preserves_platform_default_newline_translation(tmp_pat
     assert guarded.read_bytes() == reference.read_bytes()
 
 
+def test_workspace_guard_creates_missing_case_root_hierarchy(tmp_path):
+    case_root = tmp_path / "output" / "new-case"
+
+    with WorkspaceOutputGuard(case_root, create_root=True) as guard:
+        guard.write_text(case_root / "analysis" / "result.txt", "created")
+
+    assert (case_root / "analysis" / "result.txt").read_text(
+        encoding="utf-8"
+    ) == "created"
+
+
+def test_workspace_guard_rejects_linked_case_root_ancestor(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symbolic links are unavailable: {exc}")
+
+    case_root = linked_parent / "new-case"
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse"):
+        with WorkspaceOutputGuard(case_root, create_root=True):
+            pass
+
+    assert not (outside / "new-case").exists()
+
+
 def test_workspace_copy_new_only_preserves_an_existing_regular_file(tmp_path):
     case_root = tmp_path / "case"
     case_root.mkdir()

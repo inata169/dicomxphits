@@ -166,37 +166,77 @@ class WorkspaceOutputGuard:
         self._windows_handles: dict[str, int] = {}
 
     def __enter__(self) -> WorkspaceOutputGuard:
-        if not _lexists(self.case_root):
-            if not self.create_root:
-                raise UnsafeWorkspacePathError(
-                    f"Case root does not exist: {self.case_root}"
-                )
-            self.case_root.mkdir()
-        self._hold_directory(self.case_root, label="case root")
-        return self
+        try:
+            if not _lexists(self.case_root):
+                if not self.create_root:
+                    raise UnsafeWorkspacePathError(
+                        f"Case root does not exist: {self.case_root}"
+                    )
+                self._create_case_root_hierarchy()
+            self._hold_directory(self.case_root, label="case root")
+            return self
+        except Exception:
+            self._close_held_directories()
+            raise
 
     def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+        self._close_held_directories()
+
+    def _close_held_directories(self) -> None:
         if os.name == "nt":  # pragma: no branch - platform-specific cleanup
             for handle in reversed(tuple(self._windows_handles.values())):
                 kernel32.CloseHandle(handle)  # type: ignore[name-defined]
         self._windows_handles.clear()
 
-    def _hold_directory(self, path: Path, *, label: str = "output directory") -> None:
+    def _hold_directory(
+        self,
+        path: Path,
+        *,
+        label: str = "output directory",
+        require_case_containment: bool = True,
+    ) -> None:
         if _is_reparse_point(path):
             raise UnsafeWorkspacePathError(
                 f"{label.capitalize()} is a symbolic link, junction, or reparse point: {path}"
             )
         if not path.is_dir():
             raise UnsafeWorkspacePathError(f"{label.capitalize()} is not a directory: {path}")
-        try:
-            path.resolve(strict=True).relative_to(self.case_root.resolve(strict=True))
-        except ValueError as exc:
-            raise UnsafeWorkspacePathError(
-                f"{label.capitalize()} resolves outside the case root: {path}"
-            ) from exc
+        if require_case_containment:
+            try:
+                path.resolve(strict=True).relative_to(self.case_root.resolve(strict=True))
+            except ValueError as exc:
+                raise UnsafeWorkspacePathError(
+                    f"{label.capitalize()} resolves outside the case root: {path}"
+                ) from exc
         key = os.path.normcase(os.fspath(path))
         if os.name == "nt" and key not in self._windows_handles:
             self._windows_handles[key] = _open_locked_windows_directory(path)
+
+    def _create_case_root_hierarchy(self) -> None:
+        anchor = Path(self.case_root.anchor)
+        if not anchor:
+            raise UnsafeWorkspacePathError(
+                f"Case root has no filesystem anchor: {self.case_root}"
+            )
+
+        current = anchor
+        self._hold_directory(
+            current,
+            label="case-root ancestor",
+            require_case_containment=False,
+        )
+        for part in self.case_root.relative_to(anchor).parts:
+            current = current / part
+            if not _lexists(current):
+                try:
+                    current.mkdir()
+                except FileExistsError:
+                    pass
+            self._hold_directory(
+                current,
+                label="case-root path component",
+                require_case_containment=False,
+            )
 
     def _release_directories_at_or_below(self, path: Path) -> None:
         if os.name != "nt":
