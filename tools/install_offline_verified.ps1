@@ -132,7 +132,7 @@ function Select-Python312 {
                 }
             }
 
-            $Probe = & $Candidate -I -c "import sys;print('|'.join((sys.implementation.name,str(sys.version_info.major),str(sys.version_info.minor),'64' if sys.maxsize > 2**32 else '32')))" 2>$null
+            $Probe = & $Candidate -I -S -c "import sys;print('|'.join((sys.implementation.name,str(sys.version_info.major),str(sys.version_info.minor),'64' if sys.maxsize > 2**32 else '32')))" 2>$null
             if ($LASTEXITCODE -ne 0) { continue }
             $Data = @(($Probe | Select-Object -Last 1) -split '\|')
             if ($Data.Count -ne 4 -or $Data[0] -ne "cpython" -or $Data[1] -ne "3" -or $Data[2] -ne "12" -or $Data[3] -ne "64") { continue }
@@ -172,7 +172,7 @@ try {
 
     Write-Host "Using Python: $SelectedPython"
     Write-InstallLog "Initial bundle SHA-256 verification passed; protected payloads remained locked."
-    & $SelectedPython -I $Helper --bundle-root $BundleRoot
+    & $SelectedPython -I -S $Helper --bundle-root $BundleRoot
     $InstallExit = $LASTEXITCODE
     if ($InstallExit -ne 0) {
         throw "Offline installation helper failed with exit code $InstallExit. See $LogFile"

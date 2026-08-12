@@ -876,6 +876,70 @@ def test_run_sumtally_rejects_mtime_only_preexisting_output_update(tmp_path):
     assert after["sha256"] == before["sha256"]
 
 
+def test_run_sumtally_rejects_linked_recorded_output_before_runner(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    for segment in manifest["segments"]:
+        output = workspace / segment["expected_output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(tally_output_text(), encoding="utf-8")
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+    linked_target = expected_output.with_name("linked-target.out")
+    linked_target.write_text("existing target", encoding="utf-8")
+    try:
+        expected_output.symlink_to(linked_target.name)
+    except OSError as exc:
+        if sys.platform != "win32":
+            pytest.skip(f"file symlink creation is unavailable: {exc}")
+        outside = tmp_path / "linked-output-target"
+        outside.mkdir()
+        linked_target = outside / expected_output.name
+        linked_target.write_text("existing target", encoding="utf-8")
+        junction = workspace / "linked-output"
+        trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        result = subprocess.run(
+            [
+                str(trusted_cmd),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(junction),
+                str(outside),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            pytest.skip(
+                "file symlink and junction creation are unavailable: "
+                f"{result.stdout}{result.stderr}"
+            )
+        expected_output = junction / expected_output.name
+        generation["outputs"]["sumtally_output"] = str(expected_output)
+        generation_path = workspace / "analysis" / "sumtally_generation_summary.json"
+        generation_path.write_text(json.dumps(generation), encoding="utf-8")
+    calls = []
+
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse point"):
+        run_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+    assert calls == []
+    assert linked_target.read_text(encoding="utf-8") == "existing target"
+
+
 def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     workspace, _ = write_workspace(tmp_path)
     generation = generate_sumtally(workspace_root=workspace, paths=paths(), command_argv=["generate"])

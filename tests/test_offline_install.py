@@ -441,8 +441,14 @@ def test_new_venv_creation_uses_isolated_module_resolution(tmp_path):
         )
 
     command, kwargs = runner.calls[0]
-    assert command[1:4] == ["-I", "-m", "venv"]
+    assert command[1:5] == ["-I", "-S", "-m", "venv"]
     assert kwargs["cwd"] == tmp_path.resolve()
+
+
+def test_python_probe_disables_site_customization():
+    command = offline_install.python_probe_command(Path("python.exe"))
+
+    assert command[1:4] == ["-I", "-S", "-c"]
 
 
 def test_gui_is_only_started_after_affirmative_choice(tmp_path, monkeypatch):
@@ -488,6 +494,11 @@ def test_cmd_bootstrap_verifies_before_python_and_enables_required_features():
 
     checksum_position = text.index("Get-Sha256")
     verified_stage_position = text.index("install_offline_verified.ps1')")
+    module_path_position = text.index(
+        "$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')"
+    )
+    error_preference_position = text.index("$ErrorActionPreference='Stop'")
+    assert module_path_position < error_preference_position < checksum_position
     assert checksum_position < verified_stage_position
     assert "InstallAllUsers=0" in stage
     assert "Include_pip=1" in stage
@@ -519,8 +530,8 @@ def test_verified_stage_uses_only_absolute_bounded_python_candidates():
     assert '"python312.dll"' in text
     assert '"vcruntime140.dll"' in text
     assert "Microsoft Windows Software Compatibility Publisher" in text
-    assert "& $Candidate -I -c" in text
-    assert "& $SelectedPython -I $Helper" in text
+    assert "& $Candidate -I -S -c" in text
+    assert "& $SelectedPython -I -S $Helper" in text
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Authenticode behavior")
@@ -543,7 +554,7 @@ def test_verified_stage_rejects_malicious_adjacent_runtime_dll_before_candidate_
     )
     assert separator
     instrumented, replacements = re.subn(
-        r"(?m)^\s*\$Probe = & \$Candidate -I -c .*$",
+        r"(?m)^\s*\$Probe = & \$Candidate -I(?: -S)? -c .*$",
         """                Set-Content -LiteralPath $env:DICOMXPHITS_TEST_CANDIDATE_STARTED -Value \"started\"
                 $Probe = \"cpython|3|12|64\"
                 $global:LASTEXITCODE = 0""",
@@ -692,6 +703,93 @@ def test_cmd_ignores_mutable_system_directory_environment(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert Path(result.stdout.strip()) == expected_powershell
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell module loading")
+def test_cmd_pins_powershell_modules_before_authenticode_lookup(tmp_path):
+    root = tmp_path / "日本語 user" / "module path bootstrap"
+    root.mkdir(parents=True)
+    _manifest, helper_marker = _make_cmd_bootstrap_bundle(root)
+
+    base_executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+    base_directory = base_executable.parent
+    runtime_files = [
+        base_executable,
+        base_directory / "python312.dll",
+        base_directory / "vcruntime140.dll",
+    ]
+    if not all(path.is_file() for path in runtime_files):
+        pytest.skip("requires an installed CPython 3.12 runtime layout")
+    local_app_data = tmp_path / "local-app-data"
+    candidate_directory = local_app_data / "Programs" / "Python" / "Python312"
+    candidate_directory.mkdir(parents=True)
+    for source in runtime_files:
+        target_name = "python.exe" if source == base_executable else source.name
+        shutil.copyfile(source, candidate_directory / target_name)
+
+    malicious_modules = tmp_path / "malicious-modules"
+    security_module = malicious_modules / "Microsoft.PowerShell.Security"
+    security_module.mkdir(parents=True)
+    module_marker = tmp_path / "malicious-module-loaded.txt"
+    (security_module / "Microsoft.PowerShell.Security.psd1").write_text(
+        "@{\n"
+        "RootModule = 'Microsoft.PowerShell.Security.psm1'\n"
+        "ModuleVersion = '1.0.0'\n"
+        "GUID = 'b72b1f20-9f0b-4dc8-a15c-718e52f23bdb'\n"
+        "FunctionsToExport = @('Get-AuthenticodeSignature')\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (security_module / "Microsoft.PowerShell.Security.psm1").write_text(
+        "function Get-AuthenticodeSignature {\n"
+        "    param([string]$LiteralPath)\n"
+        "    Add-Content -LiteralPath $env:DICOMXPHITS_TEST_PSMODULE_MARKER -Value $LiteralPath\n"
+        "    $subject = if ([IO.Path]::GetFileName($LiteralPath) -ieq 'vcruntime140.dll') {\n"
+        "        'CN=Microsoft Windows Software Compatibility Publisher, O=Microsoft Corporation, L=Redmond, S=Washington, C=US'\n"
+        "    } else {\n"
+        "        'CN=Python Software Foundation, O=Python Software Foundation, L=Beaverton, S=Oregon, C=US'\n"
+        "    }\n"
+        "    [pscustomobject]@{\n"
+        "        Status = [System.Management.Automation.SignatureStatus]::Valid\n"
+        "        SignerCertificate = [pscustomobject]@{ Subject = $subject }\n"
+        "    }\n"
+        "}\n"
+        "Export-ModuleMember -Function Get-AuthenticodeSignature\n",
+        encoding="utf-8",
+    )
+    system_modules = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "Modules"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "LocalAppData": str(local_app_data),
+            "PSModulePath": os.pathsep.join(
+                [str(malicious_modules), str(system_modules)]
+            ),
+            "DICOMXPHITS_TEST_PSMODULE_MARKER": str(module_marker),
+            "PYTHONUTF8": "1",
+        }
+    )
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode != 0
+    assert not module_marker.exists()
+    assert not helper_marker.exists()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows cmd.exe behavior")

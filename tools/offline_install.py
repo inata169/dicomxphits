@@ -264,7 +264,7 @@ def python_probe_command(executable: Path) -> list[str]:
         "'major':sys.version_info.major,'minor':sys.version_info.minor,"
         "'micro':sys.version_info.micro,'bits':struct.calcsize('P')*8}))"
     )
-    return [str(executable), "-I", "-c", program]
+    return [str(executable), "-I", "-S", "-c", program]
 
 
 def probe_python(
@@ -348,7 +348,7 @@ def ensure_venv(
 
     logger.write("Creating repository-local .venv with CPython 3.12 x64")
     _run_logged(
-        [str(base_python), "-I", "-m", "venv", str(venv_root)],
+        [str(base_python), "-I", "-S", "-m", "venv", str(venv_root)],
         logger=logger,
         runner=runner,
         cwd=bundle_root,

@@ -22,7 +22,7 @@ if not exist "%TrustedPowerShell%" (
 )
 
 "%TrustedPowerShell%" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;" ^
+  "$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules');$ErrorActionPreference='Stop';Set-StrictMode -Version Latest;" ^
   "function Get-Sha256([IO.Stream]$stream){$sha=[Security.Cryptography.SHA256]::Create();try{$stream.Position=0;return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}};" ^
   "function Assert-SafeDirectory([string]$path){$cursor=[IO.DirectoryInfo][IO.Path]::GetFullPath($path);while($null-ne $cursor){if(($cursor.Attributes-band [IO.FileAttributes]::ReparsePoint)-ne 0){throw ('Bundle path contains a symbolic link, junction, or reparse point: '+$cursor.FullName)};$cursor=$cursor.Parent}};" ^
   "$root=[IO.Path]::GetFullPath($env:DICOMXPHITS_BUNDLE_ROOT);Assert-SafeDirectory $root;" ^

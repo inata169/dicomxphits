@@ -851,20 +851,30 @@ def run_sumtally(
                 "Active segment tally geometry changed after Sumtally Generate; "
                 "rerun Sumtally Generate"
             )
-        expected_output = resolve_workspace_path(
-            workspace_root,
-            str(outputs["sumtally_output"]),
-        ).resolve()
-        output_before = sumtally_output_snapshot(expected_output)
+        expected_output = Path(
+            os.path.abspath(
+                os.fspath(
+                    resolve_workspace_path(
+                        workspace_root,
+                        str(outputs["sumtally_output"]),
+                    )
+                )
+            )
+        )
         stdout_path = workspace_root / "sumtally" / "sumtally_stdout.txt"
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
 
-        environment = phits_environment(selected_sum_input)
         with WorkspaceOutputGuard(workspace_root) as guard:
+            guard.prepare_file_target(
+                expected_output,
+                create_parents=True,
+            )
             guard.prepare_file_target(
                 execution_summary_path,
                 create_parents=True,
             )
+        output_before = sumtally_output_snapshot(expected_output)
+        environment = phits_environment(selected_sum_input)
         def mark_phits_started() -> None:
             nonlocal phits_started
             phits_started = True
