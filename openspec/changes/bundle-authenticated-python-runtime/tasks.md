@@ -34,6 +34,8 @@
   Python candidate.
 - [x] 3.5 Preserve isolated base launches, repository-local venv behavior,
   offline pip, import checks, and optional GUI launch.
+- [x] 3.6 Construct and validate a protected exact bundle-source snapshot and
+  use it for helper, wheelhouse, and editable-install inputs.
 
 ## 4. Tests and documentation
 
@@ -44,6 +46,8 @@
 - [x] 4.3 Confirm a clean application-local CPython 3.12 x64 runtime with pip
   and Tkinter remains accepted.
 - [x] 4.4 Update English and Japanese offline documentation and handoff notes.
+- [x] 4.5 Reject unmanifested `setup.py` input and cover protected-source path
+  separation with synthetic regressions.
 
 ## 5. Completion
 

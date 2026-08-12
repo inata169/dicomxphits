@@ -184,9 +184,23 @@ def test_unmanifested_wheelhouse_artifact_is_rejected(tmp_path, extra_name):
 
     with pytest.raises(
         offline_install.OfflineInstallError,
-        match="Wheelhouse contents differ from the verified manifest",
+        match="verified manifest",
     ):
         offline_install.verify_bundle(tmp_path)
+
+
+def test_unmanifested_setup_py_is_rejected(tmp_path):
+    _make_bundle(tmp_path)
+    (tmp_path / "setup.py").write_text("raise SystemExit(99)\n", encoding="utf-8")
+    runner = FakeRunner()
+
+    with pytest.raises(
+        offline_install.OfflineInstallError,
+        match="Bundle source tree differs from the verified manifest",
+    ):
+        offline_install.install_bundle(tmp_path, runner=runner)
+
+    assert runner.calls == []
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
@@ -373,15 +387,19 @@ def test_linked_existing_venv_is_rejected_without_probing(tmp_path, monkeypatch)
 
 
 def test_offline_install_uses_only_bundled_wheels_in_unicode_space_path(tmp_path):
-    root = tmp_path / "日本語 user" / "offline bundle"
-    root.mkdir(parents=True)
-    _make_bundle(root)
-    venv_python = root / ".venv" / "Scripts" / "python.exe"
+    source_root = tmp_path / "protected source"
+    install_root = tmp_path / "日本語 user" / "offline bundle"
+    source_root.mkdir(parents=True)
+    install_root.mkdir(parents=True)
+    _make_bundle(source_root)
+    venv_python = install_root / ".venv" / "Scripts" / "python.exe"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_bytes(b"synthetic Python")
     runner = FakeRunner()
 
-    selected, versions = offline_install.install_bundle(root, runner=runner)
+    selected, versions = offline_install.install_bundle(
+        source_root, install_root=install_root, runner=runner
+    )
 
     assert selected == venv_python
     assert versions == {
@@ -400,20 +418,20 @@ def test_offline_install_uses_only_bundled_wheels_in_unicode_space_path(tmp_path
         assert command[1:4] == ["-I", "-m", "pip"]
         assert "--no-index" in command
         assert "--find-links" in command
-        assert str(root / "wheelhouse") in command
+        assert str(source_root / "wheelhouse") in command
         assert "--no-build-isolation" in command
         if index == 0:
             assert "--force-reinstall" in command
             assert "--require-hashes" in command
             assert "--requirement" in command
-            assert str(root / "requirements" / "offline-win64.txt") in command
+            assert str(source_root / "requirements" / "offline-win64.txt") in command
         else:
             assert "--no-deps" in command
         assert kwargs["env"]["PIP_NO_INDEX"] == "1"
-        assert kwargs["env"]["PIP_FIND_LINKS"] == str(root / "wheelhouse")
+        assert kwargs["env"]["PIP_FIND_LINKS"] == str(source_root / "wheelhouse")
         assert not any(value.startswith(("http://", "https://")) for value in command)
-    assert str(root) in pip_calls[-1][0]
-    assert (root / "offline-install.log").is_file()
+    assert str(source_root) in pip_calls[-1][0]
+    assert (install_root / "offline-install.log").is_file()
 
 
 def test_new_venv_creation_uses_isolated_module_resolution(tmp_path):
@@ -657,10 +675,77 @@ def test_verified_stage_uses_only_authenticated_application_local_python():
     assert '"vcruntime140.dll"' in text
     assert "Microsoft Windows Software Compatibility Publisher" in text
     assert "& $SelectedPython -I -S -B -c" in text
-    assert "& $SelectedPython -I -S -B $Helper" in text
+    assert "Copy-ProtectedBundleSnapshot" in text
+    assert "$ProtectedHelper = Join-Path $ProtectedSourceRoot" in text
+    assert "--bundle-root $ProtectedSourceRoot --install-root $BundleRoot" in text
+    assert text.index("Copy-ProtectedBundleSnapshot") < text.index(
+        "$Probe = & $SelectedPython"
+    )
     assert text.index("Lock-AuthenticatedRuntimeTree $RuntimeRoot") < text.index(
         "$Probe = & $SelectedPython"
     )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_protected_source_snapshot_excludes_unmanifested_setup_py(tmp_path):
+    root = tmp_path / "bundle"
+    root.mkdir()
+    manifest = _make_bundle(root)
+    (root / "setup.py").write_text("raise SystemExit(99)\n", encoding="utf-8")
+    protected = tmp_path / "protected-source"
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "protected-source-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\nfunction New-ProtectedRuntimeDirectory([string]$Path,[string]$Label) { "
+        "[IO.Directory]::CreateDirectory($Path) | Out-Null }\n"
+        "$script:ProtectedSourceRoot = "
+        + repr(str(protected))
+        + "\nCopy-ProtectedBundleSnapshot\n"
+        "if ([IO.File]::Exists((Join-Path $ProtectedSourceRoot 'setup.py'))) { exit 8 }\n"
+        f"if ($ExpectedRuntimeHashes.Count -ne {len(manifest['files']) + 2}) {{ exit 9 }}\n"
+        "Write-Output 'PROTECTED_SOURCE_EXCLUDES_SETUP'\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(root),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PROTECTED_SOURCE_EXCLUDES_SETUP" in result.stdout.splitlines()
 
 
 def test_verified_stage_requires_protected_elevation_before_runtime_execution():

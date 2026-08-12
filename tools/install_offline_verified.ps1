@@ -14,6 +14,7 @@ $PythonNuGet = Join-Path $BundleRoot "python\python.3.12.10.nupkg"
 $TclTkMsi = Join-Path $BundleRoot "python\tcltk.msi"
 $NuGetVerifier = Join-Path $BundleRoot "python\verifier\nuget.exe"
 $RuntimeRoot = Join-Path $BundleRoot ".python-runtime"
+$ProtectedSourceRoot = Join-Path $RuntimeRoot "dicomxphits-source"
 $ProtectedRuntimeParent = $null
 $ProtectedRuntimeReceipt = $null
 $ProtectedRuntimeId = $null
@@ -273,6 +274,7 @@ function Set-ProtectedRuntimeIdentity {
     $script:ProtectedRuntimeParent = $RuntimeParent
     $script:ProtectedRuntimeId = $RuntimeId
     $script:RuntimeRoot = Join-Path $RuntimeParent $RuntimeId
+    $script:ProtectedSourceRoot = Join-Path $script:RuntimeRoot "dicomxphits-source"
     $script:ProtectedRuntimeReceipt = Join-Path $RuntimeParent "$RuntimeId.json"
     $script:RuntimeLog = Join-Path $RuntimeParent "$RuntimeId-msi.log"
 }
@@ -453,6 +455,104 @@ function Get-SafeRuntimeDestination([string]$Root, [string]$Relative) {
         throw "Python runtime archive path escaped the staging root: $Relative"
     }
     return $Destination
+}
+
+function Get-StreamSha256([System.IO.Stream]$Stream) {
+    $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $Stream.Position = 0
+        return [System.BitConverter]::ToString(
+            $Sha256.ComputeHash($Stream)
+        ).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $Sha256.Dispose()
+    }
+}
+
+function Copy-ProtectedBundleSnapshot {
+    New-ProtectedRuntimeDirectory $ProtectedSourceRoot "Protected bundle source"
+    $ChecksumPath = Join-Path $BundleRoot "SHA256SUMS.txt"
+    Assert-NoReparsePath $ChecksumPath "Bundle checksum inventory"
+    $ChecksumStream = [System.IO.File]::Open(
+        $ChecksumPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    try {
+        $Reader = New-Object System.IO.StreamReader(
+            $ChecksumStream,
+            [System.Text.Encoding]::UTF8,
+            $true,
+            4096,
+            $true
+        )
+        try { $ChecksumText = $Reader.ReadToEnd() }
+        finally { $Reader.Dispose() }
+        $Records = New-Object 'System.Collections.Generic.Dictionary[string,string]' (
+            [System.StringComparer]::OrdinalIgnoreCase
+        )
+        foreach ($Line in ($ChecksumText -split "\r?\n")) {
+            if ([string]::IsNullOrEmpty($Line)) { continue }
+            if ($Line -notmatch "^([0-9a-f]{64}) \*(.+)$") {
+                throw "Invalid protected bundle checksum entry: $Line"
+            }
+            $Relative = [string]$Matches[2]
+            $Source = Get-SafeRuntimeDestination $BundleRoot $Relative
+            if ($Records.ContainsKey($Source)) {
+                throw "Duplicate protected bundle checksum path: $Relative"
+            }
+            $Records.Add($Source, [string]$Matches[1])
+        }
+        if ($Records.Count -eq 0) {
+            throw "Protected bundle checksum inventory is empty."
+        }
+        $Records.Add($ChecksumPath, (Get-StreamSha256 $ChecksumStream))
+        foreach ($Record in $Records.GetEnumerator()) {
+            $Source = [System.IO.Path]::GetFullPath($Record.Key)
+            if (-not [System.IO.File]::Exists($Source)) {
+                throw "Protected bundle payload is missing or non-regular: $Source"
+            }
+            Assert-NoReparsePath $Source "Protected bundle payload"
+            $Relative = $Source.Substring($BundleRoot.Length).TrimStart(
+                [System.IO.Path]::DirectorySeparatorChar
+            )
+            $Destination = Get-SafeRuntimeDestination $ProtectedSourceRoot $Relative
+            $Parent = [System.IO.Path]::GetDirectoryName($Destination)
+            [System.IO.Directory]::CreateDirectory($Parent) | Out-Null
+            $Input = [System.IO.File]::Open(
+                $Source,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::Read
+            )
+            $Output = $null
+            try {
+                $Actual = Get-StreamSha256 $Input
+                if ($Actual -ne $Record.Value) {
+                    throw "Protected bundle payload hash changed: $Relative"
+                }
+                $Input.Position = 0
+                $Output = [System.IO.File]::Open(
+                    $Destination,
+                    [System.IO.FileMode]::CreateNew,
+                    [System.IO.FileAccess]::Write,
+                    [System.IO.FileShare]::None
+                )
+                $Input.CopyTo($Output)
+                $Output.Flush()
+                $ExpectedRuntimeHashes.Add($Destination, $Actual)
+            }
+            finally {
+                if ($null -ne $Output) { $Output.Dispose() }
+                $Input.Dispose()
+            }
+        }
+    }
+    finally {
+        $ChecksumStream.Dispose()
+    }
 }
 
 function Expand-VerifiedPythonPackage([string]$DestinationRoot) {
@@ -1027,6 +1127,7 @@ function Write-ProtectedRuntimeReceipt {
         verified_stage = $env:DICOMXPHITS_VERIFIED_STAGE
         bundle_root = $BundleRoot
         runtime_root = $RuntimeRoot
+        protected_source_root = $ProtectedSourceRoot
         installing_user_sid = $InstallingUserSid.Value
         files = $Files
         directories = $Directories
@@ -1084,6 +1185,7 @@ function Import-ProtectedRuntimeReceipt {
             [string]$Receipt.verified_stage -ne $env:DICOMXPHITS_VERIFIED_STAGE -or
             -not [string]::Equals([string]$Receipt.bundle_root, $BundleRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
             -not [string]::Equals([string]$Receipt.runtime_root, $RuntimeRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals([string]$Receipt.protected_source_root, $ProtectedSourceRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
             [string]$Receipt.installing_user_sid -ne $InstallingUserSid.Value
         ) {
             throw "Protected runtime receipt identity is invalid."
@@ -1193,6 +1295,7 @@ function New-AuthenticatedPythonRuntime {
         throw "Tcl/Tk administrative image does not match the signed MSI runtime inventory."
     }
     Assert-RequiredRuntimeFiles $RuntimeRoot
+    Copy-ProtectedBundleSnapshot
     Assert-NoReparsePath $RuntimeRoot "Application-local Python runtime"
     Set-ExpectedRuntimeDirectories $RuntimeRoot
     Set-ProtectedRuntimeTreeSecurity $RuntimeRoot
@@ -1248,7 +1351,9 @@ try {
 
     Write-Host "Using authenticated application-local Python: $SelectedPython"
     Write-InstallLog "Initial bundle verification passed; application-local Python runtime sources and files remained locked."
-    & $SelectedPython -I -S -B $Helper --bundle-root $BundleRoot
+    $ProtectedHelper = Join-Path $ProtectedSourceRoot "tools\offline_install.py"
+    & $SelectedPython -I -S -B $ProtectedHelper `
+        --bundle-root $ProtectedSourceRoot --install-root $BundleRoot
     $InstallExit = $LASTEXITCODE
     if ($InstallExit -ne 0) {
         throw "Offline installation helper failed with exit code $InstallExit. See $LogFile"

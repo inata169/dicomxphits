@@ -116,6 +116,9 @@ The original non-elevated stage then:
   against its authenticated source-derived digest while acquiring its read
   lock, repeats the complete protected inventory, and retains every file lock
   through the end of installation before the first Python launch;
+- uses an exact protected snapshot containing only inventoried bundle files for
+  the helper, wheelhouse, and editable source; unmanifested files such as an
+  added `setup.py` are rejected and never copied or executed;
 - uses only that application-local CPython 3.12.10 x64 interpreter with
   `-I -S -B`; it never discovers, probes, installs, repairs, or executes a host
   Python, registry candidate, `py.exe`, or bare `python.exe`;
@@ -135,10 +138,11 @@ the prompt still leaves a successful installation. Start it later with:
 launchers\run_gui_venv.cmd
 ```
 
-The protected runtime remains after success because `.venv` records it as the
-base interpreter. Removing an abandoned protected runtime is a separate,
-explicit administrator action. The installer never deletes or repairs one
-automatically.
+The protected runtime and source snapshot remain after success because `.venv`
+records the runtime as its base interpreter and the editable installation
+records the protected source. Removing an abandoned protected installation is
+a separate, explicit administrator action. The installer never deletes or
+repairs one automatically.
 
 ## Integrity files
 

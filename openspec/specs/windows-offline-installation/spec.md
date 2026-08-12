@@ -134,6 +134,11 @@ absolute PowerShell executable below the Windows system directory, MUST reject
 reparse-point paths, and MUST NOT execute a bundle verifier, Windows Installer,
 Python executable, helper, or pip until its required input has passed the
 applicable inventory and signature checks and has been read-locked.
+The bootstrap MUST reject any unmanifested file in the extracted source tree.
+Before helper or pip execution, the elevated stage SHALL copy only inventoried
+payloads into protected storage, and the non-elevated stage MUST use that exact
+protected snapshot for bundle verification, wheel installation, and editable
+source installation.
 
 #### Scenario: Complete inventory
 
@@ -153,6 +158,13 @@ applicable inventory and signature checks and has been read-locked.
 - **WHEN** any inventoried payload has a different size or SHA-256
 - **THEN** offline installation stops before runtime extraction or dependency
   changes
+
+#### Scenario: Unmanifested build source
+
+- **WHEN** the extracted bundle contains `setup.py` or another file absent from
+  the integrity inventories
+- **THEN** bootstrap rejects it, the protected source snapshot excludes it,
+  and neither helper nor pip executes it
 
 #### Scenario: Current-directory PowerShell lookalike
 
@@ -177,8 +189,8 @@ applicable inventory and signature checks and has been read-locked.
 
 The extracted bundle SHALL provide `install_offline.cmd` as the normal entry
 point. It SHALL complete bundle verification and payload read locking before
-requesting elevation. The elevated stage MUST perform only runtime-source
-verification and protected runtime construction; Python, the helper, venv, and
+requesting elevation. The elevated stage MUST perform only source verification
+and protected runtime and bundle-source construction; Python, the helper, venv, and
 pip MUST run in the original non-elevated stage after it validates the
 protected receipt and runtime. It SHALL construct and use only the authenticated
 installation-specific CPython 3.12.10 x64 runtime derived from the bundled
@@ -196,6 +208,10 @@ rules, compare every runtime file to its authenticated source-derived digest
 while acquiring its read lock, reject any missing or additional entry, and
 repeat the complete inventory while all file handles are held. Every file
 handle MUST remain held through the end of installation.
+The protected runtime SHALL contain an exact read-only snapshot of the
+inventoried bundle. The installing user MUST NOT be able to add or replace a
+source entry, and helper and pip paths MUST resolve from that snapshot while
+`.venv`, the log, and the launcher remain at the extracted installation root.
 
 #### Scenario: Elevation is denied or unavailable
 
@@ -278,8 +294,8 @@ Every pip install subprocess SHALL use `--no-index`,
 `--find-links <bundled-wheelhouse>`, and `--no-build-isolation`, and the
 installer SHALL also set a no-index pip environment guard. It SHALL install
 `setuptools`, `wheel`, the runtime requirements, and dicomxphits in editable
-mode using only the bundled wheelhouse. Missing or incompatible artifacts MUST
-fail without URL or index fallback.
+mode using only the protected snapshot of the bundled wheelhouse and source.
+Missing or incompatible artifacts MUST fail without URL or index fallback.
 
 #### Scenario: Complete wheelhouse
 

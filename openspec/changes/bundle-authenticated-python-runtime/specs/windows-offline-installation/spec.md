@@ -84,6 +84,11 @@ absolute PowerShell executable below the Windows system directory, MUST reject
 reparse-point paths, and MUST NOT execute a bundle verifier, Windows Installer,
 Python executable, helper, or pip until its required input has passed the
 applicable inventory and signature checks and has been read-locked.
+The bootstrap MUST reject any unmanifested file in the extracted source tree.
+Before helper or pip execution, the elevated stage SHALL copy only inventoried
+payloads into protected storage, and the non-elevated stage MUST use that exact
+protected snapshot for bundle verification, wheel installation, and editable
+source installation.
 
 #### Scenario: Complete inventory
 
@@ -103,6 +108,13 @@ applicable inventory and signature checks and has been read-locked.
 - **WHEN** any inventoried payload has a different size or SHA-256
 - **THEN** offline installation stops before runtime extraction or dependency
   changes
+
+#### Scenario: Unmanifested build source
+
+- **WHEN** the extracted bundle contains `setup.py` or another file absent from
+  the integrity inventories
+- **THEN** bootstrap rejects it, the protected source snapshot excludes it,
+  and neither helper nor pip executes it
 
 #### Scenario: Current-directory PowerShell lookalike
 

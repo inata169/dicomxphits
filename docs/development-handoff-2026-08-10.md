@@ -102,6 +102,13 @@ did not take the hierarchy-validation path. `WorkspaceOutputGuard` now walks
 and holds every anchor-to-root component for both new and existing roots. The
 focused suite includes a passing real Windows junction-ancestor regression.
 
+The following review found that an added unmanifested `setup.py` could enter
+the editable build after bootstrap verification. Bootstrap now rejects an
+unexpected source file, and the elevated stage copies only authenticated
+payloads into the exact protected runtime tree. The helper, wheelhouse, and
+editable source all run from that protected snapshot; `.venv`, logs, and the
+launcher remain in the extracted installation root.
+
 The required public checks and specification promotion are complete. The
 remaining completion order is: commit and push the active-change correction,
 confirm exact-head CI, request and address `@codex review` until clean, record

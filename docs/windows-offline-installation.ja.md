@@ -106,6 +106,9 @@ protected hash receiptを作成して、Python起動前に終了します。元�
 - exactなownerとaccess ruleを確認し、各fileを認証済みsource由来digestと比較しながら
   read-lockする。protected完全inventoryを再確認し、最初のPython起動前から導入終了まで
   全file lockを保持する
+- inventoryに含まれるbundle fileだけをexactなprotected snapshotへコピーし、helper、
+  wheelhouse、editable sourceはそのsnapshotから使用する。追加された`setup.py`などの
+  未検証fileは拒否し、コピーも実行もしない
 - そのapplication-local CPython 3.12.10 x64だけを`-I -S -B`で使用する。
   host Python、registry candidate、`py.exe`、bare `python.exe`を探索、probe、
   install、repair、実行しない
@@ -124,9 +127,10 @@ protected hash receiptを作成して、Python起動前に終了します。元�
 launchers\run_gui_venv.cmd
 ```
 
-protected runtimeは`.venv`のbase interpreterとして記録されるため、導入成功後も
-保持されます。不要になったprotected runtimeの削除は、別の明示的な管理者操作です。
-installerは自動削除やrepairを行いません。
+protected runtimeとsource snapshotは、`.venv`のbase interpreterおよびeditable
+sourceとして記録されるため、導入成功後も保持されます。不要になったprotected
+installationの削除は、別の明示的な管理者操作です。installerは自動削除やrepairを
+行いません。
 
 ## 整合性ファイル
 
