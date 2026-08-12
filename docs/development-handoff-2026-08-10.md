@@ -97,6 +97,11 @@ The next review found that the authenticated-runtime change had been archived
 before its own review and merge completion tasks were complete. Tasks 5.3-5.5
 are again unchecked and the change remains active until those gates finish.
 
+A later review found that an already existing case root below a linked parent
+did not take the hierarchy-validation path. `WorkspaceOutputGuard` now walks
+and holds every anchor-to-root component for both new and existing roots. The
+focused suite includes a passing real Windows junction-ancestor regression.
+
 The required public checks and specification promotion are complete. The
 remaining completion order is: commit and push the active-change correction,
 confirm exact-head CI, request and address `@codex review` until clean, record

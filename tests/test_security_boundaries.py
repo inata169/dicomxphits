@@ -149,6 +149,22 @@ def test_workspace_guard_rejects_linked_case_root_ancestor(tmp_path):
     assert not (outside / "new-case").exists()
 
 
+def test_workspace_guard_rejects_linked_existing_case_root_ancestor(tmp_path):
+    outside = tmp_path / "outside"
+    case = outside / "case"
+    case.mkdir(parents=True)
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symbolic links are unavailable: {exc}")
+
+    case_root = linked_parent / "case"
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse"):
+        with WorkspaceOutputGuard(case_root):
+            pass
+
+
 def test_workspace_copy_new_only_preserves_an_existing_regular_file(tmp_path):
     case_root = tmp_path / "case"
     case_root.mkdir()
@@ -276,3 +292,26 @@ def test_workspace_writer_rejects_real_windows_junction(tmp_path):
 
     assert not (outside / "result.csv").exists()
     assert (outside / "sentinel.txt").read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="real Windows junction behavior")
+def test_workspace_guard_rejects_existing_case_root_below_windows_junction(tmp_path):
+    outside = tmp_path / "outside"
+    case = outside / "case"
+    case.mkdir(parents=True)
+    junction = tmp_path / "linked-parent"
+    trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+    result = subprocess.run(
+        [str(trusted_cmd), "/d", "/c", "mklink", "/J", str(junction), str(outside)],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        pytest.skip(f"junction creation is unavailable: {result.stdout}{result.stderr}")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="junction|reparse"):
+        with WorkspaceOutputGuard(junction / "case"):
+            pass

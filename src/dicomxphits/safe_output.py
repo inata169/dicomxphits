@@ -172,8 +172,7 @@ class WorkspaceOutputGuard:
                     raise UnsafeWorkspacePathError(
                         f"Case root does not exist: {self.case_root}"
                     )
-                self._create_case_root_hierarchy()
-            self._hold_directory(self.case_root, label="case root")
+            self._hold_case_root_hierarchy(create_missing=self.create_root)
             return self
         except Exception:
             self._close_held_directories()
@@ -212,7 +211,7 @@ class WorkspaceOutputGuard:
         if os.name == "nt" and key not in self._windows_handles:
             self._windows_handles[key] = _open_locked_windows_directory(path)
 
-    def _create_case_root_hierarchy(self) -> None:
+    def _hold_case_root_hierarchy(self, *, create_missing: bool) -> None:
         anchor = Path(self.case_root.anchor)
         if not anchor:
             raise UnsafeWorkspacePathError(
@@ -228,6 +227,10 @@ class WorkspaceOutputGuard:
         for part in self.case_root.relative_to(anchor).parts:
             current = current / part
             if not _lexists(current):
+                if not create_missing:
+                    raise UnsafeWorkspacePathError(
+                        f"Case-root path component does not exist: {current}"
+                    )
                 try:
                     current.mkdir()
                 except FileExistsError:
