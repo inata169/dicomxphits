@@ -505,6 +505,11 @@ def test_project_declares_pep660_backend_for_read_only_editable_source():
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows offline editable path")
 def test_pep660_editable_install_does_not_mutate_source_tree(tmp_path):
+    if importlib.util.find_spec("setuptools") is None or importlib.util.find_spec(
+        "wheel"
+    ) is None:
+        pytest.skip("requires the offline editable build tools")
+
     source = tmp_path / "protected-source-copy"
     (source / "src").mkdir(parents=True)
     for name in ("pyproject.toml", "README.md", "LICENSE"):
