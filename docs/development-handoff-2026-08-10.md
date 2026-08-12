@@ -93,11 +93,16 @@ junction. Directory entries are now opened with `FILE_FLAG_OPEN_REPARSE_POINT`,
 and attributes are checked from the acquired handle before it is accepted. A
 Windows regression opens a junction through that helper and confirms rejection.
 
-The required public checks and OpenSpec promotion/archive are complete. The
-remaining completion order is: commit and push the junction-race correction,
-confirm exact-head CI, request and address `@codex review` until clean, then
-merge pull request #33 and delete its source branch. Do not create or modify a
-tag or
+The next review found that the authenticated-runtime change had been archived
+before its own review and merge completion tasks were complete. Tasks 5.3-5.5
+are again unchecked and the change remains active until those gates finish.
+
+The required public checks and specification promotion are complete. The
+remaining completion order is: commit and push the active-change correction,
+confirm exact-head CI, request and address `@codex review` until clean, record
+the completed pre-merge gates and archive the change, confirm that archive
+commit's exact-head CI and review, then merge pull request #33 and delete its
+source branch. Do not create or modify a tag or
 release, and do not force-push.
 
 ## End-of-Day Addendum (2026-08-10)

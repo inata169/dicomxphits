@@ -51,9 +51,9 @@
   `C:\tmp` pytest basetemp.
 - [x] 5.2 Commit and push one reviewable implementation commit, reply to the
   P1 thread, and resolve it only with supporting validation.
-- [x] 5.3 Confirm exact-head CI and continue `@codex review` until clean.
-- [x] 5.4 Promote the accepted specification, archive this change, and run
+- [ ] 5.3 Confirm exact-head CI and continue `@codex review` until clean.
+- [ ] 5.4 Promote the accepted specification, archive this change, and run
   strict OpenSpec validation.
-- [x] 5.5 Confirm merge authorization and prerequisites; merge PR #33 and
-  delete its remote source branch only after the archive commit also passes
-  exact-head review and CI gates.
+- [ ] 5.5 Confirm merge authorization and prerequisites before preparing the
+  archive commit. Merge PR #33 and delete its remote source branch only after
+  that archive commit separately passes exact-head review and CI gates.
