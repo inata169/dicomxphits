@@ -31,6 +31,9 @@ def _make_bundle(root: Path) -> dict:
         "install_offline.cmd": b"@echo off\r\n",
         "tools/offline_install.py": b"# synthetic helper\n",
         "tools/install_offline_verified.ps1": b"# synthetic verified stage\n",
+        "tools/lock_bundle_directories.ps1": (
+            ROOT / "tools" / "lock_bundle_directories.ps1"
+        ).read_bytes(),
         "launchers/run_gui_venv.cmd": b"@echo off\r\n",
         "pyproject.toml": b"[project]\nname='dicomxphits'\n",
         "requirements/offline-win64.txt": b"# synthetic lock\n",
@@ -77,6 +80,9 @@ def _make_cmd_bootstrap_bundle(root: Path) -> tuple[dict, Path]:
         "install_offline.cmd": (ROOT / "install_offline.cmd").read_bytes(),
         "tools/install_offline_verified.ps1": (
             ROOT / "tools" / "install_offline_verified.ps1"
+        ).read_bytes(),
+        "tools/lock_bundle_directories.ps1": (
+            ROOT / "tools" / "lock_bundle_directories.ps1"
         ).read_bytes(),
         "tools/offline_install.py": (
             "from pathlib import Path\n"
@@ -239,6 +245,10 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
     stage = root / "tools" / "install_offline_verified.ps1"
     stage.write_text(
         "$ErrorActionPreference = 'Stop'\n"
+        "$Tools = Join-Path $env:DICOMXPHITS_BUNDLE_ROOT 'tools'\n"
+        "try { [IO.Directory]::Move($Tools, ($Tools + '-moved')); exit 98 }\n"
+        "catch { [IO.File]::WriteAllText((Join-Path "
+        "$env:DICOMXPHITS_BUNDLE_ROOT 'directory-rename-blocked.txt'),'blocked') }\n"
         "$Helper = Join-Path $env:DICOMXPHITS_BUNDLE_ROOT 'tools\\offline_install.py'\n"
         "& $env:DICOMXPHITS_TEST_PYTHON -I -S -B $Helper\n"
         "exit $LASTEXITCODE\n",
@@ -293,6 +303,7 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Initial SHA-256 verification passed." in result.stdout
+    assert (root / "directory-rename-blocked.txt").read_text() == "blocked"
     assert (root / "replacement-blocked.txt").read_text(encoding="utf-8") == "blocked"
     assert marker.read_text(encoding="utf-8") == "executed"
 
@@ -480,6 +491,10 @@ def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     error_preference_position = text.index("$ErrorActionPreference='Stop'")
     assert module_path_position < error_preference_position < checksum_position
     assert checksum_position < verified_stage_position
+    assert "tools/lock_bundle_directories.ps1" in text
+    assert "Lock-BundleDirectoryPaths" in text
+    assert text.index("Lock-BundleDirectoryPaths") < verified_stage_position
+    assert "Bundle payload path changed before elevation" in text
     assert "python.3.12.10.nupkg" in stage
     assert "tcltk.msi" in stage
     assert "python\\verifier\\nuget.exe" in stage
@@ -494,6 +509,68 @@ def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     )
     assert "%SystemRoot%\\System32\\WindowsPowerShell" not in text
     assert '"%TrustedPowerShell%" -NoLogo' in text
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")
+def test_bundle_directory_locks_block_rename(tmp_path):
+    root = tmp_path / "bundle"
+    tools = root / "tools"
+    tools.mkdir(parents=True)
+    payload = tools / "install_offline_verified.ps1"
+    payload.write_text("# verified stage\n", encoding="utf-8")
+    harness = tmp_path / "bundle-directory-lock-harness.ps1"
+    harness.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        + ". "
+        + repr(str(ROOT / "tools" / "lock_bundle_directories.ps1"))
+        + "\n$Root = [IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_BUNDLE_ROOT)\n"
+        "$Tools = [IO.Path]::Combine($Root, 'tools')\n"
+        "$Moved = [IO.Path]::Combine($Root, 'tools-moved')\n"
+        "$Payload = [IO.Path]::Combine($Tools, 'install_offline_verified.ps1')\n"
+        "$Handles = @(Lock-BundleDirectoryPaths $Root @($Payload))\n"
+        "try {\n"
+        "  $Blocked = $false\n"
+        "  try { [IO.Directory]::Move($Tools, $Moved) } catch { $Blocked = $true }\n"
+        "  if (-not $Blocked -or -not [IO.Directory]::Exists($Tools) -or "
+        "[IO.Directory]::Exists($Moved)) { exit 8 }\n"
+        "  Write-Output 'DIRECTORY_RENAME_DENIED'\n"
+        "  exit 0\n"
+        "}\n"
+        "finally { foreach ($Handle in $Handles) { $Handle.Dispose() } }\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_TEST_BUNDLE_ROOT": str(root),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DIRECTORY_RENAME_DENIED" in result.stdout.splitlines()
 
 
 def test_verified_stage_uses_only_authenticated_application_local_python():

@@ -63,6 +63,8 @@ python -m pytest tests/test_prepare_rtdose.py::test_run_requires_executable_and_
   Installer、Python、helperが動かない
 - bundle検証後にWindows system PowerShellの管理者承認が表示され、拒否時はNuGet
   verifier、Windows Installer、Python、helper、pipが起動しない
+- 管理者承認待ちを含むinstall終了までbundle directoryをrenameできず、locked pathから
+  全payloadを再hashした後だけ昇格stageを開始する
 - 表示されるPython pathがCommon Application Data配下のinstallation固有protected
   runtimeのabsolute pathで、3.12 x64である
 - host Pythonを探索・実行せず、最初のPython起動前から全runtime fileがread-lockされ、

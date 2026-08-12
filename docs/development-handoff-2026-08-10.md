@@ -75,9 +75,17 @@ retains authenticated read locks before Python starts. A Windows ACL regression
 confirms that a same-user `python312._pth` injection is denied and no entry
 appears.
 
+The next exact-head review found that file handles alone did not bind the
+absolute bundle path while UAC was pending. The bootstrap now loads its native
+directory-lock helper from the already authenticated file handle, holds every
+rename-capable bundle path component without delete sharing, and then rehashes
+and read-locks every payload from the locked path before invoking the verified
+stage. A Windows regression proves the `tools` directory cannot be renamed
+while that stage runs.
+
 The required public checks and OpenSpec promotion/archive are complete. The
-remaining completion order is: commit and push the single protected-runtime
-correction, reply to and resolve the directory-entry P1 thread, confirm
+remaining completion order is: commit and push the bundle-path correction,
+reply to and resolve its P1 thread, confirm
 exact-head CI, request and address `@codex review` until clean, then merge pull
 request #33 and delete its source branch. Do not create or modify a tag or
 release, and do not force-push.

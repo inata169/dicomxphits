@@ -93,8 +93,9 @@ bundle検証前に起動する実行ファイルは、quoted absolute pathの
 呼出元の`SystemRoot`、current directory、`PATH`からPowerShell、`py.exe`、
 `python.exe`を探索しません。
 bootstrapは、保護対象pathのreparse pointと展開root直下の想定外の実行ファイルを
-拒否し、全payloadを検証してread-lockした後だけprotected runtime構築の管理者承認を
-要求します。昇格childはWindows system directoryの絶対pathだけを使用し、runtimeと
+拒否し、全payloadを検証してread-lockし、bundle directory pathをrename不能に保持して
+全payloadを再検証した後だけprotected runtime構築の管理者承認を要求します。昇格childは
+Windows system directoryの絶対pathだけを使用し、runtimeと
 protected hash receiptを作成して、Python起動前に終了します。元の非昇格stageがその後、
 次を行います。
 

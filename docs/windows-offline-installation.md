@@ -99,8 +99,10 @@ not use caller-supplied `SystemRoot`, current-directory, or `PATH` lookup for
 PowerShell, `py.exe`, or `python.exe`.
 The bootstrap rejects reparse-point protected paths and unexpected executable
 lookalikes at the extracted root, verifies and read-locks every protected
-payload, and only then requests administrator approval for protected runtime
-construction. The elevated child uses only absolute Windows-system executables,
+payload, locks the bundle directory path against rename, revalidates every
+payload through that locked path, and only then requests administrator approval
+for protected runtime construction. The elevated child uses only absolute
+Windows-system executables,
 creates the runtime and protected hash receipt, and exits before Python starts.
 The original non-elevated stage then:
 

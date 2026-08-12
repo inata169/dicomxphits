@@ -233,6 +233,7 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
         "install_offline.cmd",
         "tools/offline_install.py",
         "tools/install_offline_verified.ps1",
+        "tools/lock_bundle_directories.ps1",
         "launchers/run_gui_venv.cmd",
         "pyproject.toml",
         "requirements/offline-win64.txt",

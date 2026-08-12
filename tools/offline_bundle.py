@@ -51,6 +51,7 @@ REQUIRED_BUNDLE_SOURCE_PATHS = (
     "tools/offline_bundle.py",
     "tools/offline_install.py",
     "tools/install_offline_verified.ps1",
+    "tools/lock_bundle_directories.ps1",
     "tools/prepare_offline_bundle.ps1",
     OFFLINE_LOCK_PATH,
     RUNTIME_CONSTRAINTS_PATH,
