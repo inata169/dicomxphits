@@ -633,6 +633,14 @@ def test_protected_runtime_acl_suppresses_owner_write_dac(tmp_path):
         "[Security.AccessControl.AccessControlSections]::Owner -bor "
         "[Security.AccessControl.AccessControlSections]::Access)\n"
         "Write-Output $Sddl\n"
+        "if (Test-IsAdministrator) {\n"
+        "  $AdminRules = @($Security.GetAccessRules($true,$false,"
+        "[Security.Principal.SecurityIdentifier]) | Where-Object { "
+        "$_.IdentityReference.Value -eq $AdministratorsSid.Value })\n"
+        "  foreach ($AdminRule in $AdminRules) { "
+        "$Security.RemoveAccessRuleSpecific($AdminRule) }\n"
+        "  Write-Output 'ADMIN_RULE_REMOVED=True'\n"
+        "} else { Write-Output 'ADMIN_RULE_REMOVED=False' }\n"
         "$Container = [IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ACL_CONTAINER)\n"
         "$Protected = [IO.Path]::Combine($Container, 'protected')\n"
         "[IO.Directory]::CreateDirectory($Container) | Out-Null\n"
@@ -713,7 +721,10 @@ def test_protected_runtime_acl_suppresses_owner_write_dac(tmp_path):
     assert sddl.startswith("O:BA")
     assert "(A;OICI;FA;;;SY)" in sddl
     assert "(A;OICI;FA;;;BA)" in sddl
-    assert f"(A;OICI;0x1200a9;;;{current_sid})" in sddl
+    assert (
+        f"(A;OICI;0x1200a9;;;{current_sid})" in sddl
+        or "(A;OICI;0x1200a9;;;LA)" in sddl
+    )
     assert "(A;OICI;0x1200a9;;;OW)" in sddl
     assert "WD" not in sddl
     assert "WRITE_DENIED" in output_lines
