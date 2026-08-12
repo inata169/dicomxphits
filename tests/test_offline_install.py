@@ -578,7 +578,7 @@ def test_verified_stage_rejects_malicious_adjacent_runtime_dll_before_candidate_
         / "powershell.exe"
     )
     environment = os.environ.copy()
-    environment.pop("PSModulePath", None)
+    environment["PSModulePath"] = str(trusted_powershell.parent / "Modules")
     environment.update(
         {
             "LocalAppData": str(local_app_data),
