@@ -14,15 +14,288 @@ $PythonNuGet = Join-Path $BundleRoot "python\python.3.12.10.nupkg"
 $TclTkMsi = Join-Path $BundleRoot "python\tcltk.msi"
 $NuGetVerifier = Join-Path $BundleRoot "python\verifier\nuget.exe"
 $RuntimeRoot = Join-Path $BundleRoot ".python-runtime"
+$ProtectedRuntimeParent = $null
+$ProtectedRuntimeReceipt = $null
+$ProtectedRuntimeId = $null
 $LogFile = Join-Path $BundleRoot "offline-install.log"
-$RuntimeLog = Join-Path $BundleRoot "python-runtime.log"
+$RuntimeLog = $null
 $PythonNuGetSignerSha256 = "1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D"
 $LockedPythonFiles = New-Object System.Collections.Generic.List[System.IO.Stream]
 $CreatedWorkingDirectories = New-Object System.Collections.Generic.List[string]
 $ExpectedRuntimeHashes = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$ExpectedRuntimeDirectories = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$InstallingUserSid = $null
+$AdministratorsSid = New-Object System.Security.Principal.SecurityIdentifier(
+    [System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid,
+    $null
+)
+$SystemSid = New-Object System.Security.Principal.SecurityIdentifier(
+    [System.Security.Principal.WellKnownSidType]::LocalSystemSid,
+    $null
+)
+$OwnerRightsSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-3-4")
 
 function Write-InstallLog([string]$Message) {
     Add-Content -LiteralPath $LogFile -Encoding UTF8 -Value $Message
+}
+
+function Test-IsAdministrator {
+    $Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $Principal = New-Object System.Security.Principal.WindowsPrincipal -ArgumentList $Identity
+    return $Principal.IsInRole(
+        [System.Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+}
+
+function Assert-TrustedPowerShellProcess {
+    $TrustedPowerShell = Join-Path (
+        Join-Path [System.Environment]::SystemDirectory "WindowsPowerShell\v1.0"
+    ) "powershell.exe"
+    $CurrentExecutable = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    if (-not [string]::Equals(
+        [System.IO.Path]::GetFullPath($CurrentExecutable),
+        [System.IO.Path]::GetFullPath($TrustedPowerShell),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Verified stage is not running in the trusted Windows PowerShell executable."
+    }
+    Assert-NoReparsePath $TrustedPowerShell "Trusted Windows PowerShell"
+    return $TrustedPowerShell
+}
+
+function Invoke-ElevatedRuntimeConstruction {
+    $TrustedPowerShell = Assert-TrustedPowerShellProcess
+    if (Test-IsAdministrator) {
+        throw "Start install_offline.cmd without elevation; approve only its verified administrator prompt."
+    }
+
+    $ParentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $ChildState = @{}
+    foreach ($Entry in @{
+        BUNDLE_ROOT = $BundleRoot
+        VERIFIED_STAGE = $env:DICOMXPHITS_VERIFIED_STAGE
+        INSTALLING_USER_SID = $ParentIdentity.User.Value
+        ELEVATED_STAGE = $env:DICOMXPHITS_VERIFIED_STAGE
+        ELEVATED_ACTION = "construct-runtime"
+    }.GetEnumerator()) {
+        $ChildState[$Entry.Key] = [Convert]::ToBase64String(
+            [Text.Encoding]::UTF8.GetBytes([string]$Entry.Value)
+        )
+    }
+
+    $ChildCommand = @'
+$env:PSModulePath=[IO.Path]::Combine($PSHOME,'Modules')
+$ErrorActionPreference='Stop'
+$decode={param($value)[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($value))}
+$env:DICOMXPHITS_BUNDLE_ROOT=& $decode '{BUNDLE_ROOT}'
+$env:DICOMXPHITS_VERIFIED_STAGE=& $decode '{VERIFIED_STAGE}'
+$env:DICOMXPHITS_INSTALLING_USER_SID=& $decode '{INSTALLING_USER_SID}'
+$env:DICOMXPHITS_ELEVATED_STAGE=& $decode '{ELEVATED_STAGE}'
+$env:DICOMXPHITS_ELEVATED_ACTION=& $decode '{ELEVATED_ACTION}'
+& ([IO.Path]::Combine([IO.Path]::GetFullPath($env:DICOMXPHITS_BUNDLE_ROOT),'tools','install_offline_verified.ps1'))
+exit $LASTEXITCODE
+'@
+    foreach ($Entry in $ChildState.GetEnumerator()) {
+        $ChildCommand = $ChildCommand.Replace("{$($Entry.Key)}", $Entry.Value)
+    }
+    $EncodedCommand = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($ChildCommand)
+    )
+    try {
+        $Process = Start-Process -FilePath $TrustedPowerShell -Verb RunAs -Wait -PassThru `
+            -ArgumentList @(
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-EncodedCommand",
+                $EncodedCommand
+            )
+    }
+    catch {
+        throw "Administrator approval is required before runtime construction."
+    }
+    if ($Process.ExitCode -ne 0) {
+        throw "Protected runtime construction failed with exit code $($Process.ExitCode)."
+    }
+}
+
+function Get-ProtectedRuntimeSecurity([bool]$IsDirectory) {
+    if ($null -eq $InstallingUserSid) {
+        throw "Installing-user identity is unavailable."
+    }
+    $Security = if ($IsDirectory) {
+        New-Object System.Security.AccessControl.DirectorySecurity
+    }
+    else {
+        New-Object System.Security.AccessControl.FileSecurity
+    }
+    $Security.SetAccessRuleProtection($true, $false)
+    $Security.SetOwner($AdministratorsSid)
+    $Inheritance = if ($IsDirectory) {
+        [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+            [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else {
+        [System.Security.AccessControl.InheritanceFlags]::None
+    }
+    $Propagation = [System.Security.AccessControl.PropagationFlags]::None
+    foreach ($Rule in @(
+        @($SystemSid, [System.Security.AccessControl.FileSystemRights]::FullControl),
+        @($AdministratorsSid, [System.Security.AccessControl.FileSystemRights]::FullControl),
+        @($InstallingUserSid, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute),
+        @($OwnerRightsSid, [System.Security.AccessControl.FileSystemRights]::ReadAndExecute)
+    )) {
+        $Security.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $Rule[0],
+            $Rule[1],
+            $Inheritance,
+            $Propagation,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )))
+    }
+    return $Security
+}
+
+function Assert-ProtectedRuntimeSecurity(
+    [string]$Path,
+    [bool]$IsDirectory,
+    [string]$Label
+) {
+    $Actual = if ($IsDirectory) {
+        [System.IO.Directory]::GetAccessControl(
+            $Path,
+            [System.Security.AccessControl.AccessControlSections]::Owner -bor
+                [System.Security.AccessControl.AccessControlSections]::Access
+        )
+    }
+    else {
+        [System.IO.File]::GetAccessControl(
+            $Path,
+            [System.Security.AccessControl.AccessControlSections]::Owner -bor
+                [System.Security.AccessControl.AccessControlSections]::Access
+        )
+    }
+    $Expected = Get-ProtectedRuntimeSecurity $IsDirectory
+    $ActualOwner = $Actual.GetOwner(
+        [System.Security.Principal.SecurityIdentifier]
+    )
+    $ExpectedOwner = $Expected.GetOwner(
+        [System.Security.Principal.SecurityIdentifier]
+    )
+    $InheritedRules = @($Actual.GetAccessRules(
+        $false,
+        $true,
+        [System.Security.Principal.SecurityIdentifier]
+    ))
+    function Get-RuleSignatures($Security) {
+        return @(
+            $Security.GetAccessRules(
+                $true,
+                $false,
+                [System.Security.Principal.SecurityIdentifier]
+            ) | ForEach-Object {
+                [string]::Join("|", @(
+                    $_.IdentityReference.Value,
+                    [int64]$_.FileSystemRights,
+                    [int]$_.InheritanceFlags,
+                    [int]$_.PropagationFlags,
+                    [int]$_.AccessControlType
+                ))
+            } | Sort-Object
+        )
+    }
+    $ActualRules = @(Get-RuleSignatures $Actual)
+    $ExpectedRules = @(Get-RuleSignatures $Expected)
+    if (
+        $ActualOwner.Value -ne $ExpectedOwner.Value -or
+        -not $Actual.AreAccessRulesProtected -or
+        $InheritedRules.Count -ne 0 -or
+        $ActualRules.Count -ne $ExpectedRules.Count -or
+        [string]::Join("`n", $ActualRules) -ne [string]::Join("`n", $ExpectedRules)
+    ) {
+        throw "$Label does not have the exact protected owner and access rules: $Path"
+    }
+}
+
+function New-ProtectedRuntimeDirectory([string]$Path, [string]$Label) {
+    if ([System.IO.File]::Exists($Path) -or [System.IO.Directory]::Exists($Path)) {
+        throw "$Label already exists: $Path"
+    }
+    [System.IO.Directory]::CreateDirectory(
+        $Path,
+        (Get-ProtectedRuntimeSecurity $true)
+    ) | Out-Null
+    Assert-NoReparsePath $Path $Label
+    Assert-ProtectedRuntimeSecurity $Path $true $Label
+}
+
+function Set-ProtectedRuntimeIdentity {
+    $InstallingSidValue = if ([string]::IsNullOrWhiteSpace(
+        $env:DICOMXPHITS_INSTALLING_USER_SID
+    )) {
+        [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    }
+    else {
+        $env:DICOMXPHITS_INSTALLING_USER_SID
+    }
+    try {
+        $script:InstallingUserSid = New-Object System.Security.Principal.SecurityIdentifier(
+            $InstallingSidValue
+        )
+    }
+    catch {
+        throw "Installing-user SID is invalid."
+    }
+    $CommonData = [System.Environment]::GetFolderPath(
+        [System.Environment+SpecialFolder]::CommonApplicationData
+    )
+    if ([string]::IsNullOrWhiteSpace($CommonData)) {
+        throw "Windows Common Application Data is unavailable."
+    }
+    Assert-NoReparsePath $CommonData "Windows Common Application Data"
+
+    $ProductRoot = Join-Path $CommonData "dicomxphits"
+    $RuntimeParent = Join-Path $ProductRoot "offline-runtimes"
+    $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $IdentityBytes = [System.Text.Encoding]::UTF8.GetBytes(
+            $BundleRoot.ToUpperInvariant()
+        )
+        $RuntimeId = [System.BitConverter]::ToString(
+            $Sha256.ComputeHash($IdentityBytes)
+        ).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $Sha256.Dispose()
+    }
+    $script:ProtectedRuntimeParent = $RuntimeParent
+    $script:ProtectedRuntimeId = $RuntimeId
+    $script:RuntimeRoot = Join-Path $RuntimeParent $RuntimeId
+    $script:ProtectedRuntimeReceipt = Join-Path $RuntimeParent "$RuntimeId.json"
+    $script:RuntimeLog = Join-Path $RuntimeParent "$RuntimeId-msi.log"
+}
+
+function Initialize-ProtectedRuntimePath {
+    if (-not (Test-IsAdministrator)) {
+        throw "Protected runtime initialization requires administrator authority."
+    }
+    Set-ProtectedRuntimeIdentity
+    $ProductRoot = [System.IO.Path]::GetDirectoryName($ProtectedRuntimeParent)
+    $RuntimeParent = $ProtectedRuntimeParent
+    foreach ($ProtectedDirectory in @($ProductRoot, $RuntimeParent)) {
+        if ([System.IO.File]::Exists($ProtectedDirectory)) {
+            throw "Protected runtime parent is not a directory: $ProtectedDirectory"
+        }
+        if (-not [System.IO.Directory]::Exists($ProtectedDirectory)) {
+            New-ProtectedRuntimeDirectory $ProtectedDirectory "Protected runtime parent"
+        }
+        else {
+            Assert-NoReparsePath $ProtectedDirectory "Protected runtime parent"
+            Assert-ProtectedRuntimeSecurity $ProtectedDirectory $true "Protected runtime parent"
+        }
+    }
 }
 
 function Assert-NoReparsePath([string]$Path, [string]$Label) {
@@ -128,14 +401,28 @@ function Invoke-NuGetPackageVerification {
 
 function New-BoundedWorkingDirectory([string]$Label) {
     $Name = ".python-runtime-$Label-" + [Guid]::NewGuid().ToString("N")
-    $Path = [System.IO.Path]::GetFullPath((Join-Path $BundleRoot $Name))
-    if (-not $Path.StartsWith($BundlePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Runtime working directory escaped the bundle root: $Path"
+    $WorkingRoot = if ([string]::IsNullOrWhiteSpace($ProtectedRuntimeParent)) {
+        $BundleRoot
+    }
+    else {
+        $ProtectedRuntimeParent
+    }
+    $WorkingPrefix = [System.IO.Path]::GetFullPath($WorkingRoot).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar
+    ) + [System.IO.Path]::DirectorySeparatorChar
+    $Path = [System.IO.Path]::GetFullPath((Join-Path $WorkingRoot $Name))
+    if (-not $Path.StartsWith($WorkingPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Runtime working directory escaped its protected root: $Path"
     }
     if ([System.IO.File]::Exists($Path) -or [System.IO.Directory]::Exists($Path)) {
         throw "Runtime working directory already exists: $Path"
     }
-    [System.IO.Directory]::CreateDirectory($Path) | Out-Null
+    if ([string]::IsNullOrWhiteSpace($ProtectedRuntimeParent)) {
+        [System.IO.Directory]::CreateDirectory($Path) | Out-Null
+    }
+    else {
+        New-ProtectedRuntimeDirectory $Path "Runtime working directory"
+    }
     Assert-NoReparsePath $Path "Runtime working directory"
     $CreatedWorkingDirectories.Add($Path)
     return $Path
@@ -526,13 +813,121 @@ function Copy-AuthenticatedTclTkTree(
     }
 }
 
-function Lock-AuthenticatedRuntimeTree([string]$Root) {
+function Set-ProtectedRuntimeTreeSecurity([string]$Root) {
     $RootFull = [System.IO.Path]::GetFullPath($Root)
-    Assert-NoReparsePath $RootFull "Application-local Python runtime"
+    [System.IO.Directory]::SetAccessControl(
+        $RootFull,
+        (Get-ProtectedRuntimeSecurity $true)
+    )
     $Pending = New-Object System.Collections.Generic.Stack[System.IO.DirectoryInfo]
     $Pending.Push([System.IO.DirectoryInfo]$RootFull)
     while ($Pending.Count -gt 0) {
         $Directory = $Pending.Pop()
+        foreach ($Entry in $Directory.EnumerateFileSystemInfos()) {
+            if (($Entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Application-local Python runtime contains a symbolic link, junction, or reparse point: $($Entry.FullName)"
+            }
+            if (($Entry.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                [System.IO.Directory]::SetAccessControl(
+                    $Entry.FullName,
+                    (Get-ProtectedRuntimeSecurity $true)
+                )
+                $Pending.Push([System.IO.DirectoryInfo]$Entry.FullName)
+            }
+            else {
+                if (-not [System.IO.File]::Exists($Entry.FullName)) {
+                    throw "Application-local Python runtime contains a non-regular file: $($Entry.FullName)"
+                }
+                [System.IO.File]::SetAccessControl(
+                    $Entry.FullName,
+                    (Get-ProtectedRuntimeSecurity $false)
+                )
+            }
+        }
+    }
+}
+
+function Set-ExpectedRuntimeDirectories([string]$Root) {
+    $RootFull = [System.IO.Path]::GetFullPath($Root)
+    $ExpectedRuntimeDirectories.Clear()
+    if (-not $ExpectedRuntimeDirectories.Add($RootFull)) {
+        throw "Cannot initialize the expected runtime directory inventory."
+    }
+    foreach ($FilePath in $ExpectedRuntimeHashes.Keys) {
+        $Directory = [System.IO.Path]::GetDirectoryName($FilePath)
+        while ($Directory.StartsWith(
+            $RootFull,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            $ExpectedRuntimeDirectories.Add($Directory) | Out-Null
+            if ([string]::Equals(
+                $Directory,
+                $RootFull,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+                break
+            }
+            $Directory = [System.IO.Path]::GetDirectoryName($Directory)
+        }
+    }
+}
+
+function Assert-AuthenticatedRuntimeInventory([string]$Root) {
+    $RootFull = [System.IO.Path]::GetFullPath($Root)
+    $SeenFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $SeenDirectories = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $Pending = New-Object System.Collections.Generic.Stack[System.IO.DirectoryInfo]
+    $Pending.Push([System.IO.DirectoryInfo]$RootFull)
+    while ($Pending.Count -gt 0) {
+        $Directory = $Pending.Pop()
+        $DirectoryPath = [System.IO.Path]::GetFullPath($Directory.FullName)
+        if (-not $ExpectedRuntimeDirectories.Contains($DirectoryPath)) {
+            throw "Application-local Python runtime contains an unexpected directory: $DirectoryPath"
+        }
+        $SeenDirectories.Add($DirectoryPath) | Out-Null
+        foreach ($Entry in $Directory.EnumerateFileSystemInfos()) {
+            if (($Entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Application-local Python runtime contains a symbolic link, junction, or reparse point: $($Entry.FullName)"
+            }
+            if (($Entry.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                $Pending.Push([System.IO.DirectoryInfo]$Entry.FullName)
+                continue
+            }
+            $Path = [System.IO.Path]::GetFullPath($Entry.FullName)
+            if (-not [System.IO.File]::Exists($Path) -or -not $ExpectedRuntimeHashes.ContainsKey($Path)) {
+                throw "Application-local Python runtime contains a non-regular or unauthenticated file: $Path"
+            }
+            $SeenFiles.Add($Path) | Out-Null
+        }
+    }
+    if (
+        $SeenFiles.Count -ne $ExpectedRuntimeHashes.Count -or
+        $SeenDirectories.Count -ne $ExpectedRuntimeDirectories.Count
+    ) {
+        throw "Application-local Python runtime inventory is incomplete."
+    }
+}
+
+function Lock-AuthenticatedRuntimeTree([string]$Root) {
+    $RootFull = [System.IO.Path]::GetFullPath($Root)
+    Assert-NoReparsePath $RootFull "Application-local Python runtime"
+    if ($ExpectedRuntimeDirectories.Count -eq 0) {
+        Set-ExpectedRuntimeDirectories $RootFull
+    }
+    $RequireProtectedSecurity = -not [string]::IsNullOrWhiteSpace(
+        $ProtectedRuntimeParent
+    )
+    $Pending = New-Object System.Collections.Generic.Stack[System.IO.DirectoryInfo]
+    $Pending.Push([System.IO.DirectoryInfo]$RootFull)
+    while ($Pending.Count -gt 0) {
+        $Directory = $Pending.Pop()
+        $DirectoryPath = [System.IO.Path]::GetFullPath($Directory.FullName)
+        if (-not $ExpectedRuntimeDirectories.Contains($DirectoryPath)) {
+            throw "Application-local Python runtime contains an unexpected directory: $DirectoryPath"
+        }
+        if ($RequireProtectedSecurity) {
+            Assert-ProtectedRuntimeSecurity $DirectoryPath $true "Application-local Python runtime directory"
+        }
         foreach ($Entry in $Directory.EnumerateFileSystemInfos()) {
             if (($Entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
                 throw "Application-local Python runtime contains a symbolic link, junction, or reparse point: $($Entry.FullName)"
@@ -545,6 +940,9 @@ function Lock-AuthenticatedRuntimeTree([string]$Root) {
                 throw "Application-local Python runtime contains a non-regular file: $($Entry.FullName)"
             }
             $Path = [System.IO.Path]::GetFullPath($Entry.FullName)
+            if ($RequireProtectedSecurity) {
+                Assert-ProtectedRuntimeSecurity $Path $false "Application-local Python runtime file"
+            }
             if (-not $ExpectedRuntimeHashes.ContainsKey($Path)) {
                 throw "Application-local Python runtime contains a file not created from an authenticated source: $($Entry.FullName)"
             }
@@ -575,9 +973,7 @@ function Lock-AuthenticatedRuntimeTree([string]$Root) {
             }
         }
     }
-    if (@([System.IO.Directory]::EnumerateFiles($RootFull, "*", [System.IO.SearchOption]::AllDirectories)).Count -ne $ExpectedRuntimeHashes.Count) {
-        throw "Application-local Python runtime inventory is incomplete."
-    }
+    Assert-AuthenticatedRuntimeInventory $RootFull
 }
 
 function Assert-RequiredRuntimeFiles([string]$Root) {
@@ -605,9 +1001,136 @@ function Assert-RequiredRuntimeFiles([string]$Root) {
     }
 }
 
+function Write-ProtectedRuntimeReceipt {
+    if ([System.IO.File]::Exists($ProtectedRuntimeReceipt) -or [System.IO.Directory]::Exists($ProtectedRuntimeReceipt)) {
+        throw "Protected runtime receipt already exists: $ProtectedRuntimeReceipt"
+    }
+    $Files = @(
+        $ExpectedRuntimeHashes.Keys | Sort-Object | ForEach-Object {
+            [pscustomobject]@{
+                path = $_.Substring($RuntimeRoot.Length).TrimStart(
+                    [System.IO.Path]::DirectorySeparatorChar
+                ).Replace("\", "/")
+                sha256 = $ExpectedRuntimeHashes[$_]
+            }
+        }
+    )
+    $Directories = @(
+        $ExpectedRuntimeDirectories | Sort-Object | ForEach-Object {
+            $_.Substring($RuntimeRoot.Length).TrimStart(
+                [System.IO.Path]::DirectorySeparatorChar
+            ).Replace("\", "/")
+        }
+    )
+    $Receipt = [pscustomobject]@{
+        schema_version = 1
+        verified_stage = $env:DICOMXPHITS_VERIFIED_STAGE
+        bundle_root = $BundleRoot
+        runtime_root = $RuntimeRoot
+        installing_user_sid = $InstallingUserSid.Value
+        files = $Files
+        directories = $Directories
+    }
+    $Json = $Receipt | ConvertTo-Json -Depth 5
+    $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Json + [Environment]::NewLine)
+    $Stream = [System.IO.File]::Open(
+        $ProtectedRuntimeReceipt,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None
+    )
+    try {
+        $Stream.Write($Bytes, 0, $Bytes.Length)
+        $Stream.Flush()
+    }
+    finally {
+        $Stream.Dispose()
+    }
+    [System.IO.File]::SetAccessControl(
+        $ProtectedRuntimeReceipt,
+        (Get-ProtectedRuntimeSecurity $false)
+    )
+    Assert-ProtectedRuntimeSecurity $ProtectedRuntimeReceipt $false "Protected runtime receipt"
+}
+
+function Import-ProtectedRuntimeReceipt {
+    if (-not [System.IO.File]::Exists($ProtectedRuntimeReceipt)) {
+        throw "Protected runtime construction did not produce its receipt."
+    }
+    Assert-NoReparsePath $ProtectedRuntimeReceipt "Protected runtime receipt"
+    Assert-ProtectedRuntimeSecurity $ProtectedRuntimeReceipt $false "Protected runtime receipt"
+    $Stream = [System.IO.File]::Open(
+        $ProtectedRuntimeReceipt,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    try {
+        $Reader = New-Object System.IO.StreamReader(
+            $Stream,
+            [System.Text.Encoding]::UTF8,
+            $true,
+            4096,
+            $true
+        )
+        try {
+            $Receipt = $Reader.ReadToEnd() | ConvertFrom-Json
+        }
+        finally {
+            $Reader.Dispose()
+        }
+        if (
+            $Receipt.schema_version -ne 1 -or
+            [string]$Receipt.verified_stage -ne $env:DICOMXPHITS_VERIFIED_STAGE -or
+            -not [string]::Equals([string]$Receipt.bundle_root, $BundleRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals([string]$Receipt.runtime_root, $RuntimeRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            [string]$Receipt.installing_user_sid -ne $InstallingUserSid.Value
+        ) {
+            throw "Protected runtime receipt identity is invalid."
+        }
+        $ExpectedRuntimeHashes.Clear()
+        foreach ($Record in @($Receipt.files)) {
+            $Path = Get-SafeRuntimeDestination $RuntimeRoot ([string]$Record.path)
+            $Hash = [string]$Record.sha256
+            if ($Hash -notmatch "^[0-9a-f]{64}$" -or $ExpectedRuntimeHashes.ContainsKey($Path)) {
+                throw "Protected runtime receipt contains an invalid file record."
+            }
+            $ExpectedRuntimeHashes.Add($Path, $Hash)
+        }
+        $ExpectedRuntimeDirectories.Clear()
+        foreach ($Relative in @($Receipt.directories)) {
+            $Path = if ([string]::IsNullOrEmpty([string]$Relative)) {
+                $RuntimeRoot
+            }
+            else {
+                Get-SafeRuntimeDestination $RuntimeRoot ([string]$Relative)
+            }
+            if (-not $ExpectedRuntimeDirectories.Add($Path)) {
+                throw "Protected runtime receipt contains a duplicate directory record."
+            }
+        }
+        if ($ExpectedRuntimeHashes.Count -eq 0 -or $ExpectedRuntimeDirectories.Count -eq 0) {
+            throw "Protected runtime receipt inventory is empty."
+        }
+        $LockedPythonFiles.Add($Stream)
+        $Stream = $null
+    }
+    finally {
+        if ($null -ne $Stream) { $Stream.Dispose() }
+    }
+}
+
 function New-AuthenticatedPythonRuntime {
     if ([System.IO.File]::Exists($RuntimeRoot) -or [System.IO.Directory]::Exists($RuntimeRoot)) {
-        throw "Application-local Python runtime already exists. Use a fresh verified bundle extraction: $RuntimeRoot"
+        throw "Protected Python runtime already exists. Use a fresh verified bundle extraction path: $RuntimeRoot"
+    }
+    if (
+        [System.IO.File]::Exists($ProtectedRuntimeReceipt) -or
+        [System.IO.Directory]::Exists($ProtectedRuntimeReceipt) -or
+        [System.IO.File]::Exists($RuntimeLog) -or
+        [System.IO.Directory]::Exists($RuntimeLog)
+    ) {
+        throw "Protected runtime control content already exists. Use a fresh verified bundle extraction path."
     }
 
     Assert-IsolatedVerifierDirectory
@@ -622,11 +1145,17 @@ function New-AuthenticatedPythonRuntime {
 
     Invoke-NuGetPackageVerification
     $TclTkRecords = Get-TclTkMsiRuntimeRecords
-    [System.IO.Directory]::CreateDirectory($RuntimeRoot) | Out-Null
+    New-ProtectedRuntimeDirectory $RuntimeRoot "Protected Python runtime"
     Assert-NoReparsePath $RuntimeRoot "Application-local Python runtime"
     $TclTkStaging = New-BoundedWorkingDirectory "tcltk"
     Expand-VerifiedPythonPackage $RuntimeRoot
     Invoke-TclTkAdministrativeExtraction $TclTkStaging
+    Assert-NoReparsePath $RuntimeLog "Windows Installer runtime log"
+    [System.IO.File]::SetAccessControl(
+        $RuntimeLog,
+        (Get-ProtectedRuntimeSecurity $false)
+    )
+    Assert-ProtectedRuntimeSecurity $RuntimeLog $false "Windows Installer runtime log"
 
     $CopiedTclTkFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $ExpectedTclTkFiles = @(
@@ -665,6 +1194,8 @@ function New-AuthenticatedPythonRuntime {
     }
     Assert-RequiredRuntimeFiles $RuntimeRoot
     Assert-NoReparsePath $RuntimeRoot "Application-local Python runtime"
+    Set-ExpectedRuntimeDirectories $RuntimeRoot
+    Set-ProtectedRuntimeTreeSecurity $RuntimeRoot
     Lock-AuthenticatedRuntimeTree $RuntimeRoot
 
     Add-SignedFileLock (Join-Path $RuntimeRoot "python.exe") "Python executable" "*Python Software Foundation*"
@@ -672,12 +1203,40 @@ function New-AuthenticatedPythonRuntime {
     Add-SignedFileLock (Join-Path $RuntimeRoot "vcruntime140.dll") "Visual C++ runtime DLL" "*Microsoft Windows Software Compatibility Publisher*"
     Add-SignedFileLock (Join-Path $RuntimeRoot "DLLs\_tkinter.pyd") "Tkinter extension" "*Python Software Foundation*"
 
+    Write-ProtectedRuntimeReceipt
+
     return (Join-Path $RuntimeRoot "python.exe")
 }
 
 try {
     Assert-NoReparsePath $BundleRoot "Bundle root"
-    $SelectedPython = New-AuthenticatedPythonRuntime
+    Assert-TrustedPowerShellProcess | Out-Null
+    if ($env:DICOMXPHITS_ELEVATED_ACTION -eq "construct-runtime") {
+        if (
+            -not (Test-IsAdministrator) -or
+            $env:DICOMXPHITS_ELEVATED_STAGE -ne $env:DICOMXPHITS_VERIFIED_STAGE
+        ) {
+            throw "Protected runtime construction lacks verified administrator state."
+        }
+        Initialize-ProtectedRuntimePath
+        $null = New-AuthenticatedPythonRuntime
+        exit 0
+    }
+    if (Test-IsAdministrator) {
+        throw "Start install_offline.cmd without elevation; approve only its verified administrator prompt."
+    }
+
+    $env:DICOMXPHITS_INSTALLING_USER_SID = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    Set-ProtectedRuntimeIdentity
+    Invoke-ElevatedRuntimeConstruction
+    Import-ProtectedRuntimeReceipt
+    Assert-NoReparsePath $RuntimeRoot "Application-local Python runtime"
+    Lock-AuthenticatedRuntimeTree $RuntimeRoot
+    Add-SignedFileLock (Join-Path $RuntimeRoot "python.exe") "Python executable" "*Python Software Foundation*"
+    Add-SignedFileLock (Join-Path $RuntimeRoot "python312.dll") "Python runtime DLL" "*Python Software Foundation*"
+    Add-SignedFileLock (Join-Path $RuntimeRoot "vcruntime140.dll") "Visual C++ runtime DLL" "*Microsoft Windows Software Compatibility Publisher*"
+    Add-SignedFileLock (Join-Path $RuntimeRoot "DLLs\_tkinter.pyd") "Tkinter extension" "*Python Software Foundation*"
+    $SelectedPython = Join-Path $RuntimeRoot "python.exe"
     $Probe = & $SelectedPython -I -S -B -c "import sys;print('|'.join((sys.implementation.name,str(sys.version_info.major),str(sys.version_info.minor),'64' if sys.maxsize > 2**32 else '32')))" 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw "Application-local Python probe failed."
@@ -701,9 +1260,18 @@ try {
 finally {
     foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() }
     foreach ($WorkingDirectory in $CreatedWorkingDirectories) {
+        $WorkingRoot = if ([string]::IsNullOrWhiteSpace($ProtectedRuntimeParent)) {
+            $BundleRoot
+        }
+        else {
+            $ProtectedRuntimeParent
+        }
+        $WorkingPrefix = [System.IO.Path]::GetFullPath($WorkingRoot).TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
         if (
             [System.IO.Directory]::Exists($WorkingDirectory) -and
-            $WorkingDirectory.StartsWith($BundlePrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+            $WorkingDirectory.StartsWith($WorkingPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
             [System.IO.Path]::GetFileName($WorkingDirectory).StartsWith(".python-runtime-", [System.StringComparison]::Ordinal)
         ) {
             [System.IO.Directory]::Delete($WorkingDirectory, $true)

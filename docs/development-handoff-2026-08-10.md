@@ -61,12 +61,26 @@ compares the digest while the handle blocks writes, retains that same handle,
 and rejects additional files before Python startup. Regression tests cover
 substitution, additional-file injection, and post-validation lock lifetime.
 
-The remaining completion order is: finish required public checks, commit and
-push the single application-local-runtime correction, reply to and resolve the
-standard-library P1 thread, confirm exact-head CI, request and address
-`@codex review` until clean, promote and archive the OpenSpec change, then
-merge pull request #33 and delete its source branch. Do not create or modify a
-tag or release, and do not force-push.
+A still later exact-head review identified that authenticated file handles did
+not prevent a concurrent same-user process from adding a new directory entry
+after the final inventory. The primary user approved the strictly validated
+OpenSpec change `protect-offline-runtime-staging`. Bundle verification and
+payload locks now precede UAC elevation; the elevated verified stage constructs
+an installation-specific runtime below protected Windows Common Application
+Data storage. Its exact ACL grants mutation only to `SYSTEM` and elevated
+Administrators and grants the installing user and `OWNER RIGHTS` read/execute
+only. The elevated child writes a protected source-derived hash receipt and
+exits; the original non-elevated stage revalidates the complete runtime and
+retains authenticated read locks before Python starts. A Windows ACL regression
+confirms that a same-user `python312._pth` injection is denied and no entry
+appears.
+
+The required public checks and OpenSpec promotion/archive are complete. The
+remaining completion order is: commit and push the single protected-runtime
+correction, reply to and resolve the directory-entry P1 thread, confirm
+exact-head CI, request and address `@codex review` until clean, then merge pull
+request #33 and delete its source branch. Do not create or modify a tag or
+release, and do not force-push.
 
 ## End-of-Day Addendum (2026-08-10)
 

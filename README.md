@@ -91,10 +91,14 @@ On the offline computer, the primary procedure is only:
 
 1. Copy and fully extract the ZIP to a writable local-disk folder.
 2. Run `install_offline.cmd` from the extracted folder.
+3. Approve the Windows administrator prompt for the verified installation
+   stage.
 
-The installer verifies the bundle, creates the repository-local `.venv`, uses
-only bundled wheels, verifies the required imports, and offers the existing GUI
-launcher after success. It does not bundle, discover, or run PHITS-related
+The installer verifies the bundle before requesting elevation, uses elevation
+only to construct its authenticated Python runtime in protected storage,
+creates the repository-local `.venv`, uses only bundled wheels, verifies the required
+imports, and offers the existing GUI launcher after success. Denying elevation
+stops before Python starts. It does not bundle, discover, or run PHITS-related
 external tools. See the complete [English offline installation guide](docs/windows-offline-installation.md)
 or [Japanese offline installation guide](docs/windows-offline-installation.ja.md).
 The bounded 2026-08-07 human check is recorded in the

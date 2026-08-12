@@ -525,6 +525,202 @@ def test_verified_stage_uses_only_authenticated_application_local_python():
     )
 
 
+def test_verified_stage_requires_protected_elevation_before_runtime_execution():
+    text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(encoding="utf-8")
+
+    assert "-Verb RunAs" in text
+    assert "DICOMXPHITS_INSTALLING_USER_SID" in text
+    assert "DICOMXPHITS_ELEVATED_STAGE" in text
+    assert "[Convert]::ToBase64String" in text
+    assert '$ChildCommand = $ChildCommand.Replace' in text
+    assert '$env:DICOMXPHITS_ELEVATED_ACTION = "construct-runtime"' not in text
+    assert "$env:DICOMXPHITS_INSTALLING_USER_SID = $ParentIdentity.User.Value" not in text
+    assert "CommonApplicationData" in text
+    assert 'New-Object System.Security.Principal.SecurityIdentifier("S-1-3-4")' in text
+    assert "SetAccessRuleProtection($true, $false)" in text
+    assert "Assert-AuthenticatedRuntimeInventory $RootFull" in text
+    assert "Invoke-ElevatedRuntimeConstruction\n    Import-ProtectedRuntimeReceipt" in text
+    assert text.index("Invoke-ElevatedRuntimeConstruction\n    Import-ProtectedRuntimeReceipt") < text.index(
+        "$Probe = & $SelectedPython"
+    )
+    assert text.index("Import-ProtectedRuntimeReceipt") < text.index(
+        "$Probe = & $SelectedPython"
+    )
+    assert text.index("Lock-AuthenticatedRuntimeTree $RuntimeRoot") < text.index(
+        "$Probe = & $SelectedPython"
+    )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_denied_elevation_stops_before_runtime_construction(tmp_path):
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "denied-elevation-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\nfunction Assert-TrustedPowerShellProcess { "
+        "return [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }\n"
+        "function Test-IsAdministrator { return $false }\n"
+        "function Start-Process { throw 'synthetic UAC denial' }\n"
+        "try { Invoke-ElevatedRuntimeConstruction; exit 8 }\n"
+        "catch {\n"
+        "  if ($_.Exception.Message -ne "
+        "'Administrator approval is required before runtime construction.') { exit 9 }\n"
+        "  Write-Output 'ELEVATION_DENIED'\n"
+        "  exit 0\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        }
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ELEVATION_DENIED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL behavior")
+def test_protected_runtime_acl_suppresses_owner_write_dac(tmp_path):
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "acl-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\n$script:InstallingUserSid = "
+        "[Security.Principal.WindowsIdentity]::GetCurrent().User\n"
+        "$Security = Get-ProtectedRuntimeSecurity $true\n"
+        "$Sddl = $Security.GetSecurityDescriptorSddlForm("
+        "[Security.AccessControl.AccessControlSections]::Owner -bor "
+        "[Security.AccessControl.AccessControlSections]::Access)\n"
+        "Write-Output $Sddl\n"
+        "$Container = [IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ACL_CONTAINER)\n"
+        "$Protected = [IO.Path]::Combine($Container, 'protected')\n"
+        "[IO.Directory]::CreateDirectory($Container) | Out-Null\n"
+        "$Inheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor "
+        "[Security.AccessControl.InheritanceFlags]::ObjectInherit\n"
+        "$ParentSecurity = [IO.Directory]::GetAccessControl($Container)\n"
+        "$ParentSecurity.SetAccessRule((New-Object "
+        "Security.AccessControl.FileSystemAccessRule("
+        "$InstallingUserSid,[Security.AccessControl.FileSystemRights]::FullControl,"
+        "$Inheritance,[Security.AccessControl.PropagationFlags]::None,"
+        "[Security.AccessControl.AccessControlType]::Allow)))\n"
+        "[IO.Directory]::SetAccessControl($Container,$ParentSecurity)\n"
+        "$Security.SetOwner($InstallingUserSid)\n"
+        "[IO.Directory]::CreateDirectory($Protected,$Security) | Out-Null\n"
+        "$Injected = [IO.Path]::Combine($Protected, 'python312._pth')\n"
+        "try { [IO.File]::WriteAllText($Injected, 'sitecustomize.py'); "
+        "Write-Output 'WRITE_SUCCEEDED' } "
+        "catch [UnauthorizedAccessException] { Write-Output 'WRITE_DENIED' }\n"
+        "Write-Output ('INJECTED_EXISTS=' + [IO.File]::Exists($Injected))\n"
+        "[IO.Directory]::Delete($Protected)\n"
+        "[IO.Directory]::Delete($Container)\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "DICOMXPHITS_TEST_ACL_CONTAINER": str(tmp_path / "acl-container"),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        }
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    output_lines = result.stdout.splitlines()
+    sddl = output_lines[0]
+    current_sid = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    ).stdout.strip()
+    assert sddl.startswith("O:BA")
+    assert "(A;OICI;FA;;;SY)" in sddl
+    assert "(A;OICI;FA;;;BA)" in sddl
+    assert f"(A;OICI;0x1200a9;;;{current_sid})" in sddl
+    assert "(A;OICI;0x1200a9;;;OW)" in sddl
+    assert "WD" not in sddl
+    assert "WRITE_DENIED" in output_lines
+    assert "INJECTED_EXISTS=False" in output_lines
+    assert not (tmp_path / "acl-container").exists()
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows Authenticode behavior")
 def test_verified_stage_never_starts_host_python_with_malicious_standard_library(
     tmp_path,

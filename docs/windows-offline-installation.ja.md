@@ -71,12 +71,14 @@ wheel、作業用ファイルはGit管理対象外であり、コミットしな
 完成したZIPをUSBストレージへコピーします。組織で媒体持込み手順がある場合は、
 作成スクリプトが表示したZIPのSHA-256も転送記録として保存してください。
 
-## オフラインPCでの基本操作：2段階
+## オフラインPCでの基本操作：3段階
 
 1. USBからZIPをローカルディスク上の書込み可能なフォルダーへコピーし、完全に
    展開します。ZIP内のファイルを直接開いたり、USB上をeditable projectの場所に
    したりしないでください。
 2. 展開先の`install_offline.cmd`を1回実行します。
+3. 検証済みinstall stageに対するWindowsの管理者確認を承認します。拒否した場合は、
+   Pythonを起動する前に停止します。
 
 PowerShellでは`cd install_offline.cmd`ではなく、次のように実行します。`cd`は
 フォルダー移動用であり、ファイルの実行には使用しません。
@@ -91,13 +93,18 @@ bundle検証前に起動する実行ファイルは、quoted absolute pathの
 呼出元の`SystemRoot`、current directory、`PATH`からPowerShell、`py.exe`、
 `python.exe`を探索しません。
 bootstrapは、保護対象pathのreparse pointと展開root直下の想定外の実行ファイルを
-拒否し、全payloadを検証してread-lockした後だけ検証済みinstall stageを実行します。
-その後、次を行います。
+拒否し、全payloadを検証してread-lockした後だけprotected runtime構築の管理者承認を
+要求します。昇格childはWindows system directoryの絶対pathだけを使用し、runtimeと
+protected hash receiptを作成して、Python起動前に終了します。元の非昇格stageがその後、
+次を行います。
 
 - 同梱NuGet verifier、CPython package、Tcl/Tk componentを検証してread-lockする
-- 認証済みsourceだけから完全な`.python-runtime`を安全に構成し、必要fileを
-  検証する。各fileを認証済みsource由来digestと比較しながらread-lockし、追加fileを
-  拒否して、最初のPython起動前から導入終了まで全runtime lockを保持する
+- 認証済みsourceだけから、Windows Common Application Data配下の管理者保護領域へ
+  installation固有runtimeを安全に構成する。変更できるのは`SYSTEM`と昇格済み
+  Administratorsだけで、導入ユーザーにはread/executeだけを許可する
+- exactなownerとaccess ruleを確認し、各fileを認証済みsource由来digestと比較しながら
+  read-lockする。protected完全inventoryを再確認し、最初のPython起動前から導入終了まで
+  全file lockを保持する
 - そのapplication-local CPython 3.12.10 x64だけを`-I -S -B`で使用する。
   host Python、registry candidate、`py.exe`、bare `python.exe`を探索、probe、
   install、repair、実行しない
@@ -115,6 +122,10 @@ bootstrapは、保護対象pathのreparse pointと展開root直下の想定外�
 ```cmd
 launchers\run_gui_venv.cmd
 ```
+
+protected runtimeは`.venv`のbase interpreterとして記録されるため、導入成功後も
+保持されます。不要になったprotected runtimeの削除は、別の明示的な管理者操作です。
+installerは自動削除やrepairを行いません。
 
 ## 整合性ファイル
 
@@ -150,11 +161,25 @@ binary wheelの問題をオンライン側で解決してください。未レ�
 
 ### Python runtime構成失敗
 
-展開先の`offline-install.log`と`python-runtime.log`を確認してください。
+展開先の`offline-install.log`を確認してください。protected Windows Installer logは
+`%ProgramData%\dicomxphits\offline-runtimes\*-msi.log`にあります。
 localに導入済みのPythonへ差し替えたり、checksum保護されたruntime sourceを編集
 したりせず、producer作成済みZIPを新しい通常のlocal folderへ再展開してください。
 host Python productはinstallしませんが、組織policyによってWindows Installerの
 administrative extractionが制限される場合があります。
+
+### 管理者承認を拒否した、または利用できない
+
+NuGet verifier、Windows Installer、Python、helper、pipを起動する前に停止します。
+`install_offline.cmd`を再実行し、検証済みWindows system PowerShell stageを承認して
+ください。folder権限を弱めたり、host Pythonをbundleへコピーしたり、部分的なruntimeを
+実行したりしないでください。
+
+### protected runtimeが既に存在する
+
+installerは再利用、repair、削除を行いません。以前の展開projectが不要であることを
+確認してから管理者が対応するprotected runtimeを削除するか、検証済みZIPを新しい
+local pathへ展開し、別のinstallation固有runtimeを使用してください。
 
 ### 想定外実行ファイルまたはreparse pointのerror
 

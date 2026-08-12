@@ -76,12 +76,14 @@ Copy the completed ZIP to the USB storage. Keep the ZIP SHA-256 printed by the
 preparation script as transfer evidence if your organization has a controlled
 media process.
 
-## Install on the offline computer: two steps
+## Install on the offline computer: three steps
 
 1. Copy the ZIP from USB to a writable folder on a local disk and extract it
    completely. Do not open files inside the ZIP and do not use the USB folder
    as the editable project location.
 2. In the extracted folder, run `install_offline.cmd` once.
+3. Approve the Windows administrator prompt for the verified installation
+   stage. If you decline it, installation stops before Python starts.
 
 In PowerShell, run the file with the following command. Do not use
 `cd install_offline.cmd`; `cd` changes directories and does not execute files.
@@ -97,14 +99,21 @@ not use caller-supplied `SystemRoot`, current-directory, or `PATH` lookup for
 PowerShell, `py.exe`, or `python.exe`.
 The bootstrap rejects reparse-point protected paths and unexpected executable
 lookalikes at the extracted root, verifies and read-locks every protected
-payload, and only then runs the verified installation stage. It then:
+payload, and only then requests administrator approval for protected runtime
+construction. The elevated child uses only absolute Windows-system executables,
+creates the runtime and protected hash receipt, and exits before Python starts.
+The original non-elevated stage then:
 
 - validates and read-locks the bundled NuGet verifier, CPython package, and
   Tcl/Tk component before using them;
-- safely constructs a complete `.python-runtime` from those authenticated
-  sources, validates every file against its authenticated source-derived
-  digest while acquiring its read lock, rejects additional files, and retains
-  every lock through the end of installation before the first Python launch;
+- safely constructs a complete installation-specific runtime below protected
+  Windows Common Application Data storage from those authenticated sources;
+  only `SYSTEM` and elevated Administrators may mutate it, while the installing
+  user receives read/execute access;
+- validates the exact protected owner and access rules, validates every file
+  against its authenticated source-derived digest while acquiring its read
+  lock, repeats the complete protected inventory, and retains every file lock
+  through the end of installation before the first Python launch;
 - uses only that application-local CPython 3.12.10 x64 interpreter with
   `-I -S -B`; it never discovers, probes, installs, repairs, or executes a host
   Python, registry candidate, `py.exe`, or bare `python.exe`;
@@ -123,6 +132,11 @@ the prompt still leaves a successful installation. Start it later with:
 ```cmd
 launchers\run_gui_venv.cmd
 ```
+
+The protected runtime remains after success because `.venv` records it as the
+base interpreter. Removing an abandoned protected runtime is a separate,
+explicit administrator action. The installer never deletes or repairs one
+automatically.
 
 ## Integrity files
 
@@ -160,11 +174,26 @@ source archive into `wheelhouse/`.
 
 ### Python runtime construction fails
 
-Review `offline-install.log` and `python-runtime.log` in the extracted root.
+Review `offline-install.log` in the extracted root. The protected Windows
+Installer log is stored as `%ProgramData%\dicomxphits\offline-runtimes\*-msi.log`.
 Do not substitute a locally installed Python or edit checksum-protected runtime
 sources. Extract the producer-created ZIP into a fresh ordinary local folder
 and retry. Organization policy may still control Windows Installer
 administrative extraction even though no host Python product is installed.
+
+### Administrator approval is declined or unavailable
+
+The installer stops before the NuGet verifier, Windows Installer, Python,
+helper, or pip starts. Rerun `install_offline.cmd` and approve the verified
+Windows-system PowerShell stage. Do not weaken folder permissions, copy a host
+Python into the bundle, or run a partially created runtime.
+
+### A protected runtime already exists
+
+The installer does not reuse, repair, or remove it. Confirm that the old
+extracted project is abandoned before an administrator removes its matching
+protected runtime, or extract the verified ZIP into a fresh local path so it
+receives a distinct installation-specific runtime.
 
 ### An unexpected executable or reparse-point error is reported
 

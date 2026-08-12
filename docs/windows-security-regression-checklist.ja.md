@@ -16,6 +16,8 @@ python -m pytest tests/test_offline_install.py tests/test_security_boundaries.py
 
 - `Windows bootstrap behavior`、`Windows cmd.exe behavior`、
   `real Windows junction behavior`によるskipが0件である
+- protected runtime ACLがbuilt-in Administrators owner、`SYSTEM`・Administrators
+  full control、導入user・`OWNER RIGHTS` read/executeだけである
 - 日本語と空白を含む展開pathのbootstrap controlが成功する
 - root直下に偽の`powershell.exe`、`python.exe`、`py.exe`がある各caseが、
   helperを実行せず安全側で拒否される
@@ -59,8 +61,14 @@ python -m pytest tests/test_prepare_rtdose.py::test_run_requires_executable_and_
 
 - `Initial SHA-256 verification passed.`より前にbundle内verifier、Windows
   Installer、Python、helperが動かない
-- 表示されるPython pathがbundle内`.python-runtime`のabsolute pathで、3.12 x64である
-- host Pythonを探索・実行せず、最初のPython起動前から全runtime fileがread-lockされる
+- bundle検証後にWindows system PowerShellの管理者承認が表示され、拒否時はNuGet
+  verifier、Windows Installer、Python、helper、pipが起動しない
+- 表示されるPython pathがCommon Application Data配下のinstallation固有protected
+  runtimeのabsolute pathで、3.12 x64である
+- host Pythonを探索・実行せず、最初のPython起動前から全runtime fileがread-lockされ、
+  protected ACLがdirectory entry追加・削除・permission変更を拒否する
+- 最終inventory後に非昇格processから`python312._pth`を追加できず、未認証runnerが
+  起動しない
 - networkを切断した状態で`.venv`作成、hash-lock済みwheel導入、import確認が完了する
 - `offline-install.log`にNumPy 2.5.1とpydicom 3.0.2が記録される
 
