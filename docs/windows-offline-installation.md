@@ -45,13 +45,18 @@ If Python 3.12 is not discoverable through `py -3.12` or `python`, specify it:
 The script performs these checks before producing the ZIP:
 
 1. runs the public-tree audit;
-2. reads the version and runtime requirements from `pyproject.toml`;
-3. downloads the exact official Python 3.12.10 x64 installer over HTTPS;
-4. requires a valid Windows Authenticode signature from the Python Software
-   Foundation and records the signer and installer SHA-256;
-5. asks pip for CPython 3.12 `win_amd64` wheels with binary-only resolution;
-6. verifies `numpy`, `pydicom`, `setuptools`, and `wheel`, including exact
-   `cp312-cp312-win_amd64` compatibility for NumPy;
+2. reads the version from `pyproject.toml` and the exact wheel versions,
+   filenames, and SHA-256 values from `requirements/offline-win64.txt`;
+3. downloads the exact official CPython 3.12.10 application-local NuGet
+   package, CPython x64 Tcl/Tk MSI component, and pinned NuGet CLI over HTTPS;
+4. requires the expected NuGet repository signature and package identity for
+   CPython, a valid Python Software Foundation Authenticode signature for the
+   Tcl/Tk component, and a valid Microsoft Authenticode signature for the
+   NuGet CLI, then records their provenance and SHA-256 values;
+5. asks pip for CPython 3.12 `win_amd64` wheels with binary-only resolution and
+   `--require-hashes`;
+6. rejects any missing, additional, renamed, or hash-mismatched wheel and
+   verifies exact `cp312-cp312-win_amd64` compatibility for NumPy;
 7. copies only the audited regular-file blobs already present in the Git index
    (untracked and unstaged bytes are not copied); and
 8. writes `bundle-manifest.json`, `SHA256SUMS.txt`, and the final ZIP.
@@ -64,18 +69,21 @@ dist/dicomxphits-offline-win64-<version>.zip
 
 If that file already exists, the script stops. Use `-Force` only after
 confirming that the existing generated ZIP may be replaced. `dist/`, downloaded
-installers, wheels, and staging files are ignored and must not be committed.
+runtime sources, wheels, and staging files are ignored and must not be
+committed.
 
 Copy the completed ZIP to the USB storage. Keep the ZIP SHA-256 printed by the
 preparation script as transfer evidence if your organization has a controlled
 media process.
 
-## Install on the offline computer: two steps
+## Install on the offline computer: three steps
 
 1. Copy the ZIP from USB to a writable folder on a local disk and extract it
    completely. Do not open files inside the ZIP and do not use the USB folder
    as the editable project location.
 2. In the extracted folder, run `install_offline.cmd` once.
+3. Approve the Windows administrator prompt for the verified installation
+   stage. If you decline it, installation stops before Python starts.
 
 In PowerShell, run the file with the following command. Do not use
 `cd install_offline.cmd`; `cd` changes directories and does not execute files.
@@ -84,16 +92,45 @@ In PowerShell, run the file with the following command. Do not use
 .\install_offline.cmd
 ```
 
-The command verifies all protected bundle files before executing the bundled
-Python installer. It then:
+Before bundle verification, the command starts only the quoted absolute
+`%__APPDIR__%WindowsPowerShell\v1.0\powershell.exe`, after clearing any inherited
+`__APPDIR__` override so cmd.exe supplies its own application directory. It does
+not use caller-supplied `SystemRoot`, current-directory, or `PATH` lookup for
+PowerShell, `py.exe`, or `python.exe`.
+The bootstrap rejects reparse-point protected paths and unexpected executable
+lookalikes at the extracted root, verifies and read-locks every protected
+payload, locks the bundle directory path against rename, revalidates every
+payload through that locked path, and only then requests administrator approval
+for protected runtime construction. The elevated child uses only absolute
+Windows-system executables,
+creates the runtime and protected hash receipt, and exits before Python starts.
+The original non-elevated stage then:
 
-- uses an existing CPython 3.12 x64 when available;
-- otherwise installs the bundled Python 3.12.10 for the current user with pip,
-  the Python Launcher, and Tcl/Tk enabled, without changing PATH, creating
-  Python file associations, or creating shortcuts;
+- validates and read-locks the bundled NuGet verifier, CPython package, and
+  Tcl/Tk component before using them;
+- safely constructs a complete installation-specific runtime below protected
+  Windows Common Application Data storage from those authenticated sources;
+  only `SYSTEM` and elevated Administrators may mutate it, while the installing
+  user receives read/execute access;
+- validates the exact protected owner and access rules, validates every file
+  against its authenticated source-derived digest while acquiring its read
+  lock, repeats the complete protected inventory, and retains every file lock
+  through the end of installation before the first Python launch;
+- uses an exact protected snapshot containing only inventoried bundle files for
+  the helper, wheelhouse, and editable source; unmanifested files such as an
+  added `setup.py` are rejected and never copied or executed;
+- uses the declared setuptools PEP 660 backend so editable build metadata is
+  written to temporary build storage, not the read-only protected source;
+- clears inherited CLR profiler, startup-hook, and AppDomain-manager settings
+  before the first PowerShell process, and fails if any required bundle
+  directory cannot be held against rename;
+- uses only that application-local CPython 3.12.10 x64 interpreter with
+  `-I -S -B`; it never discovers, probes, installs, repairs, or executes a host
+  Python, registry candidate, `py.exe`, or bare `python.exe`;
 - creates the extracted project's `.venv`;
-- installs only from `wheelhouse/` with `--no-index`, `--find-links`, and
-  `--no-build-isolation` on every pip install command;
+- installs the exact locked dependencies only from `wheelhouse/` with
+  `--require-hashes`, `--no-index`, `--find-links`, and
+  `--no-build-isolation`;
 - installs dicomxphits in editable mode;
 - imports `tkinter`, `numpy`, `pydicom`, and `dicomxphits`;
 - records the Python, NumPy, and pydicom versions in `offline-install.log`; and
@@ -106,12 +143,19 @@ the prompt still leaves a successful installation. Start it later with:
 launchers\run_gui_venv.cmd
 ```
 
+The protected runtime and source snapshot remain after success because `.venv`
+records the runtime as its base interpreter and the editable installation
+records the protected source. Removing an abandoned protected installation is
+a separate, explicit administrator action. The installer never deletes or
+repairs one automatically.
+
 ## Integrity files
 
 `bundle-manifest.json` records the source HEAD commit, a SHA-256 fingerprint of
-the exact Git index entries, target, runtime requirements, wheel tags, Python
-installer URL and Authenticode signer evidence, and the role, size, and
-SHA-256 of every payload.
+the exact Git index entries, target, runtime requirements, wheel tags, runtime
+source URLs, NuGet and Authenticode signer evidence, the reviewed wheel lock,
+and the role, size, and SHA-256 of every payload. Normal CI uses the same pinned
+NumPy and pydicom versions from `requirements/runtime.txt`.
 
 `SHA256SUMS.txt` records every payload digest and the manifest digest. It cannot
 contain its own digest because that would be circular. The checksum inventory
@@ -139,20 +183,35 @@ There is no internet fallback. Recreate the bundle on the online computer and
 resolve the reported binary wheel problem there. Do not copy an unreviewed
 source archive into `wheelhouse/`.
 
-### Python installation fails
+### Python runtime construction fails
 
-Review `offline-install.log` and `python-installer.log` in the extracted root.
-The Python installation is current-user only and does not require changing
-machine-wide PATH. Organization policy may still control software installation.
+Review `offline-install.log` in the extracted root. The protected Windows
+Installer log is stored as `%ProgramData%\dicomxphits\offline-runtimes\*-msi.log`.
+Do not substitute a locally installed Python or edit checksum-protected runtime
+sources. Extract the producer-created ZIP into a fresh ordinary local folder
+and retry. Organization policy may still control Windows Installer
+administrative extraction even though no host Python product is installed.
 
-### `Python 3.12 not found!` is treated as the Python executable
+### Administrator approval is declined or unavailable
 
-This was possible in a pre-correction bundle when the Python Launcher existed
-but CPython 3.12 did not. The launcher message was captured as though it were an
-executable path. The current installer accepts captured output only when it
-names an existing executable. Do not replace only the CMD file in an extracted
-bundle. Rebuild or obtain the corrected complete ZIP and extract it into a
-separate folder.
+The installer stops before the NuGet verifier, Windows Installer, Python,
+helper, or pip starts. Rerun `install_offline.cmd` and approve the verified
+Windows-system PowerShell stage. Do not weaken folder permissions, copy a host
+Python into the bundle, or run a partially created runtime.
+
+### A protected runtime already exists
+
+The installer does not reuse, repair, or remove it. Confirm that the old
+extracted project is abandoned before an administrator removes its matching
+protected runtime, or extract the verified ZIP into a fresh local path so it
+receives a distinct installation-specific runtime.
+
+### An unexpected executable or reparse-point error is reported
+
+Do not remove the check or edit checksum-protected files. Extract a fresh ZIP
+into a new ordinary local directory. The current installer deliberately stops
+if the extracted root contains executable lookalikes or if the bundle root or
+a protected path crosses a symbolic link, junction, or reparse point.
 
 ### The `offline-install.log` path ends with an extra `"`
 

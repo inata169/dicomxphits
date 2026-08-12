@@ -345,16 +345,20 @@ def test_manual_smoke_happy_path_uses_tmp_path_only(tmp_path):
     )
 
     def fake_phits2dicom_runner(cmd, **kwargs):
+        runner_cwd = Path(kwargs["cwd"])
+
         class FakeProc:
             returncode = 0
 
             def communicate(self, input):
                 assert input.startswith("PHITS2DICOM")
-                write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
+                staged_dose = Path(input.splitlines()[3])
+                assert runner_cwd == staged_dose.parent
+                assert runner_cwd != Path(prepare["dat_dir"]).absolute()
+                write_coordinate_rtdose(staged_dose.with_suffix(".dcm"))
                 return "synthetic phits2dicom ok", None
 
         assert cmd == [str(phits2dicom.resolve())]
-        assert kwargs["cwd"] == str(Path(prepare["dat_dir"]).absolute())
         return FakeProc()
 
     execution = run_rtdose(

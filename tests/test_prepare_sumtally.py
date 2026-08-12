@@ -19,9 +19,11 @@ from dicomxphits.prepare_sumtally import (
     build_generate_parser,
     generate_sumtally,
     run_main,
+    run_phits_sumtally,
     run_sumtally,
     select_sumtally_base_input,
 )
+from dicomxphits.safe_output import UnsafeWorkspacePathError
 from dicomxphits.sumtally_inputs import file_sha256
 
 def tally_output_text() -> str:
@@ -160,6 +162,89 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert "sumfactor = 100" in content
     assert "seg_001/deposit-target-3D.out  40" in content
     assert "seg_002/deposit-target-3D.out  60" in content
+
+
+@pytest.mark.parametrize(
+    "output_name",
+    [
+        "../sumtally/custom.out",
+        "..\\sumtally\\custom.out",
+        "/tmp/custom.out",
+        "C:custom.out",
+        "C:\\custom.out",
+        ".",
+        "..",
+        "",
+        "custom.out\nfile = bypass.out",
+        "CON",
+        "con.txt",
+        "PRN",
+        "AUX.log",
+        "NUL.out",
+        "CONIN$",
+        "conout$.txt",
+        "COM1",
+        "com9.log",
+        "LPT1",
+        "lpt9.out",
+        "COM¹.txt",
+        "LPT³.out",
+        "result?.out",
+        "name:stream",
+        "result.",
+        "result ",
+        "result<.out",
+        "result>.out",
+        'result".out',
+        "result|.out",
+        "result*.out",
+        "control\t.out",
+    ],
+)
+def test_generate_sumtally_rejects_non_filename_output_name(
+    tmp_path,
+    output_name,
+):
+    workspace, _ = write_workspace(tmp_path)
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_before = manifest_path.read_bytes()
+
+    with pytest.raises(ValueError, match="single portable file name"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            output_name=output_name,
+            command_argv=["generate"],
+        )
+
+    assert manifest_path.read_bytes() == manifest_before
+    failure = json.loads(
+        (workspace / "analysis" / "sumtally_generation_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "gate_failed"
+    assert failure["phits_execution_started"] is False
+
+
+@pytest.mark.parametrize(
+    "output_name",
+    ["custom-total.out", "COM0.out", "LPT10.out", "日本語.out"],
+)
+def test_generate_sumtally_accepts_portable_custom_output_name(
+    tmp_path,
+    output_name,
+):
+    workspace, _ = write_workspace(tmp_path)
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        output_name=output_name,
+        command_argv=["generate"],
+    )
+
+    assert Path(summary["outputs"]["sumtally_output"]).name == output_name
 
 
 def test_generate_sumtally_factor_reproduces_analytic_active_treatment_dose(
@@ -791,6 +876,70 @@ def test_run_sumtally_rejects_mtime_only_preexisting_output_update(tmp_path):
     assert after["sha256"] == before["sha256"]
 
 
+def test_run_sumtally_rejects_linked_recorded_output_before_runner(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    for segment in manifest["segments"]:
+        output = workspace / segment["expected_output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(tally_output_text(), encoding="utf-8")
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+    linked_target = expected_output.with_name("linked-target.out")
+    linked_target.write_text("existing target", encoding="utf-8")
+    try:
+        expected_output.symlink_to(linked_target.name)
+    except OSError as exc:
+        if sys.platform != "win32":
+            pytest.skip(f"file symlink creation is unavailable: {exc}")
+        outside = tmp_path / "linked-output-target"
+        outside.mkdir()
+        linked_target = outside / expected_output.name
+        linked_target.write_text("existing target", encoding="utf-8")
+        junction = workspace / "linked-output"
+        trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        result = subprocess.run(
+            [
+                str(trusted_cmd),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(junction),
+                str(outside),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            pytest.skip(
+                "file symlink and junction creation are unavailable: "
+                f"{result.stdout}{result.stderr}"
+            )
+        expected_output = junction / expected_output.name
+        generation["outputs"]["sumtally_output"] = str(expected_output)
+        generation_path = workspace / "analysis" / "sumtally_generation_summary.json"
+        generation_path.write_text(json.dumps(generation), encoding="utf-8")
+    calls = []
+
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse point"):
+        run_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+    assert calls == []
+    assert linked_target.read_text(encoding="utf-8") == "existing target"
+
+
 def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     workspace, _ = write_workspace(tmp_path)
     generation = generate_sumtally(workspace_root=workspace, paths=paths(), command_argv=["generate"])
@@ -808,7 +957,18 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         calls["text"] = kwargs["text"]
         calls["shell"] = kwargs["shell"]
         calls["env"] = kwargs["env"]
-        expected_output.write_text(tally_output_text(), encoding="utf-8")
+        for record in generation["sumtally_segment_paths"]:
+            written = Path(record["sumtally_written_output_path"])
+            if written.is_absolute():
+                staged_reference = written
+            else:
+                staged_reference = Path(kwargs["cwd"]) / written
+            assert staged_reference.resolve() == Path(
+                record["resolved_output_path"]
+            ).resolve()
+            assert staged_reference.is_file()
+        staged_output = Path(kwargs["cwd"]) / expected_output.name
+        staged_output.write_text(tally_output_text(), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="sum warn")
 
     summary = run_sumtally(
@@ -820,8 +980,12 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
     )
 
     assert calls["cmd"] == ["/opt/phits-root/bin/phits"]
-    assert calls["cwd"] == Path(generation["outputs"]["sum_input"]).parent
-    assert calls["stdin_name"] == generation["outputs"]["sum_input"]
+    original_cwd = Path(generation["outputs"]["sum_input"]).parent
+    assert calls["cwd"] != original_cwd
+    assert calls["cwd"].resolve().parent == workspace.resolve()
+    assert Path(calls["stdin_name"]).name == Path(
+        generation["outputs"]["sum_input"]
+    ).name
     assert calls["capture_output"] is True
     assert calls["text"] is True
     assert calls["shell"] is False
@@ -866,9 +1030,12 @@ def test_run_sumtally_preserves_execution_evidence_when_geometry_is_invalid(
         command_argv=["generate"],
     )
     expected_output = Path(generation["outputs"]["sumtally_output"])
+    expected_output.write_text(tally_output_text(), encoding="utf-8")
+    previous_output = expected_output.read_bytes()
 
     def fake_runner(cmd, **kwargs):
-        expected_output.write_text("not a tally mesh\n", encoding="utf-8")
+        staged_output = Path(kwargs["cwd"]) / expected_output.name
+        staged_output.write_text("not a tally mesh\n", encoding="utf-8")
         return subprocess.CompletedProcess(
             cmd,
             0,
@@ -888,13 +1055,62 @@ def test_run_sumtally_preserves_execution_evidence_when_geometry_is_invalid(
     assert summary["returncode"] == 0
     assert summary["phits_execution_started"] is True
     assert summary["expected_sumtally_output_exists"] is True
-    assert summary["expected_sumtally_output_updated_by_run"] is True
+    assert summary["expected_sumtally_output_updated_by_run"] is False
     assert summary["expected_sumtally_output_after_run"]["sha256"]
     assert summary["expected_sumtally_output_sha256"]
+    assert (
+        summary["expected_sumtally_output_after_run"]["sha256"]
+        == summary["expected_sumtally_output_before_run"]["sha256"]
+    )
+    assert expected_output.read_bytes() == previous_output
     assert summary["sumtally_output_geometry_evidence"] is None
     assert "geometry validation failed" in summary["failure_reason"]
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "sum completed"
     assert Path(summary["stderr_path"]).read_text(encoding="utf-8") == "geometry warning"
+
+
+def test_run_sumtally_preserves_preexisting_output_when_phits_fails(tmp_path):
+    workspace, _ = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+    expected_output.write_text(tally_output_text(), encoding="utf-8")
+    previous_output = expected_output.read_bytes()
+
+    def fake_runner(cmd, **kwargs):
+        staged_output = Path(kwargs["cwd"]) / expected_output.name
+        staged_output.write_text(
+            tally_output_text() + "# failed run output\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(
+            cmd,
+            9,
+            stdout="sum failed",
+            stderr="runner error",
+        )
+
+    summary = run_sumtally(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=None),
+        sum_input=Path(generation["outputs"]["sum_input"]),
+        command_argv=["run"],
+        runner=fake_runner,
+    )
+
+    assert summary["stage_status"] == "failed"
+    assert summary["returncode"] == 9
+    assert summary["expected_sumtally_output_updated_by_run"] is False
+    assert (
+        summary["expected_sumtally_output_after_run"]["sha256"]
+        == summary["expected_sumtally_output_before_run"]["sha256"]
+    )
+    assert expected_output.read_bytes() == previous_output
+    assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "sum failed"
+    assert Path(summary["stderr_path"]).read_text(encoding="utf-8") == "runner error"
 
 
 def test_run_sumtally_rejects_legacy_normalization_before_execution(tmp_path):
@@ -1011,6 +1227,77 @@ def test_run_sumtally_invalid_omp_records_execution_not_started(tmp_path):
     )
     assert calls == []
     assert summary["phits_execution_started"] is False
+
+
+def test_sumtally_guard_failure_does_not_mark_external_execution_started(tmp_path):
+    workspace = tmp_path / "workspace"
+    sumtally_dir = workspace / "sumtally"
+    sumtally_dir.mkdir(parents=True)
+    sum_input = sumtally_dir / "sum.inp"
+    sum_input.write_text("$OMP = 1\n[ E N D ]\n", encoding="utf-8")
+    invalid_output_parent = workspace / "not-a-directory"
+    invalid_output_parent.write_text("preserve", encoding="utf-8")
+    started = []
+    calls = []
+
+    with pytest.raises(ValueError, match="not a directory"):
+        run_phits_sumtally(
+            phits_executable_path="synthetic-phits",
+            sum_input=sum_input,
+            stdout_path=sumtally_dir / "stdout.txt",
+            stderr_path=sumtally_dir / "stderr.txt",
+            workspace_root=workspace,
+            expected_output=invalid_output_parent / "sum.out",
+            environment={},
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+            on_start=lambda: started.append(True),
+        )
+
+    assert started == []
+    assert calls == []
+    assert invalid_output_parent.read_text(encoding="utf-8") == "preserve"
+
+
+@pytest.mark.parametrize(
+    "target_name",
+    ["expected", "stdout", "stderr", "batch.out", "phits.out"],
+)
+def test_sumtally_rejects_non_regular_destination_before_execution(
+    tmp_path,
+    target_name,
+):
+    workspace = tmp_path / "workspace"
+    sumtally_dir = workspace / "sumtally"
+    sumtally_dir.mkdir(parents=True)
+    sum_input = sumtally_dir / "sum.inp"
+    sum_input.write_text("$OMP = 1\n[ E N D ]\n", encoding="utf-8")
+    targets = {
+        "expected": sumtally_dir / "sum.out",
+        "stdout": sumtally_dir / "stdout.txt",
+        "stderr": sumtally_dir / "stderr.txt",
+        "batch.out": sumtally_dir / "batch.out",
+        "phits.out": sumtally_dir / "phits.out",
+    }
+    targets[target_name].mkdir()
+    started = []
+    calls = []
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        run_phits_sumtally(
+            phits_executable_path="synthetic-phits",
+            sum_input=sum_input,
+            stdout_path=targets["stdout"],
+            stderr_path=targets["stderr"],
+            workspace_root=workspace,
+            expected_output=targets["expected"],
+            environment={},
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+            on_start=lambda: started.append(True),
+        )
+
+    assert started == []
+    assert calls == []
+    assert targets[target_name].is_dir()
 
 
 def test_relative_workspace_root_round_trips_generated_paths(

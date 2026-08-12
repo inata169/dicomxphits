@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from dicomxphits.run_segments import (
     phits_environment,
     run_segments,
 )
+from dicomxphits.safe_output import UnsafeWorkspacePathError
 
 
 def active_segment(index=0, **overrides):
@@ -53,8 +55,12 @@ def write_workspace(tmp_path, *segments):
             continue
         path = workspace / str(phits_input)
         path.parent.mkdir(parents=True, exist_ok=True)
+        expected_output = str(segment.get("expected_output_path") or "")
         path.write_text(
-            "$OMP=8\n[ Parameters ]\n  icntl = 0\n[ E N D ]\n",
+            "$OMP=8\n[ Parameters ]\n  icntl = 0\n"
+            "[ T-Deposit ]\n"
+            f"  file = {expected_output}\n"
+            "[ E N D ]\n",
             encoding="utf-8",
         )
     return workspace, manifest
@@ -98,24 +104,38 @@ def test_phits_environment_rejects_missing_or_invalid_omp_directive(
         phits_environment(phits_input)
 
 
-def fake_runner_for(workspace: Path, outputs: list[Path], *, returncode: int = 0):
+def fake_runner_for(
+    workspace: Path,
+    outputs: list[Path],
+    *,
+    returncode: int = 0,
+    produce_output_on_failure: bool = False,
+    produce_error_output: bool = True,
+):
     pending = list(outputs)
 
     def fake_runner(command, *, input, cwd, capture_output, text, shell, env):
         assert command == ["/opt/phits/bin/phits"]
-        assert Path(cwd) == workspace
+        execution_root = Path(cwd)
+        assert execution_root != workspace
+        execution_root.resolve().relative_to(workspace.resolve())
         assert capture_output is True
         assert text is True
         assert shell is False
         assert input.startswith("file = segments/")
         assert input.endswith("/phits.inp\n")
         assert env["OMP_NUM_THREADS"] == "8"
-        if pending and returncode == 0:
-            output = pending.pop(0)
+        if pending and (returncode == 0 or produce_output_on_failure):
+            output = execution_root / pending.pop(0).relative_to(workspace)
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text("dose\n", encoding="utf-8")
-        (Path(cwd) / "batch.out").write_text("batch\n", encoding="utf-8")
-        (Path(cwd) / "phits.out").write_text("phits\n", encoding="utf-8")
+            if produce_error_output:
+                output.with_name(f"{output.stem}_err{output.suffix}").write_text(
+                    "relative error\n",
+                    encoding="utf-8",
+                )
+        (execution_root / "batch.out").write_text("batch\n", encoding="utf-8")
+        (execution_root / "phits.out").write_text("phits\n", encoding="utf-8")
         return subprocess.CompletedProcess(command, returncode, stdout="stdout\n", stderr="stderr\n")
 
     return fake_runner
@@ -165,6 +185,42 @@ def test_run_segments_records_success_summary_and_collects_root_outputs(tmp_path
     assert Path(summary["segments"][0]["phits_out_path"]).is_file()
     assert summary["segments"][1]["status"] == "skipped"
     assert read_summary(workspace)["status"] == "success"
+
+
+def test_run_segments_promotes_statistical_error_output_for_sumtally(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    expected = workspace / manifest["segments"][0]["expected_output_path"]
+    expected_error = expected.with_name(f"{expected.stem}_err{expected.suffix}")
+
+    summary = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(workspace, [expected]),
+    )
+
+    assert summary["status"] == "success"
+    assert expected_error.read_text(encoding="utf-8") == "relative error\n"
+
+
+def test_run_segments_rejects_success_without_statistical_error_output(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    expected = workspace / manifest["segments"][0]["expected_output_path"]
+
+    summary = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(
+            workspace,
+            [expected],
+            produce_error_output=False,
+        ),
+    )
+
+    assert summary["status"] == "failed"
+    assert summary["segments"][0]["status"] == "failed"
+    assert not expected.exists()
 
 
 def test_run_segments_honors_active_and_skip_flags(tmp_path):
@@ -251,6 +307,8 @@ def test_run_segments_removes_stale_expected_output_before_success_check(tmp_pat
     expected = workspace / manifest["segments"][0]["expected_output_path"]
     expected.parent.mkdir(parents=True, exist_ok=True)
     expected.write_text("stale dose\n", encoding="utf-8")
+    expected_error = expected.with_name(f"{expected.stem}_err{expected.suffix}")
+    expected_error.write_text("stale relative error\n", encoding="utf-8")
 
     summary = run_segments(
         workspace_root=workspace,
@@ -263,6 +321,7 @@ def test_run_segments_removes_stale_expected_output_before_success_check(tmp_pat
     assert summary["failed"] == 1
     assert summary["segments"][0]["status"] == "failed"
     assert not expected.exists()
+    assert not expected_error.exists()
 
 
 def test_run_segments_validates_all_omp_directives_before_removing_outputs(tmp_path):
@@ -302,21 +361,170 @@ def test_run_segments_validates_all_omp_directives_before_removing_outputs(tmp_p
     assert read_summary(workspace)["status"] == "gate_failed"
 
 
-def test_run_segments_collects_root_outputs_on_phits_failure(tmp_path):
-    workspace, _manifest = write_workspace(tmp_path)
+def test_run_segments_rejects_linked_log_before_external_execution(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    expected = workspace / manifest["segments"][0]["expected_output_path"]
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("preserve\n", encoding="utf-8")
+    stdout_log = expected.parent / "phits_stdout.txt"
+    try:
+        stdout_log.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symbolic links are unavailable: {exc}")
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+    assert outside.read_text(encoding="utf-8") == "preserve\n"
+
+
+def test_run_segments_rejects_linked_output_parent_before_external_execution(tmp_path):
+    segment = active_segment(
+        0,
+        expected_output_path="linked-output/deposit-target-3D.out",
+    )
+    workspace, _manifest = write_workspace(tmp_path, segment)
+    actual_output_dir = workspace / "actual-output"
+    actual_output_dir.mkdir()
+    linked_output_dir = workspace / "linked-output"
+    try:
+        linked_output_dir.symlink_to(actual_output_dir, target_is_directory=True)
+    except OSError as exc:
+        if sys.platform != "win32":
+            pytest.skip(f"directory symlinks are unavailable: {exc}")
+        trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        result = subprocess.run(
+            [
+                str(trusted_cmd),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(linked_output_dir),
+                str(actual_output_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            pytest.skip(
+                "directory links are unavailable: "
+                f"{exc}; {result.stdout}{result.stderr}"
+            )
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="symbolic link|reparse"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+    assert list(actual_output_dir.iterdir()) == []
+
+
+def test_run_segments_preflights_later_segment_outputs_before_execution(tmp_path):
+    workspace, manifest = write_workspace(
+        tmp_path,
+        active_segment(0),
+        active_segment(1),
+    )
+    later_expected = workspace / manifest["segments"][1]["expected_output_path"]
+    unsafe_log = later_expected.parent / "phits_stdout.txt"
+    unsafe_log.mkdir(parents=True)
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+
+
+def test_run_segments_preflights_later_error_output_before_execution(tmp_path):
+    workspace, manifest = write_workspace(
+        tmp_path,
+        active_segment(0),
+        active_segment(1),
+    )
+    later_expected = workspace / manifest["segments"][1]["expected_output_path"]
+    unsafe_error_output = later_expected.with_name(
+        f"{later_expected.stem}_err{later_expected.suffix}"
+    )
+    unsafe_error_output.mkdir(parents=True)
+    calls = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args[0], 0, stdout="", stderr="")
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=fake_runner,
+        )
+
+    assert calls == []
+
+
+def test_run_segments_keeps_failure_outputs_diagnostic_only(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    expected = workspace / manifest["segments"][0]["expected_output_path"]
+    expected_error = expected.with_name(f"{expected.stem}_err{expected.suffix}")
 
     summary = run_segments(
         workspace_root=workspace,
         paths=paths(),
         command_argv=["run"],
-        runner=fake_runner_for(workspace, [], returncode=9),
+        runner=fake_runner_for(
+            workspace,
+            [expected],
+            returncode=9,
+            produce_output_on_failure=True,
+        ),
     )
 
     assert summary["status"] == "failed"
-    assert summary["segments"][0]["status"] == "failed"
-    assert summary["segments"][0]["return_code"] == 9
-    assert Path(summary["segments"][0]["batch_out_path"]).is_file()
-    assert Path(summary["segments"][0]["phits_out_path"]).is_file()
+    segment_summary = summary["segments"][0]
+    assert segment_summary["status"] == "failed"
+    assert segment_summary["return_code"] == 9
+    assert not expected.exists()
+    assert not expected_error.exists()
+    assert Path(segment_summary["stdout_log_path"]).read_text(encoding="utf-8") == "stdout\n"
+    assert Path(segment_summary["stderr_log_path"]).read_text(encoding="utf-8") == "stderr\n"
+    assert Path(segment_summary["batch_out_path"]).is_file()
+    assert Path(segment_summary["phits_out_path"]).is_file()
 
 
 def test_run_segments_cli_returns_success_and_prints_summary_path(tmp_path, capsys, monkeypatch):
@@ -333,7 +541,11 @@ def test_run_segments_cli_returns_success_and_prints_summary_path(tmp_path, caps
             "skipped": 0,
             "segments": [],
         }
-        module.write_json(module.summary_path(kwargs["workspace_root"]), summary)
+        module.write_json(
+            module.summary_path(kwargs["workspace_root"]),
+            summary,
+            case_root=kwargs["workspace_root"],
+        )
         return summary
 
     monkeypatch.setattr(module, "run_segments", fake_run_segments)

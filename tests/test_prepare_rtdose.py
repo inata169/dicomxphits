@@ -26,6 +26,7 @@ from dicomxphits.prepare_rtdose import (
     run_rtdose,
     select_ct_reference,
 )
+from dicomxphits.safe_output import UnsafeWorkspacePathError
 from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_INPUT_DOSE_STATE,
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
@@ -1302,7 +1303,9 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
 
         def communicate(self, input):
             calls["input"] = input
-            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
+            staged_dose = Path(input.splitlines()[3])
+            calls["staged_dose"] = staged_dose
+            write_coordinate_rtdose(staged_dose.with_suffix(".dcm"))
             return "ok", None
 
     def fake_runner(cmd, **kwargs):
@@ -1322,9 +1325,12 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     )
 
     assert calls["cmd"] == [str(exe)]
-    assert calls["cwd"] == str(Path(prepare["dat_dir"]).absolute())
+    assert Path(calls["cwd"]) == calls["staged_dose"].parent
+    assert Path(calls["cwd"]) != Path(prepare["dat_dir"]).absolute()
     assert calls["text"] is True
     assert calls["input"].startswith("PHITS2DICOM")
+    assert calls["staged_dose"] != Path(prepare["phits_dose"])
+    calls["staged_dose"].resolve().relative_to(workspace.resolve())
     assert prepare["rtdose_placement"]["rtplan_isocenter_dicom_mm"] == [
         10.0,
         -20.0,
@@ -1336,6 +1342,7 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
         abs=1.0e-6,
     )
     assert summary["returncode"] == 0
+    assert summary["command"]["cwd"] == calls["cwd"]
     assert summary["phits2dicom_execution_started"] is True
     assert summary["rtdose_prepare_summary_sha256"] == file_sha256(
         workspace / "analysis" / "rtdose_conversion_prepare_summary.json"
@@ -1390,6 +1397,69 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
 
 
+def test_run_rejects_final_only_phits2dicom_output_and_contains_staging(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    final_output = Path(prepare["phits_dose"]).with_suffix(".dcm")
+    calls = {}
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            calls["staged_output"] = Path(input.splitlines()[3]).with_suffix(
+                ".dcm"
+            )
+            write_coordinate_rtdose(final_output)
+            (Path(calls["cwd"]) / "cwd-relative-bypass.txt").write_text(
+                "must remain staged",
+                encoding="utf-8",
+            )
+            return "ok", None
+
+    def fake_runner(cmd, **kwargs):
+        calls["cwd"] = kwargs["cwd"]
+        return FakeProc()
+
+    summary = run_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        command_argv=["run"],
+        runner=fake_runner,
+    )
+
+    assert Path(calls["cwd"]) == calls["staged_output"].parent
+    assert Path(calls["cwd"]) != Path(prepare["dat_dir"]).absolute()
+    assert not (Path(prepare["dat_dir"]) / "cwd-relative-bypass.txt").exists()
+    if sys.platform == "win32":
+        assert Path(calls["cwd"]).is_dir()
+        assert (Path(calls["cwd"]) / "cwd-relative-bypass.txt").read_text(
+            encoding="utf-8"
+        ) == "must remain staged"
+    else:
+        assert not Path(calls["cwd"]).exists()
+    assert summary["stage_status"] == "failed"
+    assert summary["phits2dicom_staged_output_promoted"] is False
+    assert summary["plan_reference_synchronization"] is None
+    assert summary["failure_reason"] == (
+        "phits2dicom did not create the expected output in guarded staging"
+    )
+
+
 def test_run_rejects_phits_dose_changed_after_prepare(tmp_path):
     workspace, files = write_workspace(tmp_path)
     template = tmp_path / "template.dcm"
@@ -1425,6 +1495,57 @@ def test_run_rejects_phits_dose_changed_after_prepare(tmp_path):
         )
 
     assert calls == []
+
+
+@pytest.mark.parametrize("target_name", ["corrected", "coordinate_summary"])
+def test_run_rejects_non_regular_postprocessing_target_before_conversion(
+    tmp_path,
+    target_name,
+):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    corrected = prepare_rtdose_module.corrected_rtdose_path(
+        files["sumtally_output"].with_suffix(".dcm")
+    )
+    targets = {
+        "corrected": corrected,
+        "coordinate_summary": prepare_rtdose_module.coordinate_summary_path(
+            corrected
+        ),
+    }
+    targets[target_name].mkdir()
+    calls = []
+
+    with pytest.raises(UnsafeWorkspacePathError, match="not a regular file"):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=lambda cmd, **kwargs: calls.append((cmd, kwargs)),
+        )
+
+    assert calls == []
+    failure = json.loads(
+        (workspace / "analysis" / "rtdose_conversion_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["phits2dicom_execution_started"] is False
+    assert targets[target_name].is_dir()
 
 def test_run_rejects_upstream_phits_out_changed_after_prepare(tmp_path):
     workspace, files = write_workspace(tmp_path)
@@ -1965,7 +2086,8 @@ def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkey
         returncode = 0
 
         def communicate(self, input):
-            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
+            calls["staged_dose"] = Path(input.splitlines()[3])
+            write_coordinate_rtdose(calls["staged_dose"].with_suffix(".dcm"))
             return "ok", None
 
     def fake_runner(cmd, **kwargs):
@@ -1981,7 +2103,8 @@ def test_run_resolves_relative_phits2dicom_executable_before_changing_cwd(monkey
     )
 
     assert calls["cmd"] == [str(exe.resolve())]
-    assert calls["cwd"] == str(Path(summary["dat_dir"]).absolute())
+    assert Path(calls["cwd"]) == calls["staged_dose"].parent
+    assert Path(calls["cwd"]) != Path(summary["dat_dir"]).absolute()
     assert summary["stage_status"] == "success"
 
 
@@ -2010,7 +2133,8 @@ def test_run_fails_when_final_plan_reference_is_corrupted(
         returncode = 0
 
         def communicate(self, input):
-            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
+            staged_dose = Path(input.splitlines()[3])
+            write_coordinate_rtdose(staged_dose.with_suffix(".dcm"))
             return "ok", None
 
     original_fix_coordinates = prepare_rtdose_module.fix_coordinates
@@ -2081,7 +2205,8 @@ def test_run_fails_when_final_coordinate_placement_is_corrupted(
         returncode = 0
 
         def communicate(self, input):
-            write_coordinate_rtdose(Path(prepare["phits_dose"]).with_suffix(".dcm"))
+            staged_dose = Path(input.splitlines()[3])
+            write_coordinate_rtdose(staged_dose.with_suffix(".dcm"))
             return "ok", None
 
     original_fix_coordinates = prepare_rtdose_module.fix_coordinates

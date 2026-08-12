@@ -43,12 +43,16 @@ Python 3.12を`py -3.12`または`python`で検出できない場合は明示し
 スクリプトはZIP作成前に次を自動実行します。
 
 1. 公開ツリー監査を実行する
-2. `pyproject.toml`からversionと実行時依存関係を読む
-3. Python公式の3.12.10 64-bit installerをHTTPSで取得する
-4. Windows Authenticodeが`Valid`で、署名者がPython Software Foundation
-   であることを必須とし、署名情報とSHA-256を記録する
-5. pipへCPython 3.12、`win_amd64`、binary-onlyのwheel取得を要求する
-6. `numpy`、`pydicom`、`setuptools`、`wheel`を確認し、NumPyについて
+2. `pyproject.toml`からversionを、`requirements/offline-win64.txt`から
+   wheelの正確なversion、filename、SHA-256を読む
+3. Python公式のCPython 3.12.10 application-local NuGet package、x64 Tcl/Tk
+   MSI component、固定versionのNuGet CLIをHTTPSで取得する
+4. CPython packageの期待するNuGet repository署名とpackage identity、Tcl/Tk
+   componentのPython Software Foundation Authenticode署名、NuGet CLIの
+   Microsoft Authenticode署名を必須とし、provenanceとSHA-256を記録する
+5. pipへCPython 3.12、`win_amd64`、binary-only、`--require-hashes`での
+   wheel取得を要求する
+6. wheelの不足、追加、rename、hash不一致を拒否し、NumPyについて
    `cp312-cp312-win_amd64`の完全一致を確認する
 7. 監査済みGit indexに存在する通常ファイルblobだけをコピーし、未追跡または
    未stageのbyteはコピーしない
@@ -61,18 +65,20 @@ dist/dicomxphits-offline-win64-<version>.zip
 ```
 
 同名ファイルがある場合は停止します。既存の生成済みZIPを置き換えてよいことを
-確認した場合だけ`-Force`を使用してください。`dist/`、取得したinstaller、
+確認した場合だけ`-Force`を使用してください。`dist/`、取得したruntime source、
 wheel、作業用ファイルはGit管理対象外であり、コミットしないでください。
 
 完成したZIPをUSBストレージへコピーします。組織で媒体持込み手順がある場合は、
 作成スクリプトが表示したZIPのSHA-256も転送記録として保存してください。
 
-## オフラインPCでの基本操作：2段階
+## オフラインPCでの基本操作：3段階
 
 1. USBからZIPをローカルディスク上の書込み可能なフォルダーへコピーし、完全に
    展開します。ZIP内のファイルを直接開いたり、USB上をeditable projectの場所に
    したりしないでください。
 2. 展開先の`install_offline.cmd`を1回実行します。
+3. 検証済みinstall stageに対するWindowsの管理者確認を承認します。拒否した場合は、
+   Pythonを起動する前に停止します。
 
 PowerShellでは`cd install_offline.cmd`ではなく、次のように実行します。`cd`は
 フォルダー移動用であり、ファイルの実行には使用しません。
@@ -81,16 +87,38 @@ PowerShellでは`cd install_offline.cmd`ではなく、次のように実行し�
 .\install_offline.cmd
 ```
 
-コマンドは、同梱Python installerを実行する前に保護対象ファイルをすべて検証し、
+bundle検証前に起動する実行ファイルは、quoted absolute pathの
+`%__APPDIR__%WindowsPowerShell\v1.0\powershell.exe`だけです。継承された
+`__APPDIR__`の上書きを消去して、cmd.exe自身のapplication directoryを使用します。
+呼出元の`SystemRoot`、current directory、`PATH`からPowerShell、`py.exe`、
+`python.exe`を探索しません。
+bootstrapは、保護対象pathのreparse pointと展開root直下の想定外の実行ファイルを
+拒否し、全payloadを検証してread-lockし、bundle directory pathをrename不能に保持して
+全payloadを再検証した後だけprotected runtime構築の管理者承認を要求します。昇格childは
+Windows system directoryの絶対pathだけを使用し、runtimeと
+protected hash receiptを作成して、Python起動前に終了します。元の非昇格stageがその後、
 次を行います。
 
-- 既存のCPython 3.12 64-bitがあれば使用する
-- なければ同梱Python 3.12.10をユーザー単位で、pip、Python Launcher、
-  Tcl/Tkを有効にして導入する。ただしPATH、Python file association、shortcutは
-  変更・作成しない
+- 同梱NuGet verifier、CPython package、Tcl/Tk componentを検証してread-lockする
+- 認証済みsourceだけから、Windows Common Application Data配下の管理者保護領域へ
+  installation固有runtimeを安全に構成する。変更できるのは`SYSTEM`と昇格済み
+  Administratorsだけで、導入ユーザーにはread/executeだけを許可する
+- exactなownerとaccess ruleを確認し、各fileを認証済みsource由来digestと比較しながら
+  read-lockする。protected完全inventoryを再確認し、最初のPython起動前から導入終了まで
+  全file lockを保持する
+- inventoryに含まれるbundle fileだけをexactなprotected snapshotへコピーし、helper、
+  wheelhouse、editable sourceはそのsnapshotから使用する。追加された`setup.py`などの
+  未検証fileは拒否し、コピーも実行もしない
+- setuptools PEP 660 backendを明示し、editable build metadataはread-only protected
+  sourceではなくtemporary build storageへ書き込む
+- 最初のPowerShell起動前に継承されたCLR profiler、startup hook、AppDomain manager
+  設定を消去し、必要なbundle directoryをrename防止handleで保持できなければ停止する
+- そのapplication-local CPython 3.12.10 x64だけを`-I -S -B`で使用する。
+  host Python、registry candidate、`py.exe`、bare `python.exe`を探索、probe、
+  install、repair、実行しない
 - 展開したプロジェクト直下へ`.venv`を作成する
-- すべてのpip installで`--no-index`、`--find-links`、
-  `--no-build-isolation`を使用し、`wheelhouse/`以外へフォールバックしない
+- exact lock済み依存だけを、`--require-hashes`、`--no-index`、
+  `--find-links`、`--no-build-isolation`で`wheelhouse/`から導入する
 - dicomxphitsをeditable installする
 - `tkinter`、`numpy`、`pydicom`、`dicomxphits`をimport確認する
 - Python、NumPy、pydicomのversionを`offline-install.log`へ記録する
@@ -103,11 +131,18 @@ PowerShellでは`cd install_offline.cmd`ではなく、次のように実行し�
 launchers\run_gui_venv.cmd
 ```
 
+protected runtimeとsource snapshotは、`.venv`のbase interpreterおよびeditable
+sourceとして記録されるため、導入成功後も保持されます。不要になったprotected
+installationの削除は、別の明示的な管理者操作です。installerは自動削除やrepairを
+行いません。
+
 ## 整合性ファイル
 
 `bundle-manifest.json`には、source HEAD commit、正確なGit index entry列の
-SHA-256 fingerprint、target、実行時依存関係、wheel tag、Python installerの
-URLとAuthenticode署名情報、各payloadの役割・size・SHA-256を記録します。
+SHA-256 fingerprint、target、実行時依存関係、wheel tag、runtime sourceの
+URLとNuGet・Authenticode署名情報、各payloadの役割・size・SHA-256を記録します。
+review済みwheel lockも記録し、通常CIは`requirements/runtime.txt`から同じ
+NumPyおよびpydicom versionを使用します。
 
 `SHA256SUMS.txt`には全payloadとmanifestのdigestを記録します。自己参照になるため、
 `SHA256SUMS.txt`自身のdigestだけは含みません。この検証は転送破損や内容変更を
@@ -133,19 +168,34 @@ ZIPを再コピーして、作成時に表示されたZIP SHA-256と比較して
 binary wheelの問題をオンライン側で解決してください。未レビューのsource archiveを
 `wheelhouse/`へ追加しないでください。
 
-### Python導入失敗
+### Python runtime構成失敗
 
-展開先の`offline-install.log`と`python-installer.log`を確認してください。
-Pythonはユーザー単位で導入され、machine-wide PATHの変更を必要としません。組織の
-software installation policyによって導入が制限される場合があります。
+展開先の`offline-install.log`を確認してください。protected Windows Installer logは
+`%ProgramData%\dicomxphits\offline-runtimes\*-msi.log`にあります。
+localに導入済みのPythonへ差し替えたり、checksum保護されたruntime sourceを編集
+したりせず、producer作成済みZIPを新しい通常のlocal folderへ再展開してください。
+host Python productはinstallしませんが、組織policyによってWindows Installerの
+administrative extractionが制限される場合があります。
 
-### `Python 3.12 not found!`をPythonとして実行しようとする
+### 管理者承認を拒否した、または利用できない
 
-Python Launcherだけが存在し、Python 3.12本体がないPCで、修正前のbundleが
-Launcherのmessageを実行ファイルpathと誤認した場合の症状です。現在のinstallerは、
-取得した値が実在する実行ファイルである場合だけ採用します。この症状が出た古い
-展開済みfolderへ個別のCMDだけをcopyせず、オンラインPCで生成した修正版ZIP全体を
-別のfolderへ展開してください。
+NuGet verifier、Windows Installer、Python、helper、pipを起動する前に停止します。
+`install_offline.cmd`を再実行し、検証済みWindows system PowerShell stageを承認して
+ください。folder権限を弱めたり、host Pythonをbundleへコピーしたり、部分的なruntimeを
+実行したりしないでください。
+
+### protected runtimeが既に存在する
+
+installerは再利用、repair、削除を行いません。以前の展開projectが不要であることを
+確認してから管理者が対応するprotected runtimeを削除するか、検証済みZIPを新しい
+local pathへ展開し、別のinstallation固有runtimeを使用してください。
+
+### 想定外実行ファイルまたはreparse pointのerror
+
+checkを削除したりchecksum保護対象を編集したりせず、新しい通常のlocal directoryへ
+ZIPを再展開してください。現在のinstallerは、展開rootの実行ファイルlookalike、
+またはbundle root・保護対象path上のsymbolic link、junction、reparse pointを
+検出すると安全側で停止します。
 
 ### `offline-install.log`のpath末尾に余分な`"`が表示される
 

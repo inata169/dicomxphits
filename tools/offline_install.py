@@ -1,8 +1,8 @@
 """Install dicomxphits from a verified offline Windows bundle.
 
-The module is standard-library only so it can run immediately after the
-bundled CPython installer completes. Its pure command-building and validation
-helpers are also used by synthetic tests.
+The module is standard-library only so it can run immediately from the
+authenticated application-local CPython runtime. Its pure command-building
+and validation helpers are also used by synthetic tests.
 """
 
 from __future__ import annotations
@@ -84,6 +84,8 @@ def _safe_relative(value: str) -> PurePosixPath:
         raise OfflineInstallError(f"Integrity path is not normalized: {value}")
     if re.match(r"^[A-Za-z]:", path.parts[0]):
         raise OfflineInstallError(f"Integrity path must not contain a drive: {value}")
+    if any(":" in part for part in path.parts):
+        raise OfflineInstallError(f"Integrity path must not contain an alternate stream: {value}")
     return path
 
 
@@ -203,6 +205,28 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
             f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
         )
 
+    actual_files: set[str] = set()
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink() or path.is_junction():
+            raise OfflineInstallError(
+                f"Bundle contains a linked or reparse entry: {relative}"
+            )
+        if path.is_file():
+            actual_files.add(relative)
+        elif not path.is_dir():
+            raise OfflineInstallError(
+                f"Bundle contains a non-regular entry: {relative}"
+            )
+    expected_files = expected_checksum_paths | {"SHA256SUMS.txt"}
+    if actual_files != expected_files:
+        missing = sorted(expected_files - actual_files)
+        unexpected = sorted(actual_files - expected_files)
+        raise OfflineInstallError(
+            "Bundle source tree differs from the verified manifest; "
+            f"missing={missing or 'none'}, unexpected={unexpected or 'none'}"
+        )
+
     if not expected_wheel_paths:
         raise OfflineInstallError("Bundle manifest contains no dependency wheels")
     wheelhouse = root / "wheelhouse"
@@ -230,8 +254,11 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
     required_source = {
         "install_offline.cmd",
         "tools/offline_install.py",
+        "tools/install_offline_verified.ps1",
+        "tools/lock_bundle_directories.ps1",
         "launchers/run_gui_venv.cmd",
         "pyproject.toml",
+        "requirements/offline-win64.txt",
     }
     absent_source = sorted(required_source - manifest_paths)
     if absent_source:
@@ -260,7 +287,7 @@ def python_probe_command(executable: Path) -> list[str]:
         "'major':sys.version_info.major,'minor':sys.version_info.minor,"
         "'micro':sys.version_info.micro,'bits':struct.calcsize('P')*8}))"
     )
-    return [str(executable), "-I", "-c", program]
+    return [str(executable), "-I", "-S", "-B", "-c", program]
 
 
 def probe_python(
@@ -344,7 +371,7 @@ def ensure_venv(
 
     logger.write("Creating repository-local .venv with CPython 3.12 x64")
     _run_logged(
-        [str(base_python), "-m", "venv", str(venv_root)],
+        [str(base_python), "-I", "-S", "-B", "-m", "venv", str(venv_root)],
         logger=logger,
         runner=runner,
         cwd=bundle_root,
@@ -377,6 +404,7 @@ def offline_pip_command(
 ) -> list[str]:
     return [
         str(venv_python),
+        "-I",
         "-m",
         "pip",
         "install",
@@ -481,13 +509,15 @@ def _verify_imports(
 def install_bundle(
     bundle_root: Path,
     *,
+    install_root: Path | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> tuple[Path, dict[str, str]]:
     root = bundle_root.resolve()
-    logger = InstallLogger(root / "offline-install.log")
+    destination_root = (install_root or bundle_root).resolve()
+    logger = InstallLogger(destination_root / "offline-install.log")
+    manifest = verify_bundle(root)
     logger.write("Starting dicomxphits offline installation")
     logger.write("Run from an extracted local-disk folder, not directly from USB storage")
-    manifest = verify_bundle(root)
     logger.write("Bundle SHA-256 and manifest verification passed")
 
     base_probe = current_python_probe()
@@ -502,24 +532,22 @@ def install_bundle(
         f"{base_probe.major}.{base_probe.minor}.{base_probe.micro} {base_probe.bits}-bit"
     )
 
-    runtime_requirements = _runtime_requirements(manifest)
+    _runtime_requirements(manifest)
+    lock_path = root / "requirements" / "offline-win64.txt"
     wheelhouse = root / "wheelhouse"
     venv_python = ensure_venv(
-        root, Path(base_probe.executable), logger, runner=runner
+        destination_root, Path(base_probe.executable), logger, runner=runner
     )
     environment = offline_environment(wheelhouse)
     commands = [
         offline_pip_command(
             venv_python,
             wheelhouse,
-            ["--force-reinstall", "setuptools", "wheel"],
+            ["--force-reinstall", "--require-hashes", "--requirement", str(lock_path)],
         ),
         offline_pip_command(
-            venv_python,
-            wheelhouse,
-            ["--force-reinstall", *runtime_requirements],
+            venv_python, wheelhouse, ["--no-deps", "--editable", str(root)]
         ),
-        offline_pip_command(venv_python, wheelhouse, ["--editable", str(root)]),
     ]
     for command in commands:
         _run_logged(
@@ -571,6 +599,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", action="store_true")
     parser.add_argument("--bundle-root", type=Path)
+    parser.add_argument("--install-root", type=Path)
     parser.add_argument("--no-gui-prompt", action="store_true")
     return parser
 
@@ -587,15 +616,17 @@ def main(argv: list[str] | None = None) -> int:
         print("Offline install error: --bundle-root is required", file=sys.stderr)
         return 2
     try:
-        install_bundle(args.bundle_root)
+        install_root = args.install_root or args.bundle_root
+        install_bundle(args.bundle_root, install_root=install_root)
         if not args.no_gui_prompt:
-            offer_gui_launch(args.bundle_root)
+            offer_gui_launch(install_root)
         return 0
     except (OfflineInstallError, OSError) as exc:
         message = f"Offline install error: {exc}"
         print(message, file=sys.stderr)
         try:
-            logger = InstallLogger(args.bundle_root.resolve() / "offline-install.log")
+            install_root = (args.install_root or args.bundle_root).resolve()
+            logger = InstallLogger(install_root / "offline-install.log")
             logger.write(message)
         except OSError:
             pass

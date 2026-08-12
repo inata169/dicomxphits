@@ -35,6 +35,7 @@ from dicomxphits.public_aperture_guard import (
 from dicomxphits.rectangular_geometry import build_intermediate_geometry
 from dicomxphits.public_spectrum import PUBLIC_SPECTRUM_NAME, PUBLIC_SPECTRUM_TEXT
 from dicomxphits.rtplan_state import beam_number, carried_control_point_states
+from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.rtplan_segments import (
     build_manifest,
     dcm_get,
@@ -213,9 +214,9 @@ def validate_public_strict_3dcrt_gate(manifest: dict[str, Any]) -> dict[str, Any
     }
 
 
-def write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+def write_json(path: Path, data: dict[str, Any], *, case_root: Path) -> None:
+    with WorkspaceOutputGuard(case_root, create_root=True) as guard:
+        guard.write_json(path, data)
 
 
 def public_relative_path(value: str, *, label: str) -> str:
@@ -236,10 +237,10 @@ def public_relative_path(value: str, *, label: str) -> str:
 
 
 def path_inside_workspace(workspace_root: Path, relative_path: str) -> Path:
-    root = workspace_root.resolve()
-    candidate = (root / relative_path).resolve()
+    root = Path(os.path.abspath(os.fspath(workspace_root)))
+    candidate = Path(os.path.abspath(os.fspath(root / relative_path)))
     try:
-        candidate.relative_to(root)
+        candidate.resolve().relative_to(root.resolve())
     except ValueError as exc:
         raise ValueError(f"output path escapes workspace: {relative_path}") from exc
     return candidate
@@ -258,10 +259,11 @@ def sanitize_segment_id(value: Any) -> str:
 def write_libpath(case_root: Path, *, phits_root_folder: str) -> Path:
     path = case_root / "libpath.inp"
     portable_root = phits_root_folder.replace("\\", "/")
-    path.write_text(
-        f"file(1)  = {portable_root} # PHITS install folder name\n",
-        encoding="utf-8",
-    )
+    with WorkspaceOutputGuard(case_root, create_root=True) as guard:
+        guard.write_text(
+            path,
+            f"file(1)  = {portable_root} # PHITS install folder name\n",
+        )
     return path
 
 
@@ -346,24 +348,18 @@ def preflight_rectangular_segments(
     return prepared
 
 
-def _copy_to_new_file_or_fail(source: Path, destination: Path) -> None:
-    descriptor: int | None = None
+def _copy_to_new_file_or_fail(
+    source: Path,
+    destination: Path,
+    *,
+    guard: WorkspaceOutputGuard,
+) -> None:
     try:
-        descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-        with source.open("rb") as source_file, os.fdopen(descriptor, "wb") as destination_file:
-            descriptor = None
-            shutil.copyfileobj(source_file, destination_file)
+        guard.copy_file(source, destination, overwrite=False)
     except FileExistsError as exc:
-        raise ValueError(f"refusing to overwrite existing PHITS input: {destination}") from exc
-    except Exception:
-        try:
-            destination.unlink()
-        except FileNotFoundError:
-            pass
-        raise
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
+        raise ValueError(
+            f"refusing to overwrite existing PHITS input: {destination}"
+        ) from exc
 
 
 def write_rectangular_phits_inputs_atomically(
@@ -371,34 +367,32 @@ def write_rectangular_phits_inputs_atomically(
     case_root: Path,
     rendered_inputs: list[tuple[dict[str, Any], str]],
 ) -> None:
-    staging_root = case_root / "analysis" / ".rectangular_phits_staging"
-    if staging_root.exists():
-        shutil.rmtree(staging_root)
-    staging_root.mkdir(parents=True)
+    with WorkspaceOutputGuard(case_root, create_root=True) as guard:
+        staging_root = guard.make_staging_directory(
+            case_root / "analysis",
+            prefix=".rectangular_phits_staging-",
+        )
 
-    linked_paths: list[Path] = []
-    try:
-        staged_paths: list[tuple[Path, Path]] = []
-        for index, (segment, rendered_text) in enumerate(rendered_inputs, start=1):
-            staged_path = staging_root / f"{index:06d}.inp"
-            staged_path.write_text(rendered_text, encoding="utf-8")
-            staged_paths.append((staged_path, segment["_public_final_input_path"]))
+        linked_paths: list[Path] = []
+        try:
+            staged_paths: list[tuple[Path, Path]] = []
+            for index, (segment, rendered_text) in enumerate(rendered_inputs, start=1):
+                staged_path = staging_root / f"{index:06d}.inp"
+                guard.write_text(staged_path, rendered_text, overwrite=False)
+                staged_paths.append((staged_path, segment["_public_final_input_path"]))
 
-        for _staged_path, final_path in staged_paths:
-            final_path.parent.mkdir(parents=True, exist_ok=True)
+            for _staged_path, final_path in staged_paths:
+                guard.prepare(final_path, create_parents=True)
 
-        for staged_path, final_path in staged_paths:
-            _copy_to_new_file_or_fail(staged_path, final_path)
-            linked_paths.append(final_path)
-    except Exception:
-        for path in linked_paths:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
-        raise
-    finally:
-        shutil.rmtree(staging_root, ignore_errors=True)
+            for staged_path, final_path in staged_paths:
+                _copy_to_new_file_or_fail(staged_path, final_path, guard=guard)
+                linked_paths.append(final_path)
+        except Exception:
+            for path in linked_paths:
+                guard.unlink(path, missing_ok=True)
+            raise
+        finally:
+            guard.rmtree(staging_root, missing_ok=True)
 
 
 def write_ct_rectangular_phits_inputs_atomically(
@@ -407,50 +401,50 @@ def write_ct_rectangular_phits_inputs_atomically(
     rendered_inputs: list[tuple[dict[str, Any], str]],
     asset_set: CtAssetSet,
 ) -> None:
-    staging_root = case_root / "analysis" / ".rectangular_ct_phits_staging"
-    if staging_root.exists():
-        shutil.rmtree(staging_root)
-    staging_root.mkdir(parents=True)
+    with WorkspaceOutputGuard(case_root, create_root=True) as guard:
+        staging_root = guard.make_staging_directory(
+            case_root / "analysis",
+            prefix=".rectangular_ct_phits_staging-",
+        )
 
-    linked_paths: list[Path] = []
-    try:
-        staged_paths: list[tuple[Path, Path]] = []
-        for name, source in asset_set.files.items():
-            final_path = case_root / name
-            if final_path.exists():
-                raise ValueError(f"refusing to overwrite existing CT asset: {name}")
-            staged_path = staging_root / name
-            shutil.copy2(source, staged_path)
-            staged_paths.append((staged_path, final_path))
+        linked_paths: list[Path] = []
+        try:
+            staged_paths: list[tuple[Path, Path]] = []
+            for name, source in asset_set.files.items():
+                final_path = case_root / name
+                guard.prepare(final_path)
+                if final_path.exists():
+                    raise ValueError(f"refusing to overwrite existing CT asset: {name}")
+                staged_path = staging_root / name
+                guard.write_bytes(staged_path, source.read_bytes(), overwrite=False)
+                staged_paths.append((staged_path, final_path))
 
-        spectrum_final = case_root / PUBLIC_SPECTRUM_NAME
-        if spectrum_final.exists():
-            raise ValueError(
-                f"refusing to overwrite existing public spectrum: {PUBLIC_SPECTRUM_NAME}"
-            )
-        spectrum_staged = staging_root / PUBLIC_SPECTRUM_NAME
-        spectrum_staged.write_text(PUBLIC_SPECTRUM_TEXT, encoding="utf-8")
-        staged_paths.append((spectrum_staged, spectrum_final))
+            spectrum_final = case_root / PUBLIC_SPECTRUM_NAME
+            guard.prepare(spectrum_final)
+            if spectrum_final.exists():
+                raise ValueError(
+                    f"refusing to overwrite existing public spectrum: {PUBLIC_SPECTRUM_NAME}"
+                )
+            spectrum_staged = staging_root / PUBLIC_SPECTRUM_NAME
+            guard.write_text(spectrum_staged, PUBLIC_SPECTRUM_TEXT, overwrite=False)
+            staged_paths.append((spectrum_staged, spectrum_final))
 
-        for index, (segment, rendered_text) in enumerate(rendered_inputs, start=1):
-            staged_path = staging_root / f"{index:06d}.inp"
-            staged_path.write_text(rendered_text, encoding="utf-8")
-            final_path = segment["_public_final_input_path"]
-            final_path.parent.mkdir(parents=True, exist_ok=True)
-            staged_paths.append((staged_path, final_path))
+            for index, (segment, rendered_text) in enumerate(rendered_inputs, start=1):
+                staged_path = staging_root / f"{index:06d}.inp"
+                guard.write_text(staged_path, rendered_text, overwrite=False)
+                final_path = segment["_public_final_input_path"]
+                guard.prepare(final_path, create_parents=True)
+                staged_paths.append((staged_path, final_path))
 
-        for staged_path, final_path in staged_paths:
-            _copy_to_new_file_or_fail(staged_path, final_path)
-            linked_paths.append(final_path)
-    except Exception:
-        for path in linked_paths:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
-        raise
-    finally:
-        shutil.rmtree(staging_root, ignore_errors=True)
+            for staged_path, final_path in staged_paths:
+                _copy_to_new_file_or_fail(staged_path, final_path, guard=guard)
+                linked_paths.append(final_path)
+        except Exception:
+            for path in linked_paths:
+                guard.unlink(path, missing_ok=True)
+            raise
+        finally:
+            guard.rmtree(staging_root, missing_ok=True)
 
 
 def persist_rectangular_manifest_paths(
@@ -465,7 +459,7 @@ def persist_rectangular_manifest_paths(
     for segment, prepared_segment in zip(active, prepared_segments):
         segment["phits_input_path"] = prepared_segment["_public_phits_input_path"]
         segment["expected_output_path"] = prepared_segment["_public_expected_output_path"]
-    write_json(manifest_path, manifest)
+    write_json(manifest_path, manifest, case_root=manifest_path.parents[1])
 
 
 def generate_rectangular_phits_workspace(
@@ -625,7 +619,11 @@ def generate_rectangular_phits_workspace(
         "phits2dicom_performed": False,
         "gpr_comparing_performed": False,
     }
-    write_json(case_root / "analysis" / "phits_generation_summary.json", summary)
+    write_json(
+        case_root / "analysis" / "phits_generation_summary.json",
+        summary,
+        case_root=case_root,
+    )
     return summary
 
 
@@ -749,7 +747,7 @@ def prepare_public_3dcrt_workspace(
         "phits_execution_performed": False,
     }
     summary_path = workspace_root / "analysis" / "public_preparation_workspace_summary.json"
-    write_json(summary_path, summary)
+    write_json(summary_path, summary, case_root=workspace_root)
     return summary
 
 

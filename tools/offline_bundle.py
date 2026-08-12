@@ -21,20 +21,40 @@ import zipfile
 
 
 PYTHON_VERSION = "3.12.10"
-PYTHON_INSTALLER_NAME = f"python-{PYTHON_VERSION}-amd64.exe"
-PYTHON_INSTALLER_URL = (
-    f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{PYTHON_INSTALLER_NAME}"
+PYTHON_NUGET_NAME = f"python.{PYTHON_VERSION}.nupkg"
+PYTHON_NUGET_URL = (
+    f"https://api.nuget.org/v3-flatcontainer/python/{PYTHON_VERSION}/"
+    f"{PYTHON_NUGET_NAME}"
+)
+PYTHON_NUGET_SIGNER_SHA256 = (
+    "1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D"
+)
+TCLTK_MSI_NAME = "tcltk.msi"
+TCLTK_MSI_URL = (
+    f"https://www.python.org/ftp/python/{PYTHON_VERSION}/amd64/{TCLTK_MSI_NAME}"
+)
+NUGET_CLI_VERSION = "7.9.0"
+NUGET_CLI_NAME = "nuget.exe"
+NUGET_CLI_URL = (
+    f"https://dist.nuget.org/win-x86-commandline/v{NUGET_CLI_VERSION}/"
+    f"{NUGET_CLI_NAME}"
 )
 TARGET_PLATFORM = "win_amd64"
 TARGET_IMPLEMENTATION = "cp"
 TARGET_PYTHON_VERSION = "3.12"
 TARGET_ABI = "cp312"
 REQUIRED_BUILD_TOOLS = ("setuptools", "wheel")
+OFFLINE_LOCK_PATH = "requirements/offline-win64.txt"
+RUNTIME_CONSTRAINTS_PATH = "requirements/runtime.txt"
 REQUIRED_BUNDLE_SOURCE_PATHS = (
     "install_offline.cmd",
     "tools/offline_bundle.py",
     "tools/offline_install.py",
+    "tools/install_offline_verified.ps1",
+    "tools/lock_bundle_directories.ps1",
     "tools/prepare_offline_bundle.ps1",
+    OFFLINE_LOCK_PATH,
+    RUNTIME_CONSTRAINTS_PATH,
     "docs/windows-offline-installation.md",
     "docs/windows-offline-installation.ja.md",
 )
@@ -64,6 +84,18 @@ class GitIndexSnapshot:
         return hashlib.sha256(self.raw).hexdigest()
 
 
+@dataclass(frozen=True)
+class LockedWheel:
+    distribution: str
+    version: str
+    filename: str
+    sha256: str
+
+    @property
+    def requirement(self) -> str:
+        return f"{self.distribution}=={self.version}"
+
+
 def normalize_distribution_name(value: str) -> str:
     return re.sub(r"[-_.]+", "-", value).lower()
 
@@ -77,6 +109,70 @@ def requirement_name(requirement: str) -> str:
     if match is None:
         raise OfflineBundleError(f"Cannot determine requirement name: {requirement}")
     return normalize_distribution_name(match.group(1))
+
+
+def parse_offline_wheel_lock(text: str) -> list[LockedWheel]:
+    entries: list[LockedWheel] = []
+    artifact: str | None = None
+    logical = ""
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        if stripped.startswith("# artifact:"):
+            if logical or artifact is not None:
+                raise OfflineBundleError(f"Malformed artifact marker at line {line_number}")
+            artifact = stripped.partition(":")[2].strip()
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        logical += (" " if logical else "") + stripped.rstrip("\\").rstrip()
+        if stripped.endswith("\\"):
+            continue
+        match = re.fullmatch(
+            r"([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s]+)\s+--hash=sha256:([0-9a-f]{64})",
+            logical,
+        )
+        if match is None or not artifact:
+            raise OfflineBundleError(f"Malformed offline wheel lock near line {line_number}")
+        name, version, digest = match.groups()
+        wheel = parse_wheel_filename(Path(artifact))
+        if wheel["distribution"] != normalize_distribution_name(name) or wheel["version"] != version:
+            raise OfflineBundleError(f"Locked requirement does not match artifact: {artifact}")
+        entries.append(
+            LockedWheel(
+                distribution=normalize_distribution_name(name),
+                version=version,
+                filename=artifact,
+                sha256=digest,
+            )
+        )
+        artifact = None
+        logical = ""
+    if logical or artifact is not None or not entries:
+        raise OfflineBundleError("Offline wheel lock is incomplete or empty")
+    names = [entry.distribution for entry in entries]
+    filenames = [entry.filename.lower() for entry in entries]
+    if len(names) != len(set(names)) or len(filenames) != len(set(filenames)):
+        raise OfflineBundleError("Offline wheel lock contains duplicate entries")
+    return entries
+
+
+def parse_runtime_constraints(text: str) -> dict[str, str]:
+    constraints: dict[str, str] = {}
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s]+)", stripped)
+        if match is None:
+            raise OfflineBundleError(
+                f"Runtime constraint must use an exact version at line {line_number}"
+            )
+        name, version = match.groups()
+        normalized = normalize_distribution_name(name)
+        if normalized in constraints:
+            raise OfflineBundleError(f"Duplicate runtime constraint: {normalized}")
+        constraints[normalized] = version
+    return constraints
 
 
 def _parse_project_metadata(text: str, source: str) -> dict[str, object]:
@@ -142,6 +238,7 @@ def parse_wheel_filename(path: Path) -> dict[str, object]:
     return {
         "filename": path.name,
         "distribution": normalize_distribution_name(parts[0]),
+        "version": parts[1],
         "python_tags": python_tags,
         "abi_tags": abi_tags,
         "platform_tags": platform_tags,
@@ -219,6 +316,36 @@ def validate_wheelhouse(
     return wheels
 
 
+def _capture_locked_wheelhouse(
+    wheelhouse: Path, lock: list[LockedWheel]
+) -> tuple[list[dict[str, object]], dict[str, bytes]]:
+    wheels, captured = _capture_wheelhouse(
+        wheelhouse, [entry.requirement for entry in lock if entry.distribution in {"numpy", "pydicom"}]
+    )
+    expected = {entry.filename: entry for entry in lock}
+    if set(captured) != set(expected):
+        raise OfflineBundleError(
+            "Wheelhouse filenames differ from requirements/offline-win64.txt; "
+            f"missing={sorted(set(expected) - set(captured)) or 'none'}, "
+            f"unexpected={sorted(set(captured) - set(expected)) or 'none'}"
+        )
+    for filename, content in captured.items():
+        actual = hashlib.sha256(content).hexdigest()
+        if actual != expected[filename].sha256:
+            raise OfflineBundleError(
+                f"Locked SHA-256 mismatch for {filename}: expected "
+                f"{expected[filename].sha256}, got {actual}"
+            )
+    return wheels, captured
+
+
+def validate_locked_wheelhouse(
+    wheelhouse: Path, lock: list[LockedWheel]
+) -> list[dict[str, object]]:
+    wheels, _captured = _capture_locked_wheelhouse(wheelhouse, lock)
+    return wheels
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -235,6 +362,8 @@ def _safe_relative_path(value: str) -> PurePosixPath:
         raise OfflineBundleError(f"Bundle path is not normalized: {value}")
     if re.match(r"^[A-Za-z]:", relative.parts[0]):
         raise OfflineBundleError(f"Bundle path must not contain a drive: {value}")
+    if any(":" in part for part in relative.parts):
+        raise OfflineBundleError(f"Bundle path must not contain an alternate stream: {value}")
     return relative
 
 
@@ -412,6 +541,61 @@ def load_indexed_project_metadata(
     return _parse_project_metadata(text, "indexed pyproject.toml")
 
 
+def load_indexed_offline_lock(
+    repo_root: Path, snapshot: GitIndexSnapshot | None = None
+) -> list[LockedWheel]:
+    snapshot = snapshot or _capture_git_index(repo_root)
+    entry = next((item for item in snapshot.entries if item.path == OFFLINE_LOCK_PATH), None)
+    if entry is None:
+        raise OfflineBundleError(f"Indexed {OFFLINE_LOCK_PATH} is missing")
+    try:
+        text = _read_indexed_blob(repo_root, entry.object_id, entry.path).decode("utf-8")
+    except UnicodeError as exc:
+        raise OfflineBundleError(f"Indexed {OFFLINE_LOCK_PATH} is not UTF-8") from exc
+    return parse_offline_wheel_lock(text)
+
+
+def load_indexed_runtime_constraints(
+    repo_root: Path, snapshot: GitIndexSnapshot | None = None
+) -> dict[str, str]:
+    snapshot = snapshot or _capture_git_index(repo_root)
+    entry = next(
+        (item for item in snapshot.entries if item.path == RUNTIME_CONSTRAINTS_PATH),
+        None,
+    )
+    if entry is None:
+        raise OfflineBundleError(f"Indexed {RUNTIME_CONSTRAINTS_PATH} is missing")
+    try:
+        text = _read_indexed_blob(repo_root, entry.object_id, entry.path).decode("utf-8")
+    except UnicodeError as exc:
+        raise OfflineBundleError(
+            f"Indexed {RUNTIME_CONSTRAINTS_PATH} is not UTF-8"
+        ) from exc
+    return parse_runtime_constraints(text)
+
+
+def validate_dependency_consistency(
+    metadata: dict[str, object],
+    lock: list[LockedWheel],
+    constraints: dict[str, str],
+) -> None:
+    locked_versions = {entry.distribution: entry.version for entry in lock}
+    runtime_names = {requirement_name(value) for value in metadata["dependencies"]}
+    missing_lock = sorted(
+        (runtime_names | set(REQUIRED_BUILD_TOOLS)) - set(locked_versions)
+    )
+    if missing_lock:
+        raise OfflineBundleError(
+            "Offline lock is missing required distributions: " + ", ".join(missing_lock)
+        )
+    for name in sorted(runtime_names):
+        if constraints.get(name) != locked_versions[name]:
+            raise OfflineBundleError(
+                f"CI/offline runtime version mismatch for {name}: "
+                f"constraints={constraints.get(name)!r}, offline={locked_versions[name]!r}"
+            )
+
+
 def copy_indexed_public_source(
     repo_root: Path,
     staging_root: Path,
@@ -472,34 +656,87 @@ def _git_head(repo_root: Path) -> str:
     return value
 
 
-def _load_signature_metadata(
-    path: Path, installer_sha256: str
+def _load_runtime_metadata(
+    path: Path, artifacts: dict[str, bytes]
 ) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise OfflineBundleError(f"Cannot read Authenticode metadata: {exc}") from exc
+        raise OfflineBundleError(f"Cannot read runtime provenance metadata: {exc}") from exc
     if not isinstance(value, dict):
-        raise OfflineBundleError("Authenticode metadata must be an object")
-    if value.get("status") != "Valid":
-        raise OfflineBundleError("Python installer Authenticode status is not Valid")
-    subject = value.get("signer_subject")
-    if not isinstance(subject, str) or "Python Software Foundation" not in subject:
-        raise OfflineBundleError("Python installer signer is not the Python Software Foundation")
-    thumbprint = value.get("signer_thumbprint")
+        raise OfflineBundleError("Runtime provenance metadata must be an object")
+    if value.get("schema_version") != 1:
+        raise OfflineBundleError("Runtime provenance schema_version must be 1")
+
+    expected = {
+        "nuget_cli": (
+            NUGET_CLI_NAME,
+            "Microsoft Corporation",
+            "NuGet CLI",
+            NUGET_CLI_URL,
+        ),
+        "python_nuget": (
+            PYTHON_NUGET_NAME,
+            "NuGet.org Repository by Microsoft",
+            "Python NuGet package",
+            PYTHON_NUGET_URL,
+        ),
+        "tcltk_msi": (
+            TCLTK_MSI_NAME,
+            "Python Software Foundation",
+            "Tcl/Tk MSI",
+            TCLTK_MSI_URL,
+        ),
+    }
+    for key, (name, signer, label, url) in expected.items():
+        record = value.get(key)
+        if not isinstance(record, dict):
+            raise OfflineBundleError(f"{label} provenance must be an object")
+        if record.get("status") != "Valid":
+            raise OfflineBundleError(f"{label} signature status is not Valid")
+        subject = record.get("signer_subject")
+        if not isinstance(subject, str) or signer not in subject:
+            raise OfflineBundleError(f"{label} has an unexpected signer")
+        if record.get("url") != url:
+            raise OfflineBundleError(f"{label} URL is not the pinned source")
+        recorded_hash = record.get("sha256")
+        if not isinstance(recorded_hash, str) or not _SHA256_RE.fullmatch(
+            recorded_hash
+        ):
+            raise OfflineBundleError(f"{label} SHA-256 is invalid")
+        content = artifacts.get(name)
+        if content is None:
+            raise OfflineBundleError(f"{label} artifact is missing: {name}")
+        if recorded_hash != hashlib.sha256(content).hexdigest():
+            raise OfflineBundleError(
+                f"{label} bytes do not match the signature-validated SHA-256"
+            )
+
+    nuget_cli = value["nuget_cli"]
+    if nuget_cli.get("version") != NUGET_CLI_VERSION:
+        raise OfflineBundleError("NuGet CLI version is not the pinned version")
+    thumbprint = nuget_cli.get("signer_thumbprint")
     if not isinstance(thumbprint, str) or not re.fullmatch(
         r"[0-9A-Fa-f]{40,64}", thumbprint
     ):
-        raise OfflineBundleError("Python installer signer thumbprint is invalid")
-    recorded_hash = value.get("installer_sha256")
-    if not isinstance(recorded_hash, str) or not _SHA256_RE.fullmatch(
-        recorded_hash
+        raise OfflineBundleError("NuGet CLI signer thumbprint is invalid")
+
+    python_nuget = value["python_nuget"]
+    if python_nuget.get("signature_type") != "Repository":
+        raise OfflineBundleError("Python NuGet signature type is not Repository")
+    if python_nuget.get("signer_sha256") != PYTHON_NUGET_SIGNER_SHA256:
+        raise OfflineBundleError("Python NuGet repository signer fingerprint is unexpected")
+    if python_nuget.get("package_id") != "python":
+        raise OfflineBundleError("Python NuGet package identity is unexpected")
+    if python_nuget.get("version") != PYTHON_VERSION:
+        raise OfflineBundleError("Python NuGet package version is unexpected")
+
+    tcltk = value["tcltk_msi"]
+    tcltk_thumbprint = tcltk.get("signer_thumbprint")
+    if not isinstance(tcltk_thumbprint, str) or not re.fullmatch(
+        r"[0-9A-Fa-f]{40,64}", tcltk_thumbprint
     ):
-        raise OfflineBundleError("Authenticode metadata installer SHA-256 is invalid")
-    if recorded_hash != installer_sha256:
-        raise OfflineBundleError(
-            "Python installer bytes do not match the Authenticode-validated SHA-256"
-        )
+        raise OfflineBundleError("Tcl/Tk MSI signer thumbprint is invalid")
     return value
 
 
@@ -527,29 +764,38 @@ def build_bundle(
     *,
     repo_root: Path,
     wheelhouse: Path,
-    python_installer: Path,
-    signature_metadata_path: Path,
+    python_nuget: Path,
+    tcltk_msi: Path,
+    nuget_cli: Path,
+    runtime_metadata_path: Path,
     output_zip: Path,
 ) -> dict[str, object]:
     snapshot = _capture_git_index(repo_root)
     _run_public_tree_audit(repo_root, snapshot)
     metadata = load_indexed_project_metadata(repo_root, snapshot)
-    wheels, wheel_artifacts = _capture_wheelhouse(
-        wheelhouse, list(metadata["dependencies"])
-    )
-    if python_installer.name.lower() != PYTHON_INSTALLER_NAME.lower():
-        raise OfflineBundleError(
-            f"Expected Python installer named {PYTHON_INSTALLER_NAME}, got {python_installer.name}"
-        )
-    if not python_installer.is_file():
-        raise OfflineBundleError(f"Python installer is missing: {python_installer}")
-    try:
-        python_installer_bytes = python_installer.read_bytes()
-    except OSError as exc:
-        raise OfflineBundleError(f"Cannot read Python installer: {exc}") from exc
-    installer_sha256 = hashlib.sha256(python_installer_bytes).hexdigest()
-    signature = _load_signature_metadata(
-        signature_metadata_path, installer_sha256
+    lock = load_indexed_offline_lock(repo_root, snapshot)
+    constraints = load_indexed_runtime_constraints(repo_root, snapshot)
+    validate_dependency_consistency(metadata, lock, constraints)
+    wheels, wheel_artifacts = _capture_locked_wheelhouse(wheelhouse, lock)
+    runtime_paths = {
+        PYTHON_NUGET_NAME: python_nuget,
+        TCLTK_MSI_NAME: tcltk_msi,
+        NUGET_CLI_NAME: nuget_cli,
+    }
+    runtime_artifacts: dict[str, bytes] = {}
+    for expected_name, source in runtime_paths.items():
+        if source.name.lower() != expected_name.lower():
+            raise OfflineBundleError(
+                f"Expected runtime artifact named {expected_name}, got {source.name}"
+            )
+        if not source.is_file():
+            raise OfflineBundleError(f"Runtime artifact is missing: {source}")
+        try:
+            runtime_artifacts[expected_name] = source.read_bytes()
+        except OSError as exc:
+            raise OfflineBundleError(f"Cannot read runtime artifact {source}: {exc}") from exc
+    runtime_provenance = _load_runtime_metadata(
+        runtime_metadata_path, runtime_artifacts
     )
 
     top_level = f"dicomxphits-offline-win64-{metadata['version']}"
@@ -562,10 +808,15 @@ def build_bundle(
             repo_root, staging_root, snapshot, run_audit=False
         )
 
-        installer_relative = f"python/{PYTHON_INSTALLER_NAME}"
-        installer_destination = staging_root / installer_relative
-        installer_destination.parent.mkdir(parents=True)
-        installer_destination.write_bytes(python_installer_bytes)
+        runtime_relatives = {
+            PYTHON_NUGET_NAME: f"python/{PYTHON_NUGET_NAME}",
+            TCLTK_MSI_NAME: f"python/{TCLTK_MSI_NAME}",
+            NUGET_CLI_NAME: f"python/verifier/{NUGET_CLI_NAME}",
+        }
+        for name, relative in runtime_relatives.items():
+            destination = staging_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(runtime_artifacts[name])
 
         wheel_relatives: list[str] = []
         wheel_destination = staging_root / "wheelhouse"
@@ -577,7 +828,21 @@ def build_bundle(
 
         records = [
             *(_artifact_record(staging_root, path, "public-source") for path in source_paths),
-            _artifact_record(staging_root, installer_relative, "python-installer"),
+            _artifact_record(
+                staging_root,
+                runtime_relatives[PYTHON_NUGET_NAME],
+                "python-runtime-package",
+            ),
+            _artifact_record(
+                staging_root,
+                runtime_relatives[TCLTK_MSI_NAME],
+                "python-tcltk-component",
+            ),
+            _artifact_record(
+                staging_root,
+                runtime_relatives[NUGET_CLI_NAME],
+                "python-package-verifier",
+            ),
             *(
                 _artifact_record(staging_root, relative, "dependency-wheel")
                 for relative in wheel_relatives
@@ -611,12 +876,26 @@ def build_bundle(
                 "platform": TARGET_PLATFORM,
                 "binary_only": True,
                 "validated_wheels": wheels,
+                "lock_path": OFFLINE_LOCK_PATH,
+                "locked_artifacts": [entry.__dict__ for entry in lock],
             },
-            "python_installer": {
-                "path": installer_relative,
+            "python_runtime": {
                 "version": PYTHON_VERSION,
-                "url": PYTHON_INSTALLER_URL,
-                "authenticode": signature,
+                "layout": "application-local-nuget-with-tcltk",
+                "artifacts": {
+                    "python_nuget": {
+                        "path": runtime_relatives[PYTHON_NUGET_NAME],
+                        **runtime_provenance["python_nuget"],
+                    },
+                    "tcltk_msi": {
+                        "path": runtime_relatives[TCLTK_MSI_NAME],
+                        **runtime_provenance["tcltk_msi"],
+                    },
+                    "nuget_cli": {
+                        "path": runtime_relatives[NUGET_CLI_NAME],
+                        **runtime_provenance["nuget_cli"],
+                    },
+                },
             },
             "integrity": {
                 "algorithm": "SHA-256",
@@ -666,7 +945,13 @@ def _validate_wheels_command(args: argparse.Namespace) -> int:
         if args.repo_root is not None
         else load_project_metadata(args.pyproject)
     )
-    wheels = validate_wheelhouse(args.wheelhouse, list(metadata["dependencies"]))
+    if args.repo_root is not None:
+        lock = load_indexed_offline_lock(args.repo_root.resolve())
+        constraints = load_indexed_runtime_constraints(args.repo_root.resolve())
+        validate_dependency_consistency(metadata, lock, constraints)
+        wheels = validate_locked_wheelhouse(args.wheelhouse, lock)
+    else:
+        wheels = validate_wheelhouse(args.wheelhouse, list(metadata["dependencies"]))
     json.dump(wheels, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0
@@ -676,8 +961,10 @@ def _build_command(args: argparse.Namespace) -> int:
     result = build_bundle(
         repo_root=args.repo_root.resolve(),
         wheelhouse=args.wheelhouse.resolve(),
-        python_installer=args.python_installer.resolve(),
-        signature_metadata_path=args.signature_metadata.resolve(),
+        python_nuget=args.python_nuget.resolve(),
+        tcltk_msi=args.tcltk_msi.resolve(),
+        nuget_cli=args.nuget_cli.resolve(),
+        runtime_metadata_path=args.runtime_metadata.resolve(),
         output_zip=args.output_zip.resolve(),
     )
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
@@ -705,8 +992,10 @@ def build_parser() -> argparse.ArgumentParser:
     build = subparsers.add_parser("build")
     build.add_argument("--repo-root", type=Path, required=True)
     build.add_argument("--wheelhouse", type=Path, required=True)
-    build.add_argument("--python-installer", type=Path, required=True)
-    build.add_argument("--signature-metadata", type=Path, required=True)
+    build.add_argument("--python-nuget", type=Path, required=True)
+    build.add_argument("--tcltk-msi", type=Path, required=True)
+    build.add_argument("--nuget-cli", type=Path, required=True)
+    build.add_argument("--runtime-metadata", type=Path, required=True)
     build.add_argument("--output-zip", type=Path, required=True)
     build.set_defaults(handler=_build_command)
     return parser

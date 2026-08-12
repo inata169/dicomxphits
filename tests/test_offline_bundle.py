@@ -251,33 +251,64 @@ def test_snapshot_audit_executes_indexed_verifier_not_worktree(tmp_path):
         offline_bundle._run_public_tree_audit(repo, snapshot)
 
 
-def test_authenticode_metadata_is_bound_to_installer_bytes(tmp_path):
-    validated_bytes = b"validated signed installer"
-    validated_hash = offline_bundle.hashlib.sha256(validated_bytes).hexdigest()
-    metadata_path = tmp_path / "python-authenticode.json"
+def test_runtime_metadata_is_bound_to_all_authenticated_source_bytes(tmp_path):
+    artifacts = {
+        offline_bundle.PYTHON_NUGET_NAME: b"signed python nupkg",
+        offline_bundle.TCLTK_MSI_NAME: b"signed tcltk msi",
+        offline_bundle.NUGET_CLI_NAME: b"signed nuget verifier",
+    }
+    hashes = {
+        name: offline_bundle.hashlib.sha256(content).hexdigest()
+        for name, content in artifacts.items()
+    }
+    metadata_path = tmp_path / "python-runtime-provenance.json"
     metadata_path.write_text(
         offline_bundle.json.dumps(
             {
-                "status": "Valid",
-                "signer_subject": "CN=Python Software Foundation",
-                "signer_thumbprint": "A" * 40,
-                "installer_sha256": validated_hash,
+                "schema_version": 1,
+                "nuget_cli": {
+                    "status": "Valid",
+                    "signer_subject": "CN=Microsoft Corporation",
+                    "signer_thumbprint": "A" * 40,
+                    "sha256": hashes[offline_bundle.NUGET_CLI_NAME],
+                    "version": offline_bundle.NUGET_CLI_VERSION,
+                    "url": offline_bundle.NUGET_CLI_URL,
+                },
+                "python_nuget": {
+                    "status": "Valid",
+                    "signature_type": "Repository",
+                    "signer_subject": "CN=NuGet.org Repository by Microsoft",
+                    "signer_sha256": offline_bundle.PYTHON_NUGET_SIGNER_SHA256,
+                    "package_id": "python",
+                    "version": offline_bundle.PYTHON_VERSION,
+                    "sha256": hashes[offline_bundle.PYTHON_NUGET_NAME],
+                    "url": offline_bundle.PYTHON_NUGET_URL,
+                },
+                "tcltk_msi": {
+                    "status": "Valid",
+                    "signer_subject": "CN=Python Software Foundation",
+                    "signer_thumbprint": "B" * 40,
+                    "sha256": hashes[offline_bundle.TCLTK_MSI_NAME],
+                    "url": offline_bundle.TCLTK_MSI_URL,
+                },
             }
         ),
         encoding="utf-8",
     )
 
+    replaced = dict(artifacts)
+    replaced[offline_bundle.PYTHON_NUGET_NAME] = b"replaced package"
     with pytest.raises(
         offline_bundle.OfflineBundleError,
-        match="do not match the Authenticode-validated SHA-256",
+        match="Python NuGet package bytes do not match",
     ):
-        offline_bundle._load_signature_metadata(
+        offline_bundle._load_runtime_metadata(
             metadata_path,
-            offline_bundle.hashlib.sha256(b"replaced installer").hexdigest(),
+            replaced,
         )
 
-    value = offline_bundle._load_signature_metadata(metadata_path, validated_hash)
-    assert value["installer_sha256"] == validated_hash
+    value = offline_bundle._load_runtime_metadata(metadata_path, artifacts)
+    assert value["python_nuget"]["sha256"] == hashes[offline_bundle.PYTHON_NUGET_NAME]
 
 
 def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
@@ -285,7 +316,9 @@ def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
         encoding="utf-8"
     )
 
-    assert "https://www.python.org/ftp/python/$PythonVersion/" in text
+    assert "https://api.nuget.org/v3-flatcontainer/python/" in text
+    assert "https://www.python.org/ftp/python/$PythonVersion/amd64/tcltk.msi" in text
+    assert "https://dist.nuget.org/win-x86-commandline/v$NuGetVersion/nuget.exe" in text
     assert '"--only-binary=:all:"' in text
     assert '"--platform"' in text and '"win_amd64"' in text
     assert '"--python-version"' in text and '"3.12"' in text
@@ -293,6 +326,74 @@ def test_prepare_script_has_fixed_binary_target_and_no_offline_fallback():
     assert '"--abi"' in text and '"cp312"' in text
     assert "Get-AuthenticodeSignature" in text
     assert "Python Software Foundation" in text
-    assert "InstallerHashBeforeSignature" in text
-    assert "installer_sha256" in text
-    assert "changed during Authenticode validation" in text
+    assert "Microsoft Corporation" in text
+    assert "verify" in text and "-CertificateFingerprint" in text
+    assert "NUGET_CERT_REVOCATION_MODE" in text
+    assert "python-runtime-provenance.json" in text
+    assert '"--require-hashes"' in text
+    assert "$OfflineLockPath" in text
+
+
+def test_reviewed_windows_wheel_lock_has_exact_artifacts_and_hashes():
+    entries = offline_bundle.parse_offline_wheel_lock(
+        (ROOT / "requirements" / "offline-win64.txt").read_text(encoding="utf-8")
+    )
+
+    assert [(entry.distribution, entry.version, entry.filename, entry.sha256) for entry in entries] == [
+        (
+            "numpy",
+            "2.5.1",
+            "numpy-2.5.1-cp312-cp312-win_amd64.whl",
+            "f7d60026c0bdb1380e83bfa7a0419c4577ee4b9a08880afcb6dadeb74c649fa2",
+        ),
+        (
+            "pydicom",
+            "3.0.2",
+            "pydicom-3.0.2-py3-none-any.whl",
+            "abf971a5440f84dbaf42c4b6758e30e62480902584f8b270b9a5d146e278a07b",
+        ),
+        (
+            "setuptools",
+            "84.0.0",
+            "setuptools-84.0.0-py3-none-any.whl",
+            "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670",
+        ),
+        (
+            "wheel",
+            "0.47.0",
+            "wheel-0.47.0-py3-none-any.whl",
+            "212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced",
+        ),
+        (
+            "packaging",
+            "26.3",
+            "packaging-26.3-py3-none-any.whl",
+            "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+        ),
+    ]
+
+
+def test_locked_wheelhouse_rejects_hash_mismatch(tmp_path):
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    artifacts = {
+        "numpy": ("2.5.1", "numpy-2.5.1-cp312-cp312-win_amd64.whl"),
+        "pydicom": ("3.0.2", "pydicom-3.0.2-py3-none-any.whl"),
+        "setuptools": ("84.0.0", "setuptools-84.0.0-py3-none-any.whl"),
+        "wheel": ("0.47.0", "wheel-0.47.0-py3-none-any.whl"),
+    }
+    lock = []
+    for distribution, (version, filename) in artifacts.items():
+        content = f"synthetic:{filename}".encode("ascii")
+        (wheelhouse / filename).write_bytes(content)
+        lock.append(
+            offline_bundle.LockedWheel(
+                distribution=distribution,
+                version=version,
+                filename=filename,
+                sha256=("0" * 64 if distribution == "numpy" else offline_bundle.hashlib.sha256(content).hexdigest()),
+            )
+        )
+
+    with pytest.raises(offline_bundle.OfflineBundleError, match="Locked SHA-256 mismatch"):
+        offline_bundle.validate_locked_wheelhouse(wheelhouse, lock)

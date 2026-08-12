@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import math
+import os
 import re
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pydicom
 
@@ -42,6 +43,7 @@ from dicomxphits.rtdose_geometry import (
     sumtally_output_geometry_evidence,
     validate_rtdose_placement,
 )
+from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_INPUT_DOSE_STATE,
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
@@ -197,7 +199,7 @@ def write_failure_summary(
     }
     if extra:
         summary.update(extra)
-    write_json(path, summary)
+    write_json(path, summary, case_root=workspace_root)
     return summary
 
 
@@ -692,8 +694,8 @@ def select_phits_out(
 def copy_template(template_dicom: Path, workspace_root: Path) -> Path:
     require_existing_file(template_dicom, label="template DICOM")
     dest = workspace_root / "rtdose" / "template.dcm"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(template_dicom, dest)
+    with WorkspaceOutputGuard(workspace_root) as guard:
+        guard.write_bytes(dest, template_dicom.read_bytes())
     return dest
 
 
@@ -778,28 +780,30 @@ def copy_and_optionally_sync_ct(
 ) -> tuple[CTReferenceSelection, dict[str, Any] | None]:
     require_existing_file(source_ct, label="CT reference DICOM")
     dest = workspace_root / "rtdose" / "ct_reference.dcm"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_ct, dest)
-    sync_summary = None
-    if reference_dicom_for_identity is not None:
-        require_existing_file(reference_dicom_for_identity, label="reference DICOM for identity")
-        ct = pydicom.dcmread(str(dest))
-        reference = pydicom.dcmread(str(reference_dicom_for_identity), stop_before_pixels=True)
-        copied: dict[str, str] = {}
-        for attr in ("FrameOfReferenceUID", "StudyInstanceUID", "PatientID", "PatientName"):
-            value = getattr(reference, attr, None)
-            if value not in (None, ""):
-                setattr(ct, attr, value)
-                copied[attr] = str(value)
-        ct.Modality = "CT"
-        copied["Modality"] = "CT"
-        ct.save_as(str(dest))
-        sync_summary = {
-            "source_ct_reference_path": str(source_ct),
-            "workspace_ct_reference_path": str(dest),
-            "reference_dicom_for_identity": str(reference_dicom_for_identity),
-            "copied": copied,
-        }
+    with WorkspaceOutputGuard(workspace_root) as guard:
+        guard.write_bytes(dest, source_ct.read_bytes())
+        sync_summary = None
+        if reference_dicom_for_identity is not None:
+            require_existing_file(reference_dicom_for_identity, label="reference DICOM for identity")
+            ct = pydicom.dcmread(str(dest))
+            reference = pydicom.dcmread(str(reference_dicom_for_identity), stop_before_pixels=True)
+            copied: dict[str, str] = {}
+            for attr in ("FrameOfReferenceUID", "StudyInstanceUID", "PatientID", "PatientName"):
+                value = getattr(reference, attr, None)
+                if value not in (None, ""):
+                    setattr(ct, attr, value)
+                    copied[attr] = str(value)
+            ct.Modality = "CT"
+            copied["Modality"] = "CT"
+            stream = io.BytesIO()
+            ct.save_as(stream)
+            guard.write_bytes(dest, stream.getvalue())
+            sync_summary = {
+                "source_ct_reference_path": str(source_ct),
+                "workspace_ct_reference_path": str(dest),
+                "reference_dicom_for_identity": str(reference_dicom_for_identity),
+                "copied": copied,
+            }
     return CTReferenceSelection(source_path=source_ct, workspace_path=dest, source=selection_source), sync_summary
 
 
@@ -845,7 +849,13 @@ def is_section_header(line: str) -> bool:
     return re.match(r"^\s*\[[^\]]+\]", line) is not None
 
 
-def patch_deposit_title_ipp(path: Path, *, ipp: list[float], write_changes: bool = True) -> dict[str, Any]:
+def patch_deposit_title_ipp(
+    path: Path,
+    *,
+    ipp: list[float],
+    write_changes: bool = True,
+    guard: WorkspaceOutputGuard | None = None,
+) -> dict[str, Any]:
     size_before = path.stat().st_size
     original = path.read_text(encoding="utf-8", errors="replace")
     lines = original.splitlines(keepends=True)
@@ -885,7 +895,10 @@ def patch_deposit_title_ipp(path: Path, *, ipp: list[float], write_changes: bool
         warnings.extend(gate_failures)
     content_changed = updated != original
     if content_changed and write_changes:
-        path.write_text(updated, encoding="utf-8", newline="")
+        if guard is None:
+            path.write_text(updated, encoding="utf-8", newline="")
+        else:
+            guard.write_text(path, updated, newline="")
     size_after = path.stat().st_size
     return {
         "path": str(path),
@@ -917,10 +930,11 @@ def patch_rtdose_inputs_for_ipp(
     gate_failures = [failure for item in preflight_files for failure in item["gate_failures"]]
     if gate_failures:
         raise ValueError("ImagePositionPatient title gate failure: " + "; ".join(gate_failures))
-    files = [
-        patch_deposit_title_ipp(workspace_phits_dose, ipp=ipp),
-        patch_deposit_title_ipp(workspace_phits_out, ipp=ipp),
-    ]
+    with WorkspaceOutputGuard(workspace_root) as guard:
+        files = [
+            patch_deposit_title_ipp(workspace_phits_dose, ipp=ipp, guard=guard),
+            patch_deposit_title_ipp(workspace_phits_out, ipp=ipp, guard=guard),
+        ]
     return {
         "image_position_patient": ipp,
         "files": files,
@@ -949,7 +963,6 @@ def stage_phits2dicom_inputs(
     require_existing_file(dose_source, label="Sumtally PHITS dose output", non_empty=True)
     require_existing_file(out_source, label="phits_out companion file", non_empty=True)
     dat_dir = workspace_root / "rtdose" / "DATfiles"
-    dat_dir.mkdir(parents=True, exist_ok=True)
     staged_dose = dat_dir / dose_source.name
     staged_out = dat_dir / out_source.name
     if staged_dose.resolve() in {dose_source, out_source} or staged_out.resolve() in {
@@ -983,11 +996,13 @@ def stage_phits2dicom_inputs(
 
     source_dose_before = file_sha256(dose_source)
     source_out_before = file_sha256(out_source)
-    if recovered is None:
-        shutil.copy2(dose_source, staged_dose)
-    else:
-        staged_dose.write_bytes(recovered)
-    shutil.copy2(out_source, staged_out)
+    with WorkspaceOutputGuard(workspace_root) as guard:
+        guard.mkdir(dat_dir)
+        guard.write_bytes(
+            staged_dose,
+            dose_source.read_bytes() if recovered is None else recovered,
+        )
+        guard.write_bytes(staged_out, out_source.read_bytes())
     if file_sha256(staged_dose) != expected_sha256:
         raise ValueError("RTDOSE staged dose does not match Sumtally Run evidence")
     return {
@@ -1031,9 +1046,9 @@ def phits2dicom_input_content(
     return "\n".join(lines)
 
 
-def write_text_lf(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="\n")
+def write_text_lf(path: Path, content: str, *, workspace_root: Path) -> None:
+    with WorkspaceOutputGuard(workspace_root) as guard:
+        guard.write_text(path, content, newline="\n")
 
 
 def phits2dicom_referenced_input_evidence(
@@ -1248,7 +1263,7 @@ def prepare_rtdose(
             dat_dir=dat_dir,
             factor=factor,
         )
-        write_text_lf(phits2dicom_inp, stdin_content)
+        write_text_lf(phits2dicom_inp, stdin_content, workspace_root=workspace_root)
         phits2dicom_input_sha256 = file_sha256(phits2dicom_inp)
         phits2dicom_referenced_inputs = phits2dicom_referenced_input_evidence(
             template_dicom=template_copy,
@@ -1309,7 +1324,7 @@ def prepare_rtdose(
                 "phits2dicom_executable_path": paths.phits2dicom_executable_path,
             },
         }
-        write_json(summary_path, summary)
+        write_json(summary_path, summary, case_root=workspace_root)
         return summary
     except Exception as exc:
         write_failure_summary(
@@ -1355,25 +1370,84 @@ def dicom_snapshot(output_dirs: list[Path]) -> dict[str, dict[str, Any]]:
 def run_phits2dicom(
     *,
     executable_path: str,
-    dat_dir: Path,
     stdin_content: str,
     stdout_path: Path,
     stderr_path: Path,
+    workspace_root: Path,
+    expected_outputs: tuple[Path, ...],
     runner=subprocess.Popen,
-) -> tuple[int, str]:
-    proc = runner(
-        [executable_path],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        cwd=str(dat_dir.absolute()),
+    on_start: Callable[[], None] | None = None,
+) -> tuple[int, str, bool, Path]:
+    with WorkspaceOutputGuard(workspace_root) as guard:
+        for output in expected_outputs:
+            guard.prepare_file_target(output)
+        guard.prepare_file_target(stdout_path, create_parents=True)
+        guard.prepare_file_target(stderr_path)
+        lines = stdin_content.split("\n")
+        if len(lines) < 8 or lines[0] != "PHITS2DICOM":
+            raise ValueError("Malformed prepared phits2dicom input")
+        source_paths = [Path(lines[index]) for index in range(1, 5)]
+        execution_root = guard.make_staging_directory(
+            workspace_root,
+            prefix=".p2d-",
+        )
+        try:
+            template_dir = execution_root / "t"
+            ct_dir = execution_root / "c"
+            execution_dat_dir = execution_root / "d"
+            guard.mkdir(template_dir)
+            guard.mkdir(ct_dir)
+            guard.mkdir(execution_dat_dir)
+            staged_paths = [
+                template_dir / source_paths[0].name,
+                ct_dir / source_paths[1].name,
+                execution_dat_dir / source_paths[2].name,
+                execution_dat_dir / source_paths[3].name,
+            ]
+            for source, staged in zip(source_paths, staged_paths):
+                guard.copy_file(source, staged, overwrite=False)
+            staged_lines = list(lines)
+            for index, staged in enumerate(staged_paths, start=1):
+                staged_lines[index] = normalize_slash_path(staged)
+            staged_lines[5] = normalize_slash_path(execution_dat_dir, is_dir=True)
+            staged_stdin = "\n".join(staged_lines)
+            staged_expected = staged_paths[2].with_suffix(".dcm")
+            if len(expected_outputs) != 1:
+                raise ValueError(
+                    "phits2dicom staging requires exactly one expected output"
+                )
+            if expected_outputs[0].resolve() != source_paths[2].with_suffix(
+                ".dcm"
+            ).resolve():
+                raise ValueError(
+                    "phits2dicom expected output does not match the prepared dose input"
+                )
+            if on_start is not None:
+                on_start()
+            proc = runner(
+                [executable_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=str(execution_dat_dir.absolute()),
+            )
+            stdout, _ = proc.communicate(input=staged_stdin + "\n\n\n")
+            staged_output_promoted = (
+                proc.returncode == 0 and os.path.lexists(staged_expected)
+            )
+            if staged_output_promoted:
+                guard.copy_file(staged_expected, expected_outputs[0])
+            guard.write_text(stdout_path, stdout or "")
+            guard.write_text(stderr_path, "")
+        finally:
+            guard.rmtree(execution_root, missing_ok=True)
+    return (
+        int(proc.returncode),
+        stdout or "",
+        staged_output_promoted,
+        execution_dat_dir,
     )
-    stdout, _ = proc.communicate(input=stdin_content + "\n\n\n")
-    stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    stdout_path.write_text(stdout or "", encoding="utf-8")
-    stderr_path.write_text("", encoding="utf-8")
-    return int(proc.returncode), stdout or ""
 
 
 def run_rtdose(
@@ -1511,14 +1585,31 @@ def run_rtdose(
         before = dicom_snapshot(output_dirs)
         stdout_path = workspace_root / "rtdose" / "phits2dicom_stdout.txt"
         stderr_path = workspace_root / "rtdose" / "phits2dicom_stderr.txt"
-        execution_started = True
-        returncode, _stdout = run_phits2dicom(
+        with WorkspaceOutputGuard(workspace_root) as guard:
+            for output in (
+                coordinate_corrected_output,
+                coordinate_summary_path(coordinate_corrected_output),
+                summary_path,
+            ):
+                guard.prepare_file_target(output, create_parents=True)
+        def mark_execution_started() -> None:
+            nonlocal execution_started
+            execution_started = True
+
+        (
+            returncode,
+            _stdout,
+            staged_output_promoted,
+            phits2dicom_execution_cwd,
+        ) = run_phits2dicom(
             executable_path=str(resolved_exe),
-            dat_dir=dat_dir,
             stdin_content=stdin_content,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
+            workspace_root=workspace_root,
+            expected_outputs=(expected_rtdose_output,),
             runner=runner,
+            on_start=mark_execution_started,
         )
         after_conversion = dicom_snapshot(output_dirs)
         expected_key = str(expected_rtdose_output.resolve())
@@ -1538,27 +1629,38 @@ def run_rtdose(
         coordinate_placement_validation = None
         final_semantic_validation = None
         postprocessing_error = None
-        if returncode == 0 and expected_updated:
+        if returncode == 0 and staged_output_promoted and expected_updated:
             try:
-                absolute_labeling = mark_rtdose_absolute(expected_rtdose_output)
-                plan_reference_synchronization = synchronize_plan_rtdose(
-                    expected_rtdose_output,
-                    plan_evidence=plan_evidence,
-                )
-                coordinate_correction = fix_coordinates(
-                    expected_rtdose_output,
-                    coordinate_corrected_output,
-                    summary_path=coordinate_summary_path(coordinate_corrected_output),
-                    expected_placement=current_rtdose_placement,
-                )
-                coordinate_placement_validation = validate_rtdose_placement(
-                    coordinate_corrected_output,
-                    expected_placement=current_rtdose_placement,
-                )
-                final_semantic_validation = validate_plan_rtdose(
-                    coordinate_corrected_output,
-                    plan_evidence=plan_evidence,
-                )
+                with WorkspaceOutputGuard(workspace_root) as guard:
+                    for output in (
+                        expected_rtdose_output,
+                        coordinate_corrected_output,
+                        coordinate_summary_path(coordinate_corrected_output),
+                    ):
+                        guard.prepare(output, create_parents=True)
+                    absolute_labeling = mark_rtdose_absolute(
+                        expected_rtdose_output, guard=guard
+                    )
+                    plan_reference_synchronization = synchronize_plan_rtdose(
+                        expected_rtdose_output,
+                        plan_evidence=plan_evidence,
+                        guard=guard,
+                    )
+                    coordinate_correction = fix_coordinates(
+                        expected_rtdose_output,
+                        coordinate_corrected_output,
+                        summary_path=coordinate_summary_path(coordinate_corrected_output),
+                        expected_placement=current_rtdose_placement,
+                        guard=guard,
+                    )
+                    coordinate_placement_validation = validate_rtdose_placement(
+                        coordinate_corrected_output,
+                        expected_placement=current_rtdose_placement,
+                    )
+                    final_semantic_validation = validate_plan_rtdose(
+                        coordinate_corrected_output,
+                        plan_evidence=plan_evidence,
+                    )
             except Exception as exc:
                 postprocessing_error = (
                     "RTDOSE post-conversion validation failed: " + str(exc)
@@ -1578,6 +1680,7 @@ def run_rtdose(
         stage_status = (
             "success"
             if returncode == 0
+            and staged_output_promoted
             and expected_updated
             and postprocessing_error is None
             and coordinate_corrected_exists
@@ -1603,13 +1706,14 @@ def run_rtdose(
                 "argv": command_argv or sys.argv,
                 "phits2dicom_command": [str(resolved_exe)],
                 "stdin": str(phits2dicom_inp),
-                "cwd": str(dat_dir),
+                "cwd": str(phits2dicom_execution_cwd),
                 "shell": False,
             },
             "returncode": returncode,
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
             "phits2dicom_execution_started": execution_started,
+            "phits2dicom_staged_output_promoted": staged_output_promoted,
             "rtdose_prepare_summary_sha256": prepare_summary_sha256,
             "dat_dir": str(dat_dir),
             "output_snapshot_dirs": [str(path) for path in output_dirs],
@@ -1647,7 +1751,11 @@ def run_rtdose(
         }
         if postprocessing_error is not None:
             summary["failure_reason"] = postprocessing_error
-        write_json(summary_path, summary)
+        elif returncode == 0 and not staged_output_promoted:
+            summary["failure_reason"] = (
+                "phits2dicom did not create the expected output in guarded staging"
+            )
+        write_json(summary_path, summary, case_root=workspace_root)
         return summary
     except Exception as exc:
         write_failure_summary(

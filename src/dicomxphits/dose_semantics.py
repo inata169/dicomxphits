@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import io
 from pathlib import Path
 from typing import Any
 
 import pydicom
+
+from dicomxphits.safe_output import WorkspaceOutputGuard
 
 from dicomxphits.public_dose_contract import PUBLIC_MODEL_TOTFACT_PER_MU_TEXT
 
@@ -108,14 +111,21 @@ def mark_rtdose_relative(path: Path) -> dict[str, Any]:
     }
 
 
-def mark_rtdose_absolute(path: Path) -> dict[str, Any]:
+def mark_rtdose_absolute(
+    path: Path, *, guard: WorkspaceOutputGuard | None = None
+) -> dict[str, Any]:
     ds = pydicom.dcmread(str(path))
     if str(getattr(ds, "Modality", "")).upper() != "RTDOSE":
         raise ValueError(f"Expected RTDOSE output before absolute-dose labeling: {path}")
     previous_units = str(getattr(ds, "DoseUnits", "") or "")
     ds.DoseUnits = "GY"
     ds.DoseComment = ABSOLUTE_DOSE_COMMENT
-    ds.save_as(str(path))
+    if guard is None:
+        ds.save_as(str(path))
+    else:
+        stream = io.BytesIO()
+        ds.save_as(stream)
+        guard.write_bytes(path, stream.getvalue())
     return {
         "path": str(path),
         "previous_dose_units": previous_units,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import math
 import sys
@@ -17,6 +18,8 @@ from dicomxphits.rtplan_helpers import (
     as_float,
     dcm_get,
 )
+from dicomxphits.csv_security import neutralize_external_csv_value
+from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.rtplan_manifest_construction import (
     DEFAULT_TOLERANCES,
     DELIVERY_TYPES,
@@ -182,24 +185,49 @@ def states_table(ds: Any) -> list[dict[str, Any]]:
     return rows
 
 
-def write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+def write_json(path: Path, data: Any, *, guard: WorkspaceOutputGuard) -> None:
+    guard.write_text(
+        path,
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+    )
 
 
-def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: row.get(key, "") for key in fieldnames})
+def write_csv(
+    path: Path,
+    rows: list[dict[str, Any]],
+    fieldnames: list[str],
+    *,
+    guard: WorkspaceOutputGuard,
+) -> None:
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(
+            {
+                key: neutralize_external_csv_value(row.get(key, ""))
+                for key in fieldnames
+            }
+        )
+    guard.write_text(path, stream.getvalue(), newline="")
 
 
 def write_outputs(case_root: Path, manifest: dict[str, Any], beam_rows: list[dict[str, Any]], cp_rows: list[dict[str, Any]]) -> None:
-    write_json(case_root / "segments" / "segment_manifest.json", manifest)
+    with WorkspaceOutputGuard(case_root, create_root=True) as guard:
+        _write_outputs_guarded(case_root, manifest, beam_rows, cp_rows, guard=guard)
+
+
+def _write_outputs_guarded(
+    case_root: Path,
+    manifest: dict[str, Any],
+    beam_rows: list[dict[str, Any]],
+    cp_rows: list[dict[str, Any]],
+    *,
+    guard: WorkspaceOutputGuard,
+) -> None:
+    write_json(
+        case_root / "segments" / "segment_manifest.json", manifest, guard=guard
+    )
     segment_rows = [
         {
             "beam_number": s.get("beam_number"),
@@ -256,6 +284,7 @@ def write_outputs(case_root: Path, manifest: dict[str, Any], beam_rows: list[dic
             "expected_output_path",
             "warnings",
         ],
+        guard=guard,
     )
     write_json(
         case_root / "analysis" / "rtplan_summary.json",
@@ -274,6 +303,7 @@ def write_outputs(case_root: Path, manifest: dict[str, Any], beam_rows: list[dic
             "skipped_segment_count": len([s for s in manifest["segments"] if s.get("skip_reason")]),
             "warnings": manifest.get("warnings", []),
         },
+        guard=guard,
     )
     write_csv(
         case_root / "analysis" / "beam_summary.csv",
@@ -289,6 +319,7 @@ def write_outputs(case_root: Path, manifest: dict[str, Any], beam_rows: list[dic
             "sampling_policy",
             "warnings",
         ],
+        guard=guard,
     )
     write_csv(
         case_root / "analysis" / "control_point_table.csv",
@@ -304,6 +335,7 @@ def write_outputs(case_root: Path, manifest: dict[str, Any], beam_rows: list[dic
             "mlc_type",
             "leaf_pair_count",
         ],
+        guard=guard,
     )
 
 
