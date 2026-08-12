@@ -119,6 +119,8 @@ The original non-elevated stage then:
 - uses an exact protected snapshot containing only inventoried bundle files for
   the helper, wheelhouse, and editable source; unmanifested files such as an
   added `setup.py` are rejected and never copied or executed;
+- uses the declared setuptools PEP 660 backend so editable build metadata is
+  written to temporary build storage, not the read-only protected source;
 - clears inherited CLR profiler, startup-hook, and AppDomain-manager settings
   before the first PowerShell process, and fails if any required bundle
   directory cannot be held against rename;

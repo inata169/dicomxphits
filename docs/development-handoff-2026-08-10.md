@@ -121,6 +121,12 @@ before starting PowerShell. Bundle directory locks request only read attributes
 while withholding delete sharing, so an ACL that denies `DELETE` no longer
 causes the directory to be skipped; every required lock must succeed.
 
+The following review found that legacy editable installation would try to
+write `src/dicomxphits.egg-info` inside the protected read-only source. The
+project now declares `setuptools.build_meta`, selecting its PEP 660 editable
+path so metadata and editable-wheel construction use temporary build storage
+without modifying the protected source snapshot.
+
 The required public checks and specification promotion are complete. The
 remaining completion order is: commit and push the active-change correction,
 confirm exact-head CI, request and address `@codex review` until clean, record

@@ -232,6 +232,43 @@ source entry, and helper and pip paths MUST resolve from that snapshot while
 - **THEN** setup stops before Python execution and does not repair, reuse, or
   delete the runtime
 
+### Requirement: No-Network Editable Installation
+
+Every pip install subprocess SHALL use `--no-index`,
+`--find-links <bundled-wheelhouse>`, and `--no-build-isolation`, and the
+installer SHALL also set a no-index pip environment guard. It SHALL install
+`setuptools`, `wheel`, the runtime requirements, and dicomxphits in editable
+mode using only the protected snapshot of the bundled wheelhouse and source.
+The project SHALL declare the setuptools PEP 660 build backend so editable
+metadata and wheel construction use pip/setuptools temporary storage and do
+not require mutation of the protected source snapshot.
+Missing or incompatible artifacts MUST fail without URL or index fallback.
+
+#### Scenario: Complete wheelhouse
+
+- **WHEN** all compatible dependency and build wheels are present
+- **THEN** the repository-local environment is populated and editable
+  dicomxphits installation completes without network access
+
+#### Scenario: Protected source is read-only
+
+- **WHEN** editable installation uses the protected source snapshot
+- **THEN** build metadata is created outside that source tree and installation
+  completes without adding or changing a protected source entry
+
+#### Scenario: Required wheel missing
+
+- **WHEN** a direct or transitive requirement cannot be satisfied from the
+  wheelhouse
+- **THEN** pip fails locally and the installer reports the missing offline
+  dependency without contacting an index
+
+#### Scenario: Path contains spaces and Japanese text
+
+- **WHEN** the extracted local path contains spaces or Japanese characters
+- **THEN** interpreter, wheelhouse, editable source, log, and launcher paths
+  are passed without truncation or shell reinterpretation
+
 ### Requirement: Synthetic Offline-Installer Validation Boundary
 
 Automated tests SHALL use temporary synthetic paths, fabricated wheel and

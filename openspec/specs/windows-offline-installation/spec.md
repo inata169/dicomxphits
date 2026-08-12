@@ -313,6 +313,9 @@ Every pip install subprocess SHALL use `--no-index`,
 installer SHALL also set a no-index pip environment guard. It SHALL install
 `setuptools`, `wheel`, the runtime requirements, and dicomxphits in editable
 mode using only the protected snapshot of the bundled wheelhouse and source.
+The project SHALL declare the setuptools PEP 660 build backend so editable
+metadata and wheel construction use pip/setuptools temporary storage and do
+not require mutation of the protected source snapshot.
 Missing or incompatible artifacts MUST fail without URL or index fallback.
 
 #### Scenario: Complete wheelhouse
@@ -320,6 +323,12 @@ Missing or incompatible artifacts MUST fail without URL or index fallback.
 - **WHEN** all compatible dependency and build wheels are present
 - **THEN** the repository-local environment is populated and editable
   dicomxphits installation completes without network access
+
+#### Scenario: Protected source is read-only
+
+- **WHEN** editable installation uses the protected source snapshot
+- **THEN** build metadata is created outside that source tree and installation
+  completes without adding or changing a protected source entry
 
 #### Scenario: Required wheel missing
 

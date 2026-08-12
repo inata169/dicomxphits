@@ -109,6 +109,8 @@ protected hash receiptを作成して、Python起動前に終了します。元�
 - inventoryに含まれるbundle fileだけをexactなprotected snapshotへコピーし、helper、
   wheelhouse、editable sourceはそのsnapshotから使用する。追加された`setup.py`などの
   未検証fileは拒否し、コピーも実行もしない
+- setuptools PEP 660 backendを明示し、editable build metadataはread-only protected
+  sourceではなくtemporary build storageへ書き込む
 - 最初のPowerShell起動前に継承されたCLR profiler、startup hook、AppDomain manager
   設定を消去し、必要なbundle directoryをrename防止handleで保持できなければ停止する
 - そのapplication-local CPython 3.12.10 x64だけを`-I -S -B`で使用する。

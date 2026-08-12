@@ -495,6 +495,81 @@ def test_existing_public_gui_launcher_remains_the_offline_target():
     assert "-m dicomxphits.gui" in launcher_text
 
 
+def test_project_declares_pep660_backend_for_read_only_editable_source():
+    project_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert '[build-system]' in project_text
+    assert 'requires = ["setuptools", "wheel"]' in project_text
+    assert 'build-backend = "setuptools.build_meta"' in project_text
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows offline editable path")
+def test_pep660_editable_install_does_not_mutate_source_tree(tmp_path):
+    source = tmp_path / "protected-source-copy"
+    (source / "src").mkdir(parents=True)
+    for name in ("pyproject.toml", "README.md", "LICENSE"):
+        shutil.copyfile(ROOT / name, source / name)
+    shutil.copytree(ROOT / "src" / "dicomxphits", source / "src" / "dicomxphits")
+
+    def source_inventory() -> dict[str, str]:
+        return {
+            path.relative_to(source).as_posix(): _sha256(path)
+            for path in source.rglob("*")
+            if path.is_file()
+        }
+
+    before = source_inventory()
+    venv = tmp_path / "pep660-venv"
+    creation = subprocess.run(
+        [sys.executable, "-I", "-m", "venv", "--system-site-packages", str(venv)],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert creation.returncode == 0, creation.stdout + creation.stderr
+    venv_python = venv / "Scripts" / "python.exe"
+    result = subprocess.run(
+        [
+            str(venv_python),
+            "-I",
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-build-isolation",
+            "--no-deps",
+            "--editable",
+            str(source),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert source_inventory() == before
+    assert not list(source.rglob("*.egg-info"))
+    probe = subprocess.run(
+        [
+            str(venv_python),
+            "-I",
+            "-c",
+            "import dicomxphits,importlib.metadata;"
+            "assert importlib.metadata.version('dicomxphits') == '1.0.1'",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+
+
 def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     text = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
     stage = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
