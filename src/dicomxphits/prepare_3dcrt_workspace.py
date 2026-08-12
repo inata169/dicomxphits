@@ -367,11 +367,11 @@ def write_rectangular_phits_inputs_atomically(
     case_root: Path,
     rendered_inputs: list[tuple[dict[str, Any], str]],
 ) -> None:
-    staging_root = case_root / "analysis" / ".rectangular_phits_staging"
     with WorkspaceOutputGuard(case_root, create_root=True) as guard:
-        if os.path.lexists(staging_root):
-            guard.rmtree(staging_root)
-        guard.mkdir(staging_root)
+        staging_root = guard.make_staging_directory(
+            case_root / "analysis",
+            prefix=".rectangular_phits_staging-",
+        )
 
         linked_paths: list[Path] = []
         try:
@@ -401,11 +401,11 @@ def write_ct_rectangular_phits_inputs_atomically(
     rendered_inputs: list[tuple[dict[str, Any], str]],
     asset_set: CtAssetSet,
 ) -> None:
-    staging_root = case_root / "analysis" / ".rectangular_ct_phits_staging"
     with WorkspaceOutputGuard(case_root, create_root=True) as guard:
-        if os.path.lexists(staging_root):
-            guard.rmtree(staging_root)
-        guard.mkdir(staging_root)
+        staging_root = guard.make_staging_directory(
+            case_root / "analysis",
+            prefix=".rectangular_ct_phits_staging-",
+        )
 
         linked_paths: list[Path] = []
         try:

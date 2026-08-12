@@ -127,6 +127,12 @@ project now declares `setuptools.build_meta`, selecting its PEP 660 editable
 path so metadata and editable-wheel construction use temporary build storage
 without modifying the protected source snapshot.
 
+A later retry review found that the fixed rectangular-input staging names
+conflicted with Windows' deliberate preservation of failed guarded trees. Both
+non-CT and CT rectangular writers now use a fresh random, exclusively created
+staging directory for every attempt, so a preserved failure cannot block the
+next attempt.
+
 The required public checks and specification promotion are complete. The
 remaining completion order is: commit and push the active-change correction,
 confirm exact-head CI, request and address `@codex review` until clean, record

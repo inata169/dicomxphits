@@ -991,6 +991,63 @@ def test_rectangular_3dcrt_atomic_writer_cleans_final_outputs_and_staging_on_fai
     assert not (workspace / "analysis" / "phits_generation_summary.json").exists()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows preserved staging behavior")
+@pytest.mark.parametrize("with_ct_assets", [False, True])
+def test_rectangular_writer_retry_uses_fresh_staging_after_windows_failure(
+    monkeypatch, tmp_path, with_ct_assets
+):
+    workspace = tmp_path / "workspace"
+    final_input = workspace / "segments" / "seg_retry" / "phits.inp"
+    rendered = [({"_public_final_input_path": final_input}, "synthetic input\n")]
+    original_copy = workspace_module._copy_to_new_file_or_fail
+
+    def fail_first_promotion(_source, _destination, *, guard):
+        raise RuntimeError("simulated promotion failure")
+
+    monkeypatch.setattr(
+        workspace_module,
+        "_copy_to_new_file_or_fail",
+        fail_first_promotion,
+    )
+    if with_ct_assets:
+        asset_source = tmp_path / "synthetic-ct.dat"
+        asset_source.write_bytes(b"synthetic ct")
+        asset_set = workspace_module.CtAssetSet(
+            root=tmp_path,
+            files={"synthetic-ct.dat": asset_source},
+            sha256={},
+            voxel_counts=(1, 1, 1),
+        )
+        writer = lambda: workspace_module.write_ct_rectangular_phits_inputs_atomically(
+            case_root=workspace,
+            rendered_inputs=rendered,
+            asset_set=asset_set,
+        )
+        pattern = ".rectangular_ct_phits_staging-*"
+    else:
+        writer = lambda: workspace_module.write_rectangular_phits_inputs_atomically(
+            case_root=workspace,
+            rendered_inputs=rendered,
+        )
+        pattern = ".rectangular_phits_staging-*"
+
+    with pytest.raises(RuntimeError, match="promotion failure"):
+        writer()
+    first_staging = set((workspace / "analysis").glob(pattern))
+    assert len(first_staging) == 1
+
+    monkeypatch.setattr(
+        workspace_module,
+        "_copy_to_new_file_or_fail",
+        original_copy,
+    )
+    writer()
+
+    assert final_input.read_text(encoding="utf-8") == "synthetic input\n"
+    all_staging = set((workspace / "analysis").glob(pattern))
+    assert first_staging < all_staging
+
+
 def test_rectangular_3dcrt_generated_input_is_complete_ct_runtime(tmp_path):
     workspace = tmp_path / "workspace"
     generate_rectangular_phits_workspace(

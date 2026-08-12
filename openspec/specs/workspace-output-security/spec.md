@@ -54,6 +54,8 @@ guard and MUST NOT follow a linked or reparse-point target.
 When Windows cannot retain the validated directory identity through recursive
 removal, cleanup MUST leave the staging tree in place rather than release its
 protective handles and delete a potentially replaced path.
+Each new staging attempt MUST use a freshly and exclusively created directory;
+it MUST NOT reuse a preserved tree from an earlier failed attempt.
 
 #### Scenario: Output appears after preflight
 
@@ -79,6 +81,13 @@ protective handles and delete a potentially replaced path.
   staging-directory handles before path-based removal
 - **THEN** cleanup leaves the staging tree in place and does not remove a path
   whose identity is no longer retained
+
+#### Scenario: Retry after Windows preserves failed staging
+
+- **WHEN** a Windows output attempt fails after populating staging and guarded
+  cleanup preserves that tree
+- **THEN** the next attempt uses a different exclusively created staging
+  directory and is not blocked by stale files from the failed attempt
 
 ### Requirement: Synthetic Path-Security Validation Boundary
 
