@@ -241,18 +241,6 @@ class WorkspaceOutputGuard:
                 require_case_containment=False,
             )
 
-    def _release_directories_at_or_below(self, path: Path) -> None:
-        if os.name != "nt":
-            return
-        prefix = os.path.normcase(os.fspath(_normalized_absolute(path))).rstrip("\\/")
-        keys = [
-            key
-            for key in self._windows_handles
-            if key == prefix or key.startswith(prefix + os.sep)
-        ]
-        for key in reversed(keys):
-            kernel32.CloseHandle(self._windows_handles.pop(key))  # type: ignore[name-defined]
-
     def prepare(self, target: Path, *, create_parents: bool = False) -> Path:
         root, target = _require_lexical_containment(self.case_root, target)
         if root != self.case_root:
@@ -475,10 +463,13 @@ class WorkspaceOutputGuard:
                     raise UnsafeWorkspacePathError(
                         f"Cleanup target contains a link or reparse point: {child}"
                     )
-        # Windows cannot remove a directory while this guard's no-share-delete
-        # handle is open. Parent handles remain locked while the inspected tree
-        # is released immediately before removal.
-        self._release_directories_at_or_below(target)
+        # Windows cannot remove this tree while its validated no-share-delete
+        # handles remain open. Releasing those handles and deleting by path
+        # would permit the inspected tree to be replaced before removal, so
+        # preserve the staging evidence instead of risking deletion of a
+        # replacement. Non-Windows removal behavior remains unchanged.
+        if os.name == "nt":
+            return
         shutil.rmtree(target)
 
 

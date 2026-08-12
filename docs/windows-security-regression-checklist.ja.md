@@ -30,7 +30,7 @@ python -m pytest tests/test_offline_install.py tests/test_security_boundaries.py
 fake runnerで確認します。リポジトリ直下のPowerShellで次を実行します。
 
 ```powershell
-python -m pytest tests/test_prepare_rtdose.py::test_run_requires_executable_and_detects_new_dicom tests/test_prepare_rtdose.py::test_run_rejects_final_only_phits2dicom_output_and_cleans_staging -vv -p no:cacheprovider
+python -m pytest tests/test_prepare_rtdose.py::test_run_requires_executable_and_detects_new_dicom tests/test_prepare_rtdose.py::test_run_rejects_final_only_phits2dicom_output_and_contains_staging -vv -p no:cacheprovider
 ```
 
 両方がpassし、次を確認します。
@@ -41,7 +41,9 @@ python -m pytest tests/test_prepare_rtdose.py::test_run_requires_executable_and_
   staging内を指す
 - 終了code 0でもstagingにexpected DICOMがなければ`stage_status`が`failed`となり、
   最終出力先へ直接作られたDICOMを後処理または成功扱いしない
-- cwd相対の想定外fileはstaging cleanupで削除され、最終`DATfiles`へ作られない
+- cwd相対の想定外fileは最終`DATfiles`へ作られない。Windowsでは検証済みdirectory
+  identityを削除完了まで保持できないため、guardはhandleを解放してpath削除せず、
+  staging evidenceを残す
 - 正常なstaging出力はguard経由で最終出力へ昇格され、既存のRTDOSE意味論testがpassする
 
 ## 実bundleの処理順序

@@ -51,6 +51,9 @@ temporary regular file. They SHALL revalidate the guarded path immediately
 before mutation and, on Windows, hold non-delete-sharing handles for validated
 existing directories throughout the mutation. Cleanup MUST use the same path
 guard and MUST NOT follow a linked or reparse-point target.
+When Windows cannot retain the validated directory identity through recursive
+removal, cleanup MUST leave the staging tree in place rather than release its
+protective handles and delete a potentially replaced path.
 
 #### Scenario: Output appears after preflight
 
@@ -69,6 +72,13 @@ guard and MUST NOT follow a linked or reparse-point target.
 - **WHEN** cleanup would traverse or remove a linked/reparse-point path
 - **THEN** cleanup refuses that mutation and preserves the controlled failure
   evidence without acting on the link target
+
+#### Scenario: Windows cleanup cannot retain directory identity
+
+- **WHEN** recursive cleanup on Windows would require releasing the validated
+  staging-directory handles before path-based removal
+- **THEN** cleanup leaves the staging tree in place and does not remove a path
+  whose identity is no longer retained
 
 ### Requirement: Synthetic Path-Security Validation Boundary
 

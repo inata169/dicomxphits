@@ -260,6 +260,27 @@ def test_workspace_cleanup_rejects_symlinked_directory_without_outside_delete(
     assert linked_directory.is_symlink()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows cleanup identity behavior")
+def test_workspace_cleanup_preserves_held_tree_on_windows(tmp_path, monkeypatch):
+    case_root = tmp_path / "case"
+    case_root.mkdir()
+    sentinel_content = b"preserve"
+
+    with WorkspaceOutputGuard(case_root) as guard:
+        staging = guard.make_staging_directory(case_root, prefix=".staging-")
+        sentinel = staging / "sentinel.txt"
+        sentinel.write_bytes(sentinel_content)
+
+        def fail_path_based_removal(_path):
+            raise AssertionError("path-based removal must not run on Windows")
+
+        monkeypatch.setattr("dicomxphits.safe_output.shutil.rmtree", fail_path_based_removal)
+        guard.rmtree(staging)
+
+        assert staging.is_dir()
+        assert sentinel.read_bytes() == sentinel_content
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="real Windows junction behavior")
 def test_workspace_writer_rejects_real_windows_junction(tmp_path):
     case_root = tmp_path / "日本語 case"

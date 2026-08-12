@@ -1397,7 +1397,7 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
 
 
-def test_run_rejects_final_only_phits2dicom_output_and_cleans_staging(tmp_path):
+def test_run_rejects_final_only_phits2dicom_output_and_contains_staging(tmp_path):
     workspace, files = write_workspace(tmp_path)
     template = tmp_path / "template.dcm"
     ct = tmp_path / "ct_reference.dcm"
@@ -1445,7 +1445,13 @@ def test_run_rejects_final_only_phits2dicom_output_and_cleans_staging(tmp_path):
     assert Path(calls["cwd"]) == calls["staged_output"].parent
     assert Path(calls["cwd"]) != Path(prepare["dat_dir"]).absolute()
     assert not (Path(prepare["dat_dir"]) / "cwd-relative-bypass.txt").exists()
-    assert not Path(calls["cwd"]).exists()
+    if sys.platform == "win32":
+        assert Path(calls["cwd"]).is_dir()
+        assert (Path(calls["cwd"]) / "cwd-relative-bypass.txt").read_text(
+            encoding="utf-8"
+        ) == "must remain staged"
+    else:
+        assert not Path(calls["cwd"]).exists()
     assert summary["stage_status"] == "failed"
     assert summary["phits2dicom_staged_output_promoted"] is False
     assert summary["plan_reference_synchronization"] is None

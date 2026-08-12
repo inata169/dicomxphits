@@ -109,6 +109,12 @@ payloads into the exact protected runtime tree. The helper, wheelhouse, and
 editable source all run from that protected snapshot; `.venv`, logs, and the
 launcher remain in the extracted installation root.
 
+A subsequent Windows cleanup review found that guarded staging handles were
+released immediately before path-based recursive removal, allowing the checked
+tree to be replaced in that gap. Windows guarded cleanup now retains those
+handles and leaves the staging evidence in place; non-Windows guarded cleanup
+continues to remove the validated tree.
+
 The required public checks and specification promotion are complete. The
 remaining completion order is: commit and push the active-change correction,
 confirm exact-head CI, request and address `@codex review` until clean, record
