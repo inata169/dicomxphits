@@ -574,6 +574,66 @@ def test_bundle_directory_locks_block_rename(tmp_path):
     assert "DIRECTORY_RENAME_DENIED" in result.stdout.splitlines()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows reparse handles")
+def test_bundle_directory_lock_rejects_opened_junction(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    junction = tmp_path / "junction"
+    harness = tmp_path / "bundle-junction-lock-harness.ps1"
+    harness.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        + ". "
+        + repr(str(ROOT / "tools" / "lock_bundle_directories.ps1"))
+        + "\n$Target = [IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_TARGET)\n"
+        "$Junction = [IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_JUNCTION)\n"
+        "New-Item -ItemType Junction -Path $Junction -Target $Target | Out-Null\n"
+        "try {\n"
+        "  $Handle = Open-LockedBundleDirectory $Junction\n"
+        "  if ($null -ne $Handle) { $Handle.Dispose() }\n"
+        "  exit 9\n"
+        "}\n"
+        "catch {\n"
+        "  if ($_ -notmatch 'reparse point') { Write-Error $_; exit 10 }\n"
+        "  Write-Output 'OPENED_JUNCTION_REJECTED'\n"
+        "  exit 0\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_TEST_TARGET": str(target),
+            "DICOMXPHITS_TEST_JUNCTION": str(junction),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OPENED_JUNCTION_REJECTED" in result.stdout.splitlines()
+
+
 def test_verified_stage_uses_only_authenticated_application_local_python():
     text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(encoding="utf-8")
 

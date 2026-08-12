@@ -88,8 +88,13 @@ lock attempt against the filesystem root. The helper now limits locks to the
 bundle root and the in-bundle parent chain for each payload; the regression also
 asserts that a root-plus-`tools` fixture retains exactly those two handles.
 
+The following exact-head review found a check/open race if a directory became a
+junction. Directory entries are now opened with `FILE_FLAG_OPEN_REPARSE_POINT`,
+and attributes are checked from the acquired handle before it is accepted. A
+Windows regression opens a junction through that helper and confirms rejection.
+
 The required public checks and OpenSpec promotion/archive are complete. The
-remaining completion order is: commit and push the exact-head CI correction,
+remaining completion order is: commit and push the junction-race correction,
 confirm exact-head CI, request and address `@codex review` until clean, then
 merge pull request #33 and delete its source branch. Do not create or modify a
 tag or

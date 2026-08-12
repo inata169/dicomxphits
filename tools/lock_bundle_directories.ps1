@@ -9,6 +9,20 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
 namespace Dicomxphits {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct BundleDirectoryFileInformation {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
     public static class BundleDirectoryNative {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern SafeFileHandle CreateFile(
@@ -20,9 +34,63 @@ namespace Dicomxphits {
             uint flagsAndAttributes,
             IntPtr templateFile
         );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetFileInformationByHandle(
+            SafeFileHandle file,
+            out BundleDirectoryFileInformation fileInformation
+        );
     }
 }
 '@
+}
+
+function Open-LockedBundleDirectory([string]$DirectoryPath) {
+    $Handle = [Dicomxphits.BundleDirectoryNative]::CreateFile(
+        $DirectoryPath,
+        0x10080,
+        [System.IO.FileShare]::Read -bor [System.IO.FileShare]::Write,
+        [System.IntPtr]::Zero,
+        [System.IO.FileMode]::Open,
+        0x02200000,
+        [System.IntPtr]::Zero
+    )
+    if ($Handle.IsInvalid) {
+        $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $Handle.Dispose()
+        if ($ErrorCode -eq 5) {
+            # Without DELETE access this token cannot rename the directory.
+            return $null
+        }
+        $Message = "Cannot lock bundle directory against rename: " +
+            "$DirectoryPath (Windows error $ErrorCode)"
+        throw (New-Object System.ComponentModel.Win32Exception(
+            $ErrorCode,
+            $Message
+        ))
+    }
+    $FileInformation = New-Object Dicomxphits.BundleDirectoryFileInformation
+    if (-not [Dicomxphits.BundleDirectoryNative]::GetFileInformationByHandle(
+        $Handle,
+        [ref]$FileInformation
+    )) {
+        $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $Handle.Dispose()
+        throw (New-Object System.ComponentModel.Win32Exception(
+            $ErrorCode,
+            "Cannot inspect locked bundle directory: $DirectoryPath"
+        ))
+    }
+    if (($FileInformation.FileAttributes -band 0x400) -ne 0) {
+        $Handle.Dispose()
+        throw "Locked bundle directory is a reparse point: $DirectoryPath"
+    }
+    if (($FileInformation.FileAttributes -band 0x10) -eq 0) {
+        $Handle.Dispose()
+        throw "Locked bundle path is not a directory: $DirectoryPath"
+    }
+    return $Handle
 }
 
 function Lock-BundleDirectoryPaths(
@@ -80,29 +148,8 @@ function Lock-BundleDirectoryPaths(
             ) {
                 throw "Bundle directory is a reparse point: $DirectoryPath"
             }
-            $Handle = [Dicomxphits.BundleDirectoryNative]::CreateFile(
-                $DirectoryPath,
-                0x10080,
-                [System.IO.FileShare]::Read -bor [System.IO.FileShare]::Write,
-                [System.IntPtr]::Zero,
-                [System.IO.FileMode]::Open,
-                0x02000000,
-                [System.IntPtr]::Zero
-            )
-            if ($Handle.IsInvalid) {
-                $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-                $Handle.Dispose()
-                if ($ErrorCode -eq 5) {
-                    # Without DELETE access this token cannot rename the directory.
-                    continue
-                }
-                $Message = "Cannot lock bundle directory against rename: " +
-                    "$DirectoryPath (Windows error $ErrorCode)"
-                throw (New-Object System.ComponentModel.Win32Exception(
-                    $ErrorCode,
-                    $Message
-                ))
-            }
+            $Handle = Open-LockedBundleDirectory $DirectoryPath
+            if ($null -eq $Handle) { continue }
             $Handles.Add($Handle)
         }
         return $Handles
