@@ -109,6 +109,8 @@ protected hash receiptを作成して、Python起動前に終了します。元�
 - inventoryに含まれるbundle fileだけをexactなprotected snapshotへコピーし、helper、
   wheelhouse、editable sourceはそのsnapshotから使用する。追加された`setup.py`などの
   未検証fileは拒否し、コピーも実行もしない
+- 最初のPowerShell起動前に継承されたCLR profiler、startup hook、AppDomain manager
+  設定を消去し、必要なbundle directoryをrename防止handleで保持できなければ停止する
 - そのapplication-local CPython 3.12.10 x64だけを`-I -S -B`で使用する。
   host Python、registry candidate、`py.exe`、bare `python.exe`を探索、probe、
   install、repair、実行しない

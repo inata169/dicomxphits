@@ -527,6 +527,28 @@ def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     )
     assert "%SystemRoot%\\System32\\WindowsPowerShell" not in text
     assert '"%TrustedPowerShell%" -NoLogo' in text
+    powershell_start = text.index('\n"%TrustedPowerShell%" -NoLogo')
+    for variable in (
+        "COR_ENABLE_PROFILING",
+        "COR_PROFILER",
+        "COR_PROFILER_PATH",
+        "CORECLR_ENABLE_PROFILING",
+        "CORECLR_PROFILER",
+        "CORECLR_PROFILER_PATH",
+        "APPDOMAIN_MANAGER_ASM",
+        "APPDOMAIN_MANAGER_TYPE",
+        "DOTNET_STARTUP_HOOKS",
+    ):
+        clear_line = f'set "{variable}="'
+        assert clear_line in text
+        assert text.index(clear_line) < powershell_start
+
+    lock_helper = (ROOT / "tools" / "lock_bundle_directories.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "$DirectoryPath,\n        0x10080," in lock_helper
+    assert "if ($ErrorCode -eq 5)" not in lock_helper
+    assert "if ($null -eq $Handle) { continue }" not in lock_helper
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")

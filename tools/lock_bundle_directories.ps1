@@ -59,10 +59,6 @@ function Open-LockedBundleDirectory([string]$DirectoryPath) {
     if ($Handle.IsInvalid) {
         $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
         $Handle.Dispose()
-        if ($ErrorCode -eq 5) {
-            # Without DELETE access this token cannot rename the directory.
-            return $null
-        }
         $Message = "Cannot lock bundle directory against rename: " +
             "$DirectoryPath (Windows error $ErrorCode)"
         throw (New-Object System.ComponentModel.Win32Exception(
@@ -149,7 +145,6 @@ function Lock-BundleDirectoryPaths(
                 throw "Bundle directory is a reparse point: $DirectoryPath"
             }
             $Handle = Open-LockedBundleDirectory $DirectoryPath
-            if ($null -eq $Handle) { continue }
             $Handles.Add($Handle)
         }
         return $Handles

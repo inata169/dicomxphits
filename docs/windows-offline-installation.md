@@ -119,6 +119,9 @@ The original non-elevated stage then:
 - uses an exact protected snapshot containing only inventoried bundle files for
   the helper, wheelhouse, and editable source; unmanifested files such as an
   added `setup.py` are rejected and never copied or executed;
+- clears inherited CLR profiler, startup-hook, and AppDomain-manager settings
+  before the first PowerShell process, and fails if any required bundle
+  directory cannot be held against rename;
 - uses only that application-local CPython 3.12.10 x64 interpreter with
   `-I -S -B`; it never discovers, probes, installs, repairs, or executes a host
   Python, registry candidate, `py.exe`, or bare `python.exe`;

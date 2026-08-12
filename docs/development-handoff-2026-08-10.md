@@ -115,6 +115,12 @@ tree to be replaced in that gap. Windows guarded cleanup now retains those
 handles and leaves the staging evidence in place; non-Windows guarded cleanup
 continues to remove the validated tree.
 
+The next installer review found two earlier bootstrap gaps. The batch entry
+point now clears inherited CLR profiling and managed-startup injection settings
+before starting PowerShell. Bundle directory locks request only read attributes
+while withholding delete sharing, so an ACL that denies `DELETE` no longer
+causes the directory to be skipped; every required lock must succeed.
+
 The required public checks and specification promotion are complete. The
 remaining completion order is: commit and push the active-change correction,
 confirm exact-head CI, request and address `@codex review` until clean, record

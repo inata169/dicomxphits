@@ -84,6 +84,11 @@ absolute PowerShell executable below the Windows system directory, MUST reject
 reparse-point paths, and MUST NOT execute a bundle verifier, Windows Installer,
 Python executable, helper, or pip until its required input has passed the
 applicable inventory and signature checks and has been read-locked.
+Before starting Windows PowerShell, the bootstrap MUST clear inherited CLR
+profiling, startup-hook, and AppDomain-manager environment variables that can
+load caller-selected managed or native code before the verification command.
+Failure to acquire a no-delete-sharing handle for any required bundle directory
+MUST stop installation; an access-denied directory MUST NOT be skipped.
 The bootstrap MUST reject any unmanifested file in the extracted source tree.
 Before helper or pip execution, the elevated stage SHALL copy only inventoried
 payloads into protected storage, and the non-elevated stage MUST use that exact
@@ -121,6 +126,19 @@ source installation.
 - **WHEN** the extraction or current directory contains `powershell.exe`
 - **THEN** bootstrap uses only the quoted absolute Windows system PowerShell
   path and the lookalike is not executed
+
+#### Scenario: Inherited CLR startup injection
+
+- **WHEN** the caller sets CLR profiler, startup-hook, or AppDomain-manager
+  environment variables before starting the offline bootstrap
+- **THEN** bootstrap clears them before its first PowerShell process and no
+  caller-selected CLR startup code runs
+
+#### Scenario: Bundle directory lock is denied
+
+- **WHEN** a required bundle directory can be inspected but its protective
+  no-delete-sharing handle cannot be acquired
+- **THEN** bootstrap fails before elevation and does not skip that directory
 
 #### Scenario: Runtime artifact changed after preparation
 
