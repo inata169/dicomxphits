@@ -529,6 +529,7 @@ def test_bundle_directory_locks_block_rename(tmp_path):
         "$Payload = [IO.Path]::Combine($Tools, 'install_offline_verified.ps1')\n"
         "$Handles = @(Lock-BundleDirectoryPaths $Root @($Payload))\n"
         "try {\n"
+        "  if ($Handles.Count -ne 2) { exit 7 }\n"
         "  $Blocked = $false\n"
         "  try { [IO.Directory]::Move($Tools, $Moved) } catch { $Blocked = $true }\n"
         "  if (-not $Blocked -or -not [IO.Directory]::Exists($Tools) -or "

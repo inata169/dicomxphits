@@ -83,11 +83,16 @@ and read-locks every payload from the locked path before invoking the verified
 stage. A Windows regression proves the `tools` directory cannot be renamed
 while that stage runs.
 
+The first exact-head Windows CI run for that correction exposed an overly broad
+lock attempt against the filesystem root. The helper now limits locks to the
+bundle root and the in-bundle parent chain for each payload; the regression also
+asserts that a root-plus-`tools` fixture retains exactly those two handles.
+
 The required public checks and OpenSpec promotion/archive are complete. The
-remaining completion order is: commit and push the bundle-path correction,
-reply to and resolve its P1 thread, confirm
-exact-head CI, request and address `@codex review` until clean, then merge pull
-request #33 and delete its source branch. Do not create or modify a tag or
+remaining completion order is: commit and push the exact-head CI correction,
+confirm exact-head CI, request and address `@codex review` until clean, then
+merge pull request #33 and delete its source branch. Do not create or modify a
+tag or
 release, and do not force-push.
 
 ## End-of-Day Addendum (2026-08-10)

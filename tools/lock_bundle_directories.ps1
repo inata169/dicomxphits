@@ -29,24 +29,43 @@ function Lock-BundleDirectoryPaths(
     [string]$BundleRoot,
     [string[]]$PayloadPaths
 ) {
+    $BundleDirectory = [System.IO.DirectoryInfo][System.IO.Path]::GetFullPath(
+        $BundleRoot
+    )
+    if ($null -eq $BundleDirectory.Parent) {
+        throw "Bundle root cannot be a filesystem root: $BundleRoot"
+    }
+    $BundlePath = $BundleDirectory.FullName
+    $BundlePrefix = $BundlePath.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar
+    ) + [System.IO.Path]::DirectorySeparatorChar
     $DirectoryPaths = New-Object 'System.Collections.Generic.HashSet[string]' (
         [System.StringComparer]::OrdinalIgnoreCase
     )
     foreach ($PayloadPath in $PayloadPaths) {
+        $FullPayloadPath = [System.IO.Path]::GetFullPath($PayloadPath)
+        if (-not $FullPayloadPath.StartsWith(
+            $BundlePrefix,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw "Bundle payload is outside the bundle root: $PayloadPath"
+        }
         $Cursor = [System.IO.DirectoryInfo][System.IO.Path]::GetDirectoryName(
-            [System.IO.Path]::GetFullPath($PayloadPath)
+            $FullPayloadPath
         )
         while ($null -ne $Cursor) {
             $DirectoryPaths.Add($Cursor.FullName) | Out-Null
+            if ($Cursor.FullName.Equals(
+                $BundlePath,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) {
+                break
+            }
             $Cursor = $Cursor.Parent
         }
-    }
-    $BundleDirectory = [System.IO.DirectoryInfo][System.IO.Path]::GetFullPath(
-        $BundleRoot
-    )
-    while ($null -ne $BundleDirectory) {
-        $DirectoryPaths.Add($BundleDirectory.FullName) | Out-Null
-        $BundleDirectory = $BundleDirectory.Parent
+        if ($null -eq $Cursor) {
+            throw "Bundle payload parent chain escaped the bundle root: $PayloadPath"
+        }
     }
 
     $Handles = New-Object 'System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]'
