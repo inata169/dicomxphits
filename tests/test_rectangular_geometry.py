@@ -43,7 +43,7 @@ def control_point(
     positions.append(item("ASYMY", y_jaw_positions or [-50.0, 50.0]))
     if include_mlc:
         positions.append(item("MLCX", leaf_positions or [-20.0, -15.0, -10.0, -5.0, 20.0, 15.0, 10.0, 5.0]))
-    return SimpleNamespace(
+    point = SimpleNamespace(
         ControlPointIndex=index,
         GantryAngle=10.0,
         BeamLimitingDeviceAngle=20.0,
@@ -53,6 +53,9 @@ def control_point(
         CumulativeMetersetWeight=cmw,
         BeamLimitingDevicePositionSequence=positions,
     )
+    if index == 0:
+        point.NominalBeamEnergy = 6.0
+    return point
 
 
 def beam(
@@ -79,6 +82,7 @@ def beam(
         BeamNumber=1,
         BeamName="Public test beam",
         BeamType=beam_type,
+        RadiationType="PHOTON",
         TreatmentDeliveryType="TREATMENT",
         FinalCumulativeMetersetWeight=1.0,
         BeamLimitingDeviceSequence=devices,

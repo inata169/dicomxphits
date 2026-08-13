@@ -25,6 +25,11 @@ from dicomxphits.prepare_3dcrt_workspace import (
     DEFAULT_SEGMENT_MAXCAS,
     DEFAULT_SEGMENT_OMP_THREADS,
 )
+from dicomxphits.project_identity import PROJECT_AUTHOR, PROJECT_REPOSITORY_URL
+from dicomxphits.public_spectrum import (
+    PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE,
+    PUBLIC_BEAM_MODEL_GUI_LINE,
+)
 from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
     file_sha256,
@@ -1470,6 +1475,26 @@ def _build_gui() -> int:
     ttk.Label(header, textvariable=global_status, style="NavStatus.TLabel").grid(
         row=0, column=2, sticky="e"
     )
+    ttk.Label(
+        header,
+        text=PUBLIC_BEAM_MODEL_GUI_LINE,
+        style="NavStatus.TLabel",
+    ).grid(row=1, column=0, columnspan=2, pady=(5, 0), sticky="w")
+    ttk.Label(
+        header,
+        text=PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE,
+        style="NavStatus.TLabel",
+    ).grid(row=2, column=0, columnspan=2, sticky="w")
+    ttk.Label(
+        header,
+        text=f"Web: {PROJECT_REPOSITORY_URL}",
+        style="NavStatus.TLabel",
+    ).grid(row=1, column=2, pady=(5, 0), sticky="e")
+    ttk.Label(
+        header,
+        text=f"Author: {PROJECT_AUTHOR}",
+        style="NavStatus.TLabel",
+    ).grid(row=2, column=2, sticky="e")
 
     body = ttk.Frame(app, style="App.TFrame")
     body.grid(row=1, column=0, sticky="nsew")
@@ -1519,7 +1544,7 @@ def _build_gui() -> int:
     )
     output = scrolledtext.ScrolledText(
         activity_frame,
-        height=2,
+        height=3,
         background=colors["deep"],
         foreground=colors["text"],
         insertbackground=colors["text"],

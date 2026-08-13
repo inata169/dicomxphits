@@ -59,6 +59,11 @@ from dicomxphits.gui_tool_profile import (
     validate_custom_tool_profile,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
+from dicomxphits.project_identity import PROJECT_AUTHOR, PROJECT_REPOSITORY_URL
+from dicomxphits.public_spectrum import (
+    PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE,
+    PUBLIC_BEAM_MODEL_GUI_LINE,
+)
 
 
 def write_file(path: Path, text: str = "x") -> Path:
@@ -196,6 +201,41 @@ def test_gui_config_defaults_to_rectangular_public_model(tmp_path: Path) -> None
     config = base_config(tmp_path)
 
     assert config.geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT
+
+
+def test_gui_source_uses_shared_fixed_6mv_identity_without_energy_selector() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+
+    assert PUBLIC_BEAM_MODEL_GUI_LINE == (
+        "Beam model: Elekta Precise 6 MV public research model"
+    )
+    assert PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE == "Nominal energy: 6 MV (fixed)"
+    assert "text=PUBLIC_BEAM_MODEL_GUI_LINE" in source
+    assert "text=PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE" in source
+    assert "nominal_energy_selector" not in source
+    assert "energy_selector" not in source
+
+
+def test_gui_source_shows_shared_project_identity_without_browser_launch() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+
+    assert PROJECT_REPOSITORY_URL == "https://github.com/inata169/dicomxphits"
+    assert PROJECT_AUTHOR == "Hiroki Inata"
+    assert 'text=f"Web: {PROJECT_REPOSITORY_URL}"' in source
+    assert 'text=f"Author: {PROJECT_AUTHOR}"' in source
+    assert "webbrowser" not in source
+
+
+def test_common_activity_log_keeps_three_rows_scroll_and_latest_entry() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+    activity_source = source.split(
+        "output = scrolledtext.ScrolledText(", 1
+    )[1].split("def save_local_settings", 1)[0]
+
+    assert "height=3" in activity_source
+    assert "output.see(tk.END)" in activity_source
+    assert "output.grid(" in activity_source
+    assert source.count("scrolledtext.ScrolledText(") == 1
 
 
 def test_standard_tool_profile_resolves_approved_phits_335_layout(
