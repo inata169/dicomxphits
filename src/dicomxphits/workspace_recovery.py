@@ -605,10 +605,13 @@ def preserve_downstream_for_recovery(
                 overwrite=False,
             )
             deletion_started = True
+            for record in records:
+                original = root / Path(record["original_relative_path"])
+                guard.unlink(original)
             for source in conflicts:
                 if source.is_dir():
                     guard.rmtree(source)
-                else:
+                elif os.path.lexists(source):
                     guard.unlink(source)
         except Exception:
             if not deletion_started:

@@ -201,8 +201,16 @@ def test_downstream_recovery_preserves_history_without_moving_phits(
 
     assert history is not None
     assert phits_output.read_text(encoding="utf-8") == "synthetic PHITS tally"
-    assert not (workspace / "sumtally").exists()
-    assert not (workspace / "rtdose").exists()
+    assert not (workspace / "sumtally" / "sumtally.inp").exists()
+    assert not (workspace / "rtdose" / "historical.dcm").exists()
+    if sys.platform == "win32":
+        # The output guard intentionally keeps validated directory handles open
+        # on Windows, so only their preserved files can be removed safely.
+        assert (workspace / "sumtally").is_dir()
+        assert (workspace / "rtdose").is_dir()
+    else:
+        assert not (workspace / "sumtally").exists()
+        assert not (workspace / "rtdose").exists()
     manifest = json.loads(history.manifest_path.read_text(encoding="utf-8"))
     assert manifest["phits_segment_outputs_moved"] is False
     preserved = {item["original_relative_path"] for item in manifest["files"]}
