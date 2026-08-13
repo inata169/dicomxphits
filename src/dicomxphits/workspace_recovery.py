@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping
 
+from dicomxphits.fix_coordinates import (
+    AXIS_MAPPING as COORDINATE_CORRECTION_AXIS_MAPPING,
+    SCHEMA_VERSION as COORDINATE_CORRECTION_SCHEMA_VERSION,
+)
 from dicomxphits.prepare_3dcrt_workspace import (
     active_segments,
     validate_public_strict_3dcrt_gate,
@@ -318,8 +322,14 @@ def _validated_final_output(workspace_root: Path) -> Path | None:
     if (
         not isinstance(semantic_validation, dict)
         or semantic_validation.get("validated") is not True
+        or not isinstance(coordinate_correction, dict)
+        or coordinate_correction.get("schema_version")
+        != COORDINATE_CORRECTION_SCHEMA_VERSION
+        or coordinate_correction.get("axis_mapping")
+        != COORDINATE_CORRECTION_AXIS_MAPPING
         or not isinstance(invariants, dict)
         or invariants.get("stored_value_multiset_preserved") is not True
+        or invariants.get("iec_x_to_dicom_x_reversal_applied") is not True
         or execution.get("coordinate_corrected_rtdose_output_exists") is not True
     ):
         return None

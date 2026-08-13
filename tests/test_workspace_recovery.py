@@ -12,6 +12,7 @@ if str(PUBLIC_SRC) not in sys.path:
 
 import dicomxphits.gui as gui_module
 import dicomxphits.workspace_recovery as recovery_module
+from dicomxphits.fix_coordinates import AXIS_MAPPING, SCHEMA_VERSION
 from dicomxphits.gui import GuiConfig, StageResult, run_workspace_recovery
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 from dicomxphits.workspace_recovery import (
@@ -280,7 +281,12 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
         "coordinate_corrected_rtdose_output_sha256": file_sha256(final_output),
         "coordinate_placement_validation": {"validated": True},
         "coordinate_correction": {
-            "invariants": {"stored_value_multiset_preserved": True}
+            "schema_version": SCHEMA_VERSION,
+            "axis_mapping": AXIS_MAPPING,
+            "invariants": {
+                "stored_value_multiset_preserved": True,
+                "iec_x_to_dicom_x_reversal_applied": True,
+            },
         },
         "final_semantic_validation": {"validated": True},
     }
@@ -296,6 +302,16 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
     assert completed.state == RECOVERY_COMPLETE
     assert completed.final_output == final_output.resolve()
 
+    execution["coordinate_correction"]["axis_mapping"] = (
+        "phits2dicom_frames_rows_columns_to_dicom_rows_frames_columns_v1"
+    )
+    write_file(execution_path, json.dumps(execution))
+
+    stale_axis_mapping = inspect_existing_workspace(workspace)
+    assert stale_axis_mapping.state == RECOVERY_READY
+    assert stale_axis_mapping.stage_sequence == ("run_rtdose",)
+
+    execution["coordinate_correction"]["axis_mapping"] = AXIS_MAPPING
     execution.pop("final_semantic_validation")
     write_file(execution_path, json.dumps(execution))
 

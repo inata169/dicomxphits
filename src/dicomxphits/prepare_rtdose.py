@@ -21,6 +21,8 @@ from dicomxphits.dose_semantics import (
     require_absolute_units,
 )
 from dicomxphits.fix_coordinates import (
+    AXIS_MAPPING as COORDINATE_CORRECTION_AXIS_MAPPING,
+    SCHEMA_VERSION as COORDINATE_CORRECTION_SCHEMA_VERSION,
     coordinate_summary_path,
     corrected_rtdose_path,
     fix_coordinates,
@@ -1703,9 +1705,19 @@ def run_rtdose(
             and bool(final_semantic_validation and final_semantic_validation["validated"])
             and bool(
                 coordinate_correction
-                and coordinate_correction["invariants"][
+                and coordinate_correction.get("schema_version")
+                == COORDINATE_CORRECTION_SCHEMA_VERSION
+                and coordinate_correction.get("axis_mapping")
+                == COORDINATE_CORRECTION_AXIS_MAPPING
+                and isinstance(coordinate_correction.get("invariants"), dict)
+                and coordinate_correction["invariants"].get(
                     "stored_value_multiset_preserved"
-                ]
+                )
+                is True
+                and coordinate_correction["invariants"].get(
+                    "iec_x_to_dicom_x_reversal_applied"
+                )
+                is True
             )
             else "failed"
         )
