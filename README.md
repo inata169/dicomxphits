@@ -711,6 +711,7 @@ RTDOSE Run stage performs its accepted correction handoff automatically.
 
 ## Related Documentation
 
+- [Development handoff — 2026-08-13](docs/development-handoff-2026-08-13.md)
 - [Public feasibility demonstration and research boundaries](docs/public-feasibility-demonstration.md)
 - [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)
