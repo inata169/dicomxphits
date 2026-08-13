@@ -238,6 +238,26 @@ def test_common_activity_log_keeps_three_rows_scroll_and_latest_entry() -> None:
     assert source.count("scrolledtext.ScrolledText(") == 1
 
 
+def test_common_workflow_page_viewport_scrolls_without_moving_activity_log() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+    viewport_source = source.split(
+        'page_viewport = ttk.Frame(content, style="Content.TFrame")', 1
+    )[1].split(
+        'activity_frame = ttk.Frame(content, style="Surface.TFrame"', 1
+    )[0]
+    show_page_source = source.split(
+        "def show_page(page_key: str) -> None:", 1
+    )[1].split("for index, (key, label)", 1)[0]
+
+    assert "page_canvas = tk.Canvas(" in viewport_source
+    assert 'orient="vertical"' in viewport_source
+    assert "command=page_canvas.yview" in viewport_source
+    assert "yscrollcommand=page_scrollbar.set" in viewport_source
+    assert "scrollregion=page_canvas.bbox(\"all\")" in viewport_source
+    assert "page_canvas.yview_moveto(0.0)" in show_page_source
+    assert source.index("page_viewport =") < source.index("activity_frame =")
+
+
 def test_standard_tool_profile_resolves_approved_phits_335_layout(
     tmp_path: Path,
 ) -> None:

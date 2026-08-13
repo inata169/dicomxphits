@@ -1531,10 +1531,43 @@ def _build_gui() -> int:
         row=1, column=0, sticky="w", pady=(4, 0)
     )
 
-    page_container = ttk.Frame(content, style="Content.TFrame")
-    page_container.grid(row=1, column=0, sticky="nsew")
+    page_viewport = ttk.Frame(content, style="Content.TFrame")
+    page_viewport.grid(row=1, column=0, sticky="nsew")
+    page_viewport.columnconfigure(0, weight=1)
+    page_viewport.rowconfigure(0, weight=1)
+    page_canvas = tk.Canvas(
+        page_viewport,
+        background=colors["navy"],
+        borderwidth=0,
+        highlightthickness=0,
+        yscrollincrement=20,
+    )
+    page_canvas.grid(row=0, column=0, sticky="nsew")
+    page_scrollbar = ttk.Scrollbar(
+        page_viewport,
+        orient="vertical",
+        command=page_canvas.yview,
+    )
+    page_scrollbar.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+    page_canvas.configure(yscrollcommand=page_scrollbar.set)
+
+    page_container = ttk.Frame(page_canvas, style="Content.TFrame")
     page_container.columnconfigure(0, weight=1)
-    page_container.rowconfigure(0, weight=1)
+    page_window = page_canvas.create_window(
+        (0, 0),
+        window=page_container,
+        anchor="nw",
+    )
+
+    def refresh_page_scroll_region(*_args: object) -> None:
+        page_canvas.configure(scrollregion=page_canvas.bbox("all"))
+
+    def resize_page_to_viewport(event: tk.Event) -> None:
+        page_canvas.itemconfigure(page_window, width=event.width)
+        refresh_page_scroll_region()
+
+    page_canvas.bind("<Configure>", resize_page_to_viewport)
+    page_container.bind("<Configure>", refresh_page_scroll_region)
 
     activity_frame = ttk.Frame(content, style="Surface.TFrame", padding=(14, 10))
     activity_frame.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
@@ -1747,6 +1780,8 @@ def _build_gui() -> int:
         title, subtitle = page_meta[page_key]
         page_title.set(title)
         page_subtitle.set(subtitle)
+        page_canvas.yview_moveto(0.0)
+        root.after_idle(refresh_page_scroll_region)
 
     for index, (key, label) in enumerate(
         (
