@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pydicom
@@ -18,6 +19,7 @@ if str(PUBLIC_SRC) not in sys.path:
 PUBLIC_ROOT = Path(__file__).resolve().parents[1]
 
 import dicomxphits.prepare_rtdose as prepare_rtdose_module
+import dicomxphits.rtdose_plan_references as rtdose_plan_references_module
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.dose_semantics import require_relative_rtdose
 from dicomxphits.prepare_rtdose import (
@@ -397,7 +399,7 @@ def add_non_treatment_setup_beam(
     rtplan_path: Path,
     *,
     active: bool = False,
-    setup_mu: float = 10.0,
+    setup_mu: float | str | None = 10.0,
 ) -> None:
     plan = pydicom.dcmread(str(rtplan_path))
     setup_beam = Dataset()
@@ -406,14 +408,16 @@ def add_non_treatment_setup_beam(
     plan.BeamSequence.append(setup_beam)
     setup_reference = Dataset()
     setup_reference.ReferencedBeamNumber = 2
-    setup_reference.BeamMeterset = setup_mu
+    if setup_mu is not None:
+        setup_reference.BeamMeterset = setup_mu
     plan.FractionGroupSequence[0].ReferencedBeamSequence.append(setup_reference)
     plan.save_as(str(rtplan_path))
     write_rtplan_snapshot_evidence(rtplan_path)
 
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    referenced_total_mu = 100.0 + setup_mu
+    effective_setup_mu = 0.0 if setup_mu in {None, ""} else float(setup_mu)
+    referenced_total_mu = 100.0 + effective_setup_mu
     manifest["plan_total_mu"] = referenced_total_mu
     manifest["included_total_mu"] = referenced_total_mu
     manifest["dose_normalization_mu"] = referenced_total_mu
@@ -421,9 +425,9 @@ def add_non_treatment_setup_beam(
         {
             "segment_id": "seg_b0002_s0000",
             "beam_number": 2,
-            "beam_meterset_mu": setup_mu,
-            "segment_mu": setup_mu if active else 0.0,
-            "mu_weight": setup_mu if active else 0.0,
+            "beam_meterset_mu": effective_setup_mu,
+            "segment_mu": effective_setup_mu if active else 0.0,
+            "mu_weight": effective_setup_mu if active else 0.0,
             "mu_weight_unit": "MU",
             "delivery_type": "unsupported",
             "skip_reason": (
@@ -435,7 +439,7 @@ def add_non_treatment_setup_beam(
     )
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     rewrite_sumtally_manifest_digests(workspace, manifest)
-    if not active and setup_mu >= 0.0:
+    if not active and effective_setup_mu >= 0.0:
         evidence = plan_mu_normalization_evidence(manifest)
         for name in (
             "sumtally_generation_summary.json",
@@ -1351,6 +1355,13 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert summary["expected_rtdose_output"].endswith("deposit-target-3D_sum_all_active_segments_totalfield.dcm")
     assert summary["expected_rtdose_output_exists"] is True
     assert summary["coordinate_corrected_rtdose_output_exists"] is True
+    corrected_path = Path(summary["coordinate_corrected_rtdose_output"])
+    assert summary["coordinate_corrected_rtdose_output_relative"] == (
+        corrected_path.resolve().relative_to(workspace.resolve()).as_posix()
+    )
+    assert summary["coordinate_corrected_rtdose_output_sha256"] == file_sha256(
+        corrected_path
+    )
     output = Path(summary["expected_rtdose_output"])
     ds = pydicom.dcmread(str(output), stop_before_pixels=True)
     assert ds.DoseUnits == "GY"
@@ -2008,6 +2019,134 @@ def test_prepare_accepts_zero_mu_skipped_non_treatment_setup_beam(tmp_path):
     assert evidence["skipped_non_treatment_beam_metersets"] == {"2": 0.0}
     assert evidence["treatment_total_mu"] == 100.0
     assert evidence["plan_total_mu"] == 100.0
+
+
+@pytest.mark.parametrize("setup_mu", [None, ""])
+def test_prepare_accepts_missing_mu_skipped_non_treatment_setup_beam(
+    tmp_path,
+    setup_mu,
+):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(
+        workspace,
+        files["rtplan"],
+        setup_mu=setup_mu,
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    evidence = summary["full_plan_evidence"]
+    assert evidence["skipped_non_treatment_beam_metersets"] == {"2": 0.0}
+    assert evidence["missing_non_treatment_beam_meterset_numbers"] == [2]
+    assert evidence["treatment_total_mu"] == 100.0
+    assert evidence["plan_total_mu"] == 100.0
+    assert evidence["dose_normalization_mu"] == 100.0
+
+
+def test_prepare_rejects_missing_treatment_beam_meterset(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    plan = pydicom.dcmread(str(files["rtplan"]))
+    del plan.FractionGroupSequence[0].ReferencedBeamSequence[0].BeamMeterset
+    plan.save_as(str(files["rtplan"]))
+    write_rtplan_snapshot_evidence(files["rtplan"])
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(ValueError, match="finite positive number"):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+
+@pytest.mark.parametrize("invalid_meterset", ["invalid", -1.0, float("nan"), float("inf")])
+def test_referenced_plan_beams_rejects_unsafe_non_treatment_meterset(
+    invalid_meterset,
+):
+    plan = SimpleNamespace(
+        BeamSequence=[
+            SimpleNamespace(BeamNumber=1, TreatmentDeliveryType="TREATMENT"),
+            SimpleNamespace(BeamNumber=2, TreatmentDeliveryType="SETUP"),
+        ],
+        FractionGroupSequence=[
+            SimpleNamespace(
+                FractionGroupNumber=1,
+                ReferencedBeamSequence=[
+                    SimpleNamespace(ReferencedBeamNumber=1, BeamMeterset=100.0),
+                    SimpleNamespace(
+                        ReferencedBeamNumber=2,
+                        BeamMeterset=invalid_meterset,
+                    ),
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="finite nonnegative number"):
+        rtdose_plan_references_module._referenced_plan_beams(plan)
+
+
+def test_prepare_rejects_missing_non_treatment_meterset_manifest_mismatch(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(
+        workspace,
+        files["rtplan"],
+        setup_mu=None,
+    )
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["segments"][-1]["beam_meterset_mu"] = 1.0
+    manifest["plan_total_mu"] = 101.0
+    manifest["included_total_mu"] = 101.0
+    manifest["dose_normalization_mu"] = 101.0
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rewrite_sumtally_manifest_digests(workspace, manifest)
+    normalization = plan_mu_normalization_evidence(manifest)
+    for name in (
+        "sumtally_generation_summary.json",
+        "sumtally_execution_summary.json",
+    ):
+        summary_path = workspace / "analysis" / name
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["sumtally_normalization_evidence"] = normalization
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="Skipped non-treatment BeamNumber 2 meterset does not match",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_prepare_rejects_negative_mu_skipped_non_treatment_setup_beam(tmp_path):

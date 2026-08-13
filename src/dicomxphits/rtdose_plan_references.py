@@ -69,7 +69,7 @@ def _close_mu(actual: float, expected: float) -> bool:
 
 def _referenced_plan_beams(
     rtplan: Dataset,
-) -> tuple[dict[int, float], dict[int, float], list[int]]:
+) -> tuple[dict[int, float], dict[int, float], list[int], set[int]]:
     beam_delivery_types: dict[int, str] = {}
     for index, beam in enumerate(getattr(rtplan, "BeamSequence", []) or [], start=1):
         number = _positive_int(
@@ -88,6 +88,7 @@ def _referenced_plan_beams(
 
     treatment_metersets: dict[int, float] = {}
     non_treatment_metersets: dict[int, float] = {}
+    missing_non_treatment_metersets: set[int] = set()
     referenced_numbers: set[int] = set()
     fraction_group_numbers: list[int] = []
     for group_index, group in enumerate(fraction_groups, start=1):
@@ -118,27 +119,40 @@ def _referenced_plan_beams(
                     f"RT Plan fraction group references missing BeamNumber {number}"
                 )
             delivery_type = beam_delivery_types[number]
-            meterset_parser = (
-                _finite_positive
-                if delivery_type in {"", "TREATMENT", "CONTINUATION"}
-                else _finite_nonnegative
-            )
-            meterset = meterset_parser(
-                getattr(referenced_beam, "BeamMeterset", None),
-                label=f"RT Plan BeamNumber {number} BeamMeterset",
-            )
-            referenced_numbers.add(number)
-            if delivery_type in {
+            treatment_eligible = delivery_type in {
                 "",
                 "TREATMENT",
                 "CONTINUATION",
-            }:
+            }
+            meterset_value = getattr(referenced_beam, "BeamMeterset", None)
+            if treatment_eligible:
+                meterset = _finite_positive(
+                    meterset_value,
+                    label=f"RT Plan BeamNumber {number} BeamMeterset",
+                )
+            elif meterset_value is None or (
+                isinstance(meterset_value, str) and not meterset_value.strip()
+            ):
+                meterset = 0.0
+                missing_non_treatment_metersets.add(number)
+            else:
+                meterset = _finite_nonnegative(
+                    meterset_value,
+                    label=f"RT Plan BeamNumber {number} BeamMeterset",
+                )
+            referenced_numbers.add(number)
+            if treatment_eligible:
                 treatment_metersets[number] = meterset
             else:
                 non_treatment_metersets[number] = meterset
     if not treatment_metersets:
         raise ValueError("RT Plan has no treatment-eligible referenced beams")
-    return treatment_metersets, non_treatment_metersets, fraction_group_numbers
+    return (
+        treatment_metersets,
+        non_treatment_metersets,
+        fraction_group_numbers,
+        missing_non_treatment_metersets,
+    )
 
 
 def _beam_isocenter_dicom_mm(
@@ -393,6 +407,7 @@ def validate_full_plan_context(
         expected_metersets,
         non_treatment_metersets,
         fraction_group_numbers,
+        missing_non_treatment_metersets,
     ) = _referenced_plan_beams(rtplan)
     rtplan_isocenter_dicom_mm = _shared_treatment_isocenter_dicom_mm(
         rtplan,
@@ -512,6 +527,9 @@ def validate_full_plan_context(
             str(number): non_treatment_metersets[number]
             for number in sorted(non_treatment_metersets)
         },
+        "missing_non_treatment_beam_meterset_numbers": sorted(
+            missing_non_treatment_metersets
+        ),
         "active_segment_counts": {
             str(number): active_segment_counts[number]
             for number in sorted(active_segment_counts)

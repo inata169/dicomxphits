@@ -1,4 +1,4 @@
-# Support Portable Workspace Recovery
+# Support Existing Workspace Recovery
 
 ## Why
 
@@ -17,10 +17,24 @@ portable in-workspace evidence, distinguish historical success from current
 availability, or recover downstream stages without rerunning verified PHITS
 segment calculations.
 
+A second human-operated diagnostic on 2026-08-13 reproduced the same usability
+failure after restarting the GUI on the original computer. Case paths and the
+frozen CT2PHITS handoff had to be entered again, a missing internal
+`sumtally_generation_summary.json` was exposed as a raw operating-system error,
+and the GUI offered only an OK button. The user could also select Workspace
+Prepare after the expensive PHITS stage, even though that is not a recovery
+action. Existing-workspace recovery therefore needs to be the normal restart
+path, not a relocation-only advanced feature.
+
 ## What Changes
 
-- Add an explicit existing-workspace inspection and relocation-recovery path
-  that remains separate from new CT2PHITS and new workspace preparation.
+- Add an explicit existing-workspace inspection and recovery path for both
+  same-computer restart and bounded relocation. It remains separate from new
+  CT2PHITS and new workspace preparation.
+- Let the user select one existing 3D-CRT workspace and automatically restore a
+  validated frozen CT2PHITS handoff when its deterministic standard-profile
+  workspace is available. Never search the drive or accept an unvalidated
+  candidate.
 - Rebind only paths that were recorded below the former workspace root to the
   same relative locations below the explicitly selected current workspace.
 - Revalidate relocated artifacts using the manifest, recorded SHA-256 evidence,
@@ -38,6 +52,15 @@ segment calculations.
   because a copied summary contains a success value.
 - Present a guided recovery state and one safe next action instead of requiring
   the user to interpret repeated existing-output validation errors.
+- When verified PHITS outputs are reusable, provide one primary action to
+  regenerate only the required Sumtally and RTDOSE stages and create the final
+  coordinate-corrected DICOM RT Dose. Do not rerun Workspace Prepare or PHITS.
+- Disable new-case preparation and PHITS actions while a verified existing case
+  is open. Keep individual stage replacement in a clearly subordinate advanced
+  path.
+- Replace raw exception/path-only dialogs with a plain-language explanation of
+  what is missing, what expensive evidence remains safe, and the next safe
+  action. Present the final DICOM patient-coordinate output path on completion.
 - Preserve fail-closed freshness, digest, DICOM semantic, geometry, dose, MU,
   normalization, and fixed-field 3D-CRT boundaries.
 
@@ -57,7 +80,8 @@ segment calculations.
 
 ## Approval Status
 
-This proposal records the human-requested capability only. Runtime
-implementation, external-workspace mutation, real-tool execution, and OpenSpec
-promotion or archival remain unapproved until the human reviews and explicitly
-approves this proposal.
+The primary user explicitly approved this expanded proposal on 2026-08-13.
+Repository implementation with synthetic data and fake runners is approved.
+Real external-tool execution remains limited to the separately requested
+human-operated non-patient GUI test; the agent does not execute or inspect that
+external dataset.

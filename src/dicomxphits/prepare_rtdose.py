@@ -1677,6 +1677,18 @@ def run_rtdose(
             if coordinate_corrected_exists
             else None
         )
+        coordinate_corrected_sha256 = (
+            file_sha256(coordinate_corrected_output)
+            if coordinate_corrected_exists
+            else None
+        )
+        coordinate_corrected_relative = (
+            coordinate_corrected_output.resolve()
+            .relative_to(workspace_root.resolve())
+            .as_posix()
+            if coordinate_corrected_exists
+            else None
+        )
         stage_status = (
             "success"
             if returncode == 0
@@ -1729,8 +1741,10 @@ def run_rtdose(
             "expected_rtdose_output_after_conversion": expected_after_conversion,
             "expected_rtdose_output_after_run": expected_after,
             "coordinate_corrected_rtdose_output": str(coordinate_corrected_output),
+            "coordinate_corrected_rtdose_output_relative": coordinate_corrected_relative,
             "coordinate_corrected_rtdose_output_exists": coordinate_corrected_exists,
             "coordinate_corrected_rtdose_output_size": coordinate_corrected_size,
+            "coordinate_corrected_rtdose_output_sha256": coordinate_corrected_sha256,
             "coordinate_correction_summary_path": str(
                 coordinate_summary_path(coordinate_corrected_output)
             ),

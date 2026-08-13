@@ -26,6 +26,7 @@ from dicomxphits.gui import (
     _browse_directories,
     _ct2phits_handoff_from_result,
     _default_values,
+    _friendly_stage_failure,
     _read_gui_settings,
     _save_browse_history,
     _save_gui_settings,
@@ -196,6 +197,17 @@ def test_gui_config_defaults_to_rectangular_public_model(tmp_path: Path) -> None
     config = base_config(tmp_path)
 
     assert config.geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT
+
+
+def test_missing_sumtally_summary_has_existing_case_recovery_guidance() -> None:
+    message = _friendly_stage_failure(
+        stage_by_key("prepare_rtdose"),
+        "[Errno 2] No such file or directory: 'analysis/sumtally_generation_summary.json'",
+    )
+
+    assert "Open the existing 3D-CRT case" in message
+    assert "Create DICOM RT Dose" in message
+    assert "No such file" not in message
 
 
 def test_standard_tool_profile_resolves_approved_phits_335_layout(

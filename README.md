@@ -395,13 +395,22 @@ Use the [Windows GUI Quick Start](#windows-gui-quick-start) to create the
 Python 3.12 environment and launch the guided Tkinter interface. The details
 below describe the guided workflow after launch.
 
-The GUI presents CT2PHITS as the first stage, then keeps workspace preparation,
+For a new case, the GUI presents CT2PHITS as the first stage, then keeps workspace preparation,
 PHITS, Sumtally, and RTDOSE conversion as separate gated actions. After a
 successful CT2PHITS run, it automatically passes the frozen `RTPLAN.dcm`,
 `CT/CT000001.dcm`, and `DATfiles` paths to workspace preparation. An existing
 validated handoff can still be entered from the advanced workspace controls.
 
-RTDOSE remains a two-step action. After **Prepare RTDOSE** succeeds, the GUI
+After a restart, select **Open existing case…** and choose the existing 3D-CRT
+workspace. The GUI verifies reusable PHITS output digests without external
+execution, restores one bounded standard CT2PHITS handoff when available, and
+shows the first safe downstream action. **Create DICOM RT Dose** preserves
+conflicting downstream material in workspace-local recovery history and runs
+only the required Sumtally/RTDOSE suffix. It disables Workspace Prepare and
+PHITS for that existing case and never treats an internal missing JSON path as
+an instruction to rerun the expensive transport.
+
+For a new case, RTDOSE remains a two-step action. After **Prepare RTDOSE** succeeds, the GUI
 shows **Prepared**, disables the prepare action, and makes **Run RTDOSE** the
 next available action. Only **Run RTDOSE** invokes phits2dicom and creates the
 raw and coordinate-corrected DICOM outputs. **Completed** requires a successful
@@ -622,12 +631,13 @@ outputs and accepted Sumtally output match their recorded SHA-256 values and
 contain one consistent mesh header. If reconstruction cannot be proven, rerun
 Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and Run.
 Existing segment PHITS outputs remain reusable without PHITS transport.
-For a workspace with stale or factor-one weighted-average evidence, select
-**Allow overwrite of downstream stage summaries**, then rerun **Sumtally
-Generate**, **Sumtally Run**, **Prepare RTDOSE**, and **Run RTDOSE**. Existing
-digest-bound segment PHITS outputs remain reusable; PHITS transport does not
-need to be rerun solely for this normalization correction. Old Sumtally or
-DICOM outputs must not be repaired with an empirical scale factor.
+For a workspace with stale or factor-one weighted-average evidence, reopen it
+with **Open existing case…** and select **Create DICOM RT Dose**. The contextual
+confirmation lists the downstream stages and preserves old Sumtally/RTDOSE
+files before replacement. Existing digest-bound segment PHITS outputs remain
+reusable; PHITS transport does not need to be rerun solely for this
+normalization correction. Old Sumtally or DICOM outputs must not be repaired
+with an empirical scale factor.
 
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
 slash-normalized paths and records its SHA-256 during RTDOSE Prepare. RTDOSE Run

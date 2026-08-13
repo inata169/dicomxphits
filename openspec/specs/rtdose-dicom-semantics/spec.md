@@ -32,7 +32,9 @@ the post-Prepare digest before conversion.
 Referenced beams whose delivery type is not treatment-eligible SHALL be
 excluded from active treatment coverage only when the manifest represents each
 one as skipped with zero segment MU and a matching finite nonnegative beam
-meterset. The adapter SHALL keep the manifest plan, included, and normalization
+meterset, or with an absent or empty meterset accepted as effective `0.0 MU`
+under the missing non-treatment meterset compatibility requirement. The adapter
+SHALL keep the manifest plan, included, and normalization
 MU totals bound to the complete fraction-group referenced beam total.
 Workspace preparation and Sumtally generation SHALL apply the same nonnegative
 exception to those skipped non-treatment beams while retaining the positive-MU
@@ -162,20 +164,76 @@ partial delivery.
 - **THEN** RTDOSE Run fails before plan-reference synchronization and does not
   accept the stale file
 
+### Requirement: Missing Non-Treatment Beam Meterset Compatibility
+
+The public RTDOSE adapter SHALL interpret an absent or empty `BeamMeterset` as
+effective `0.0 MU` only when the referenced RT Plan beam is not
+treatment-eligible and the canonical manifest represents that beam exclusively
+as skipped evidence with zero beam meterset and zero segment MU. The adapter
+SHALL record every beam number for which it uses this compatibility
+interpretation. The effective zero meterset MUST NOT contribute to PHITS,
+Sumtally weights, `sumfactor`, treatment dose, or dose normalization.
+
+The adapter MUST continue to require a finite positive `BeamMeterset` for every
+treatment-eligible referenced beam. It MUST reject a non-empty malformed,
+negative, or non-finite non-treatment value, an active non-treatment segment,
+or manifest evidence that does not match the effective zero meterset.
+
+#### Scenario: Referenced setup beam omits BeamMeterset
+
+- **WHEN** a referenced setup or other non-treatment beam has no
+  `BeamMeterset`, and the canonical manifest retains it only as skipped zero-MU
+  evidence
+- **THEN** RTDOSE provenance records the missing value as effective `0.0 MU`
+  and continues without adding a treatment-dose contribution
+
+#### Scenario: Treatment beam omits BeamMeterset
+
+- **WHEN** a treatment-eligible referenced beam has no finite positive
+  `BeamMeterset`
+- **THEN** RTDOSE Prepare fails before external conversion
+
+#### Scenario: Non-treatment meterset evidence is unsafe
+
+- **WHEN** a referenced non-treatment beam has a malformed, negative, or
+  non-finite non-empty meterset, is active, or lacks matching skipped zero-MU
+  manifest evidence
+- **THEN** RTDOSE Prepare fails before external conversion
+
 ### Requirement: Final RT Dose Semantic Validation
 
 RTDOSE Run SHALL reopen the documented coordinate-corrected output and validate
 its plan summation type and frozen-plan reference before reporting stage
 success. A successful execution summary SHALL record the validated summation
-type and referenced plan identity without using the template's original values
-as evidence.
+type, referenced plan identity, current workspace-relative output identity, and
+output SHA-256 without using the template's original values as evidence. When
+an existing workspace is inspected after relocation, a copied successful
+execution summary SHALL establish current success only when the bounded mapped
+coordinate-corrected output exists, matches its recorded SHA-256, and passes
+the recorded semantic binding. Missing, changed, external, or ambiguously
+mapped output MUST NOT be presented as a completed RTDOSE result.
 
 #### Scenario: Synchronized final output
 
 - **WHEN** conversion, metadata synchronization, and coordinate correction all
   complete and the final output references the frozen plan exactly
-- **THEN** RTDOSE Run reports success and records the final semantic-validation
-  evidence
+- **THEN** RTDOSE Run reports success and records the current relative output,
+  its SHA-256, and final semantic-validation evidence
+
+#### Scenario: Verified output after workspace relocation
+
+- **WHEN** a copied successful summary's final output exists at the equivalent
+  bounded path below the current workspace and matches its recorded digest and
+  semantic evidence
+- **THEN** current-workspace inspection may accept the RTDOSE result as
+  completed without rerunning conversion
+
+#### Scenario: Relocated output is absent or changed
+
+- **WHEN** a copied summary reports success but the bounded current output is
+  absent, differs from its recorded digest, or cannot be safely mapped
+- **THEN** current-workspace inspection does not accept Completed state and
+  requires controlled downstream recovery
 
 #### Scenario: Final output remains stale or malformed
 
@@ -224,7 +282,8 @@ weighted average as a full-plan absolute treatment dose.
 
 A DICOM SETUP or other accepted non-treatment beam SHALL remain excluded from
 PHITS and Sumtally only when the canonical manifest preserves it as skipped
-evidence with finite nonnegative BeamMeterset and zero segment MU. Its
+evidence with a finite nonnegative `BeamMeterset`, or an absent or empty value
+accepted as effective `0.0 MU`, and zero segment MU. Its effective
 BeamMeterset MUST NOT contribute to Sumtally file weights or `sumfactor`.
 
 The canonical manifest's complete plan, included, and dose-normalization MU
@@ -252,8 +311,9 @@ or plan MU a second time.
 
 #### Scenario: SETUP beam remains outside treatment dose
 
-- **WHEN** a SETUP beam is validated as skipped non-treatment evidence with
-  finite nonnegative BeamMeterset and zero segment MU
+- **WHEN** a SETUP beam is validated as skipped non-treatment evidence with a
+  finite nonnegative `BeamMeterset`, or an absent or empty value accepted as
+  effective `0.0 MU`, and zero segment MU
 - **THEN** its BeamMeterset remains in complete plan provenance but contributes
   no PHITS segment, Sumtally weight, or `sumfactor`
 

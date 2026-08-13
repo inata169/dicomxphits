@@ -81,6 +81,16 @@ tool profile settings and per-field Browse history may be stored only in the
 ignored local GUI settings file. Case inputs, the derived CT2PHITS output,
 confirmation, and overwrite controls are not persisted.
 
+An existing calculation is reopened through the distinct **Open existing
+case…** action. Selecting one 3D-CRT workspace triggers read-only validation of
+the strict manifest, PHITS execution evidence, and every recorded active-output
+SHA-256. A standard-profile `*-3dcrt` case may restore exactly one corresponding
+`*-ct2phits` handoff below the validated RT-PHITS work root; no drive or DICOM
+search is performed. When PHITS evidence is reusable, Workspace Prepare and
+PHITS execution remain disabled and **Create DICOM RT Dose** runs only the
+required downstream suffix after preserving conflicts in workspace-local
+recovery history.
+
 ## Prepare Workspace Adapter
 
 `dicomxphits-prepare-3dcrt-workspace` validates the RT Plan and generates the
@@ -162,6 +172,13 @@ evidence. The GUI reports `Completed` only when the Prepare summary matches
 the current Sumtally binding and the execution summary records the exact current
 Prepare-summary SHA-256. Stale successful summaries remain auditable but return
 the GUI to `Not run` or `Prepared` and cannot enable a stale Run.
+
+In existing-case mode, the primary action is **Create DICOM RT Dose**. Depending
+on current verified evidence it runs Sumtally Generate through RTDOSE Run,
+RTDOSE Prepare through Run, or RTDOSE Run alone. It stops on the first failed
+accepted adapter. Completion displays the coordinate-corrected `.fixed.dcm`
+path as the standard DICOM patient-coordinate output; internal IEC coordinates
+are not mislabeled as a DICOM patient coordinate system.
 
 It consumes the preceding all-active-segments totalfield Sumtally output and
 records the conversion contract:

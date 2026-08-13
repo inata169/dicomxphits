@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping, Sequence
@@ -29,6 +29,15 @@ from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
     file_sha256,
     manifest_sha256,
+)
+from dicomxphits.workspace_recovery import (
+    RECOVERY_COMPLETE,
+    RECOVERY_READY,
+    WorkspaceRecoveryError,
+    WorkspaceRecoveryInspection,
+    inspect_existing_workspace,
+    preserve_downstream_for_recovery,
+    standard_ct2phits_handoff,
 )
 
 
@@ -795,6 +804,47 @@ def run_stage(
     )
 
 
+def run_workspace_recovery(
+    config: GuiConfig,
+    inspection: WorkspaceRecoveryInspection,
+    *,
+    stage_runner: Callable[[GuiConfig, str], StageResult] = run_stage,
+    progress: Callable[[str, StageResult | None], None] | None = None,
+) -> tuple[StageResult, ...]:
+    """Run only the inspected downstream suffix; never prepare or run PHITS."""
+
+    if not inspection.can_create_rtdose:
+        raise WorkspaceRecoveryError("The selected workspace is not ready for RT Dose recovery.")
+    if any(
+        key in {"run_ct2phits", "prepare_workspace", "run_segments"}
+        for key in inspection.stage_sequence
+    ):
+        raise WorkspaceRecoveryError("Recovery attempted to include an expensive upstream stage.")
+    preserve_downstream_for_recovery(
+        inspection.workspace_root,
+        stage_sequence=inspection.stage_sequence,
+    )
+    recovery_config = replace(config, allow_overwrite=False)
+    results: list[StageResult] = []
+    for stage_key in inspection.stage_sequence:
+        if progress is not None:
+            progress(stage_key, None)
+        result = stage_runner(recovery_config, stage_key)
+        results.append(result)
+        if progress is not None:
+            progress(stage_key, result)
+        status = _stage_status(result)
+        if result.return_code != 0 or status not in {"completed", "success", "prepared"}:
+            reason = ""
+            if result.summary and isinstance(result.summary.get("failure_reason"), str):
+                reason = str(result.summary["failure_reason"]).strip()
+            raise WorkspaceRecoveryError(
+                f"{stage_by_key(stage_key).label} stopped: "
+                f"{reason or result.stderr.strip() or status}"
+            )
+    return tuple(results)
+
+
 def _base_default_values() -> dict[str, str]:
     values = {
         "tool_profile_mode": TOOL_PROFILE_STANDARD,
@@ -807,6 +857,7 @@ def _base_default_values() -> dict[str, str]:
         "ct2phits_timeout_seconds": f"{DEFAULT_CT2PHITS_TIMEOUT_SECONDS:g}",
         "rtplan_path": "",
         "workspace_root": "",
+        "existing_ct2phits_workspace_root": "",
         "phits_root_folder": "",
         "phits_executable_path": "",
         "phits2dicom_executable_path": "",
@@ -1144,6 +1195,20 @@ def _friendly_exception(spec: StageSpec, exc: Exception) -> str:
     return str(exc)
 
 
+def _friendly_stage_failure(spec: StageSpec, message: str) -> str:
+    if (
+        spec.key == "prepare_rtdose"
+        and "sumtally_generation_summary.json" in message
+        and ("No such file" in message or "not found" in message.casefold())
+    ):
+        return (
+            "The Sumtally generation record is missing. Open the existing 3D-CRT "
+            "case so the GUI can verify whether the PHITS results are reusable, "
+            "then use Create DICOM RT Dose to rebuild only the required downstream stages."
+        )
+    return message
+
+
 def _build_gui() -> int:
     import tkinter as tk
     from tkinter import filedialog, messagebox, scrolledtext, ttk
@@ -1335,10 +1400,16 @@ def _build_gui() -> int:
     confirmed_non_patient_phantom = tk.BooleanVar(value=False)
     manual_handoff = tk.BooleanVar(value=False)
     verified_handoff_available = tk.BooleanVar(value=False)
+    existing_case_mode = tk.BooleanVar(value=False)
     handoff_status = tk.StringVar(value="Not generated")
+    recovery_status = tk.StringVar(
+        value="Open an existing 3D-CRT workspace to inspect reusable results."
+    )
+    final_rtdose_output = tk.StringVar(value="")
     tool_profile_status = tk.StringVar(value="Not validated")
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
+    recovery_inspection: WorkspaceRecoveryInspection | None = None
     tool_profile_resolution = resolve_tool_profile(defaults)
     active_tool_profile_mode = values["tool_profile_mode"].get()
     tool_profile_update_in_progress = False
@@ -1356,14 +1427,49 @@ def _build_gui() -> int:
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
         for stage_key, button in action_buttons.items():
-            enabled = (
-                not busy and tool_profile_resolution.ready_for_stage(stage_key)
-                and rtdose_action_enabled(
-                    stage_key,
-                    rtdose_state,
-                    allow_overwrite=overwrite.get(),
+            if stage_key == "recover_rtdose":
+                sequence = (
+                    recovery_inspection.stage_sequence
+                    if recovery_inspection is not None
+                    else ()
                 )
-            )
+                handoff_ready = bool(
+                    values["rtplan_path"].get().strip()
+                    and values["ct_reference_dicom"].get().strip()
+                )
+                enabled = bool(
+                    not busy
+                    and recovery_inspection is not None
+                    and recovery_inspection.can_create_rtdose
+                    and all(
+                        tool_profile_resolution.ready_for_stage(key)
+                        for key in sequence
+                    )
+                    and (
+                        "prepare_rtdose" not in sequence
+                        or handoff_ready
+                    )
+                )
+            else:
+                enabled = (
+                    not busy
+                    and tool_profile_resolution.ready_for_stage(stage_key)
+                    and rtdose_action_enabled(
+                        stage_key,
+                        rtdose_state,
+                        allow_overwrite=overwrite.get(),
+                    )
+                )
+                if existing_case_mode.get() and stage_key in {
+                    "run_ct2phits",
+                    "prepare_workspace",
+                    "run_segments",
+                    "generate_sumtally",
+                    "run_sumtally",
+                    "prepare_rtdose",
+                    "run_rtdose",
+                }:
+                    enabled = False
             button.state(["!disabled"] if enabled else ["disabled"])
 
     overwrite.trace_add(
@@ -1681,6 +1787,164 @@ def _build_gui() -> int:
             )
         return entry, button
 
+    def apply_existing_handoff(workspace: Path) -> bool:
+        rtphits_value = values["rtphits_root"].get().strip()
+        handoff = None
+        if rtphits_value:
+            handoff = standard_ct2phits_handoff(
+                workspace,
+                rtphits_root=Path(rtphits_value),
+            )
+        if handoff is None:
+            ct2_workspace = values[
+                "existing_ct2phits_workspace_root"
+            ].get().strip()
+            if ct2_workspace:
+                summary_path = Path(ct2_workspace) / "ct2phits_execution_summary.json"
+                handoff = ct2phits_handoff_values(
+                    Path(ct2_workspace),
+                    read_summary(summary_path),
+                )
+        if handoff is None:
+            handoff_status.set("Select one CT2PHITS workspace")
+            return False
+        for name, value in handoff.items():
+            values[name].set(value)
+        verified_handoff_available.set(True)
+        manual_handoff.set(False)
+        handoff_status.set("Verified existing handoff")
+        return True
+
+    def inspect_selected_existing_workspace() -> None:
+        nonlocal recovery_inspection
+        raw_workspace = values["workspace_root"].get().strip()
+        if not raw_workspace:
+            return
+        inspection = inspect_existing_workspace(Path(raw_workspace))
+        recovery_inspection = inspection
+        existing_case_mode.set(True)
+        final_rtdose_output.set(
+            str(inspection.final_output) if inspection.final_output else ""
+        )
+        handoff_ready = apply_existing_handoff(inspection.workspace_root)
+        if inspection.state == RECOVERY_COMPLETE:
+            recovery_status.set(
+                "Verified through: DICOM RT Dose completed. The standard DICOM "
+                "patient-coordinate output is available below."
+            )
+            nav_status["workspace"].set("Existing case")
+            nav_status["phits"].set("Verified — locked")
+            nav_status["sumtally"].set("Completed")
+            nav_status["rtdose"].set("Completed")
+        elif inspection.state == RECOVERY_READY:
+            handoff_note = (
+                ""
+                if handoff_ready or "prepare_rtdose" not in inspection.stage_sequence
+                else " Select one CT2PHITS workspace to restore the frozen plan and CT reference."
+            )
+            next_label = (
+                stage_by_key(inspection.next_stage).label
+                if inspection.next_stage is not None
+                else "None"
+            )
+            recovery_status.set(
+                f"Verified through: {inspection.highest_verified_stage}. "
+                f"Next: {next_label}. {inspection.message}{handoff_note}"
+            )
+            nav_status["workspace"].set("Existing case")
+            nav_status["phits"].set("Verified — locked")
+            nav_status["sumtally"].set(
+                "Recovery needed"
+                if inspection.next_stage in {"generate_sumtally", "run_sumtally"}
+                else "Completed"
+            )
+            nav_status["rtdose"].set("Recovery ready")
+        else:
+            recovery_status.set(
+                f"Verified through: {inspection.highest_verified_stage}. "
+                f"Recovery is blocked. {inspection.message}"
+            )
+            nav_status["workspace"].set("Invalid existing case")
+            nav_status["phits"].set("Not reusable")
+            nav_status["sumtally"].set("Blocked")
+            nav_status["rtdose"].set("Blocked")
+        append(
+            f"Existing workspace inspection: {inspection.message}",
+            "success" if inspection.state != "invalid" else "error",
+        )
+        refresh_action_button_states()
+
+    def browse_existing_workspace() -> None:
+        selected = filedialog.askdirectory(
+            initialdir=str(
+                browse_initial_directory(
+                    "workspace_root", values_snapshot(), browse_directories
+                )
+            ),
+            mustexist=True,
+        )
+        if not selected:
+            return
+        values["workspace_root"].set(selected)
+        remember_browse_directory(
+            "workspace_root",
+            selected,
+            selected_is_directory=True,
+            browse_directories=browse_directories,
+        )
+        save_browse_history()
+        inspect_selected_existing_workspace()
+
+    def browse_existing_ct2phits_workspace() -> None:
+        selected = filedialog.askdirectory(
+            initialdir=str(
+                browse_initial_directory(
+                    "existing_ct2phits_workspace_root",
+                    values_snapshot(),
+                    browse_directories,
+                )
+            ),
+            mustexist=True,
+        )
+        if not selected:
+            return
+        values["existing_ct2phits_workspace_root"].set(selected)
+        remember_browse_directory(
+            "existing_ct2phits_workspace_root",
+            selected,
+            selected_is_directory=True,
+            browse_directories=browse_directories,
+        )
+        save_browse_history()
+        if recovery_inspection is not None:
+            try:
+                apply_existing_handoff(recovery_inspection.workspace_root)
+            except GuiValidationError as exc:
+                recovery_status.set(
+                    "The selected CT2PHITS workspace is incomplete. Choose its completed case workspace."
+                )
+                append(f"Existing handoff validation failed: {exc}", "error")
+        refresh_action_button_states()
+
+    def start_new_case_mode() -> None:
+        nonlocal recovery_inspection
+        recovery_inspection = None
+        existing_case_mode.set(False)
+        final_rtdose_output.set("")
+        recovery_status.set(
+            "Open an existing 3D-CRT workspace to inspect reusable results."
+        )
+        for key, status in (
+            ("ct2phits", "Not started"),
+            ("workspace", "Not prepared"),
+            ("phits", "Not run"),
+            ("sumtally", "Not run"),
+            ("rtdose", "Not run"),
+        ):
+            nav_status[key].set(status)
+        refresh_action_button_states()
+        append("New-case mode selected. Existing workspace files were not changed.")
+
     pages: dict[str, ttk.Frame] = {}
     page_meta = {
         "ct2phits": (
@@ -1753,8 +2017,37 @@ def _build_gui() -> int:
         return page
 
     ct2_page = new_page("ct2phits")
+    recovery_frame = ttk.Frame(ct2_page, style="Surface.TFrame", padding=(18, 14))
+    recovery_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+    recovery_frame.columnconfigure(0, weight=1)
+    ttk.Label(
+        recovery_frame,
+        text="Continue an existing calculation",
+        style="Heading.TLabel",
+    ).grid(row=0, column=0, sticky="w")
+    ttk.Label(
+        recovery_frame,
+        text=(
+            "Open one existing 3D-CRT workspace. The GUI verifies reusable PHITS "
+            "results and selects the next safe step."
+        ),
+        style="SurfaceMuted.TLabel",
+        wraplength=780,
+    ).grid(row=1, column=0, padx=(0, 12), pady=(4, 0), sticky="w")
+    ttk.Button(
+        recovery_frame,
+        text="Open existing case…",
+        style="Primary.TButton",
+        command=browse_existing_workspace,
+    ).grid(row=0, column=1, rowspan=2, padx=(0, 8), sticky="e")
+    ttk.Button(
+        recovery_frame,
+        text="Start new case",
+        command=start_new_case_mode,
+    ).grid(row=0, column=2, rowspan=2, sticky="e")
+
     case_frame = ttk.Frame(ct2_page, style="Surface.TFrame", padding=(18, 14))
-    case_frame.grid(row=0, column=0, sticky="ew")
+    case_frame.grid(row=1, column=0, sticky="ew")
     case_frame.columnconfigure(1, weight=1)
     ttk.Label(case_frame, text="Case setup", style="Heading.TLabel").grid(
         row=0, column=0, columnspan=3, sticky="w", pady=(0, 6)
@@ -1791,9 +2084,9 @@ def _build_gui() -> int:
     )
 
     tool_toggle = ttk.Button(ct2_page, text="Tool settings   •   Show saved paths")
-    tool_toggle.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+    tool_toggle.grid(row=2, column=0, sticky="ew", pady=(10, 0))
     tool_frame = ttk.Frame(ct2_page, style="Surface.TFrame", padding=(18, 12))
-    tool_frame.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+    tool_frame.grid(row=3, column=0, sticky="ew", pady=(2, 0))
     tool_frame.columnconfigure(1, weight=1)
     ttk.Label(tool_frame, text="Local tool setup", style="Heading.TLabel").grid(
         row=0, column=0, columnspan=3, sticky="w", pady=(0, 6)
@@ -1965,7 +2258,7 @@ def _build_gui() -> int:
     tool_toggle.configure(command=toggle_tool_settings)
 
     handoff_frame = ttk.Frame(ct2_page, style="Surface.TFrame", padding=(18, 12))
-    handoff_frame.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+    handoff_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
     ttk.Label(
         handoff_frame,
         text="Derived handoff after CT2PHITS",
@@ -2000,7 +2293,7 @@ def _build_gui() -> int:
         ).grid(row=2, column=0, pady=(4, 0), sticky="w")
 
     ct2_actions = ttk.Frame(ct2_page, style="Surface.TFrame", padding=(18, 12))
-    ct2_actions.grid(row=4, column=0, sticky="ew", pady=(2, 0))
+    ct2_actions.grid(row=5, column=0, sticky="ew", pady=(2, 0))
     ct2_actions.columnconfigure(0, weight=1)
     ttk.Checkbutton(
         ct2_actions,
@@ -2009,10 +2302,46 @@ def _build_gui() -> int:
     ).grid(row=0, column=0, sticky="w")
 
     workspace_page = new_page("workspace")
+    existing_case_frame = ttk.Frame(
+        workspace_page, style="Surface.TFrame", padding=(18, 14)
+    )
+    existing_case_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+    existing_case_frame.columnconfigure(0, weight=1)
+    ttk.Label(
+        existing_case_frame,
+        text="Existing-case recovery",
+        style="Heading.TLabel",
+    ).grid(row=0, column=0, sticky="w")
+    ttk.Label(
+        existing_case_frame,
+        textvariable=recovery_status,
+        style="Surface.TLabel",
+        wraplength=760,
+    ).grid(row=1, column=0, padx=(0, 12), pady=(5, 0), sticky="w")
+    ttk.Button(
+        existing_case_frame,
+        text="Open existing case…",
+        command=browse_existing_workspace,
+    ).grid(row=0, column=1, rowspan=2, sticky="e")
+    ttk.Label(
+        existing_case_frame,
+        text=(
+            "If the standard frozen handoff cannot be restored automatically, "
+            "select its CT2PHITS case workspace once."
+        ),
+        style="SurfaceMuted.TLabel",
+        wraplength=760,
+    ).grid(row=2, column=0, pady=(8, 0), sticky="w")
+    ttk.Button(
+        existing_case_frame,
+        text="Select CT2PHITS workspace…",
+        command=browse_existing_ct2phits_workspace,
+    ).grid(row=2, column=1, pady=(8, 0), sticky="e")
+
     workspace_frame = ttk.Frame(
         workspace_page, style="Surface.TFrame", padding=(18, 14)
     )
-    workspace_frame.grid(row=0, column=0, sticky="ew")
+    workspace_frame.grid(row=1, column=0, sticky="ew")
     workspace_frame.columnconfigure(1, weight=1)
     ttk.Label(
         workspace_frame, text="3D-CRT workspace", style="Heading.TLabel"
@@ -2083,7 +2412,7 @@ def _build_gui() -> int:
     manual_frame = ttk.Frame(
         workspace_page, style="Surface.TFrame", padding=(18, 12)
     )
-    manual_frame.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+    manual_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
     manual_frame.columnconfigure(1, weight=1)
     ttk.Checkbutton(
         manual_frame,
@@ -2140,7 +2469,7 @@ def _build_gui() -> int:
     workspace_action_frame = ttk.Frame(
         workspace_page, style="Surface.TFrame", padding=(18, 12)
     )
-    workspace_action_frame.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+    workspace_action_frame.grid(row=3, column=0, sticky="ew", pady=(2, 0))
     workspace_action_frame.columnconfigure(0, weight=1)
     ttk.Label(
         workspace_action_frame,
@@ -2209,6 +2538,55 @@ def _build_gui() -> int:
         "rtdose_template_dicom",
         directory=False,
     )
+    ttk.Label(
+        rtdose_frame,
+        textvariable=recovery_status,
+        style="SurfaceMuted.TLabel",
+        wraplength=780,
+    ).grid(row=5, column=0, columnspan=3, pady=(8, 0), sticky="w")
+    ttk.Label(
+        rtdose_frame,
+        text="Final DICOM patient-coordinate output",
+        style="Surface.TLabel",
+    ).grid(row=6, column=0, pady=(8, 0), sticky="w")
+    final_output_entry = ttk.Entry(
+        rtdose_frame,
+        textvariable=final_rtdose_output,
+    )
+    final_output_entry.state(["readonly"])
+    final_output_entry.grid(
+        row=6, column=1, padx=(0, 10), pady=(8, 0), sticky="ew"
+    )
+
+    def open_final_rtdose_folder() -> None:
+        value = final_rtdose_output.get().strip()
+        if not value:
+            messagebox.showinfo(
+                "Final DICOM RT Dose",
+                "Create or reopen a completed DICOM RT Dose first.",
+            )
+            return
+        output_path = Path(value).expanduser()
+        if not output_path.is_file():
+            messagebox.showerror(
+                "Final DICOM RT Dose",
+                "The recorded final DICOM RT Dose is no longer available.",
+            )
+            return
+        try:
+            os.startfile(str(output_path.parent))  # type: ignore[attr-defined]
+        except (AttributeError, OSError) as exc:
+            append(f"Could not open final output folder: {exc}", "error")
+            messagebox.showerror(
+                "Final DICOM RT Dose",
+                "The output folder could not be opened. Copy the displayed path instead.",
+            )
+
+    ttk.Button(
+        rtdose_frame,
+        text="Open folder",
+        command=open_final_rtdose_folder,
+    ).grid(row=6, column=2, pady=(8, 0), sticky="e")
     path_row(
         rtdose_frame,
         2,
@@ -2283,16 +2661,19 @@ def _build_gui() -> int:
                 candidate = result.summary.get("failure_reason")
                 if isinstance(candidate, str) and candidate.strip():
                     failure_reason = candidate.strip()
-            message = (
+            raw_message = (
                 failure_reason
                 or result.stderr.strip()
                 or f"{spec.label} returned {status}. Review {result.summary_path}."
             )
+            message = _friendly_stage_failure(spec, raw_message)
             nav_status[stage_to_nav[spec.key]].set("Failed")
             append(
                 f"{spec.label}: failed: {message}; summary: {result.summary_path}",
                 "error",
             )
+            if message != raw_message:
+                append(f"Technical detail: {raw_message}", "warning")
             messagebox.showerror(spec.label, message)
             set_busy(None)
             return
@@ -2374,6 +2755,116 @@ def _build_gui() -> int:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def start_workspace_rtdose_recovery() -> None:
+        inspection = recovery_inspection
+        if inspection is None or not inspection.can_create_rtdose:
+            messagebox.showerror(
+                "Create DICOM RT Dose",
+                "Open an existing case and resolve the displayed evidence issue first.",
+            )
+            return
+        if execution_guard.active_stage is not None:
+            append("Another stage is already running.", "warning")
+            return
+        stages = ", ".join(stage_by_key(key).label for key in inspection.stage_sequence)
+        confirmed = messagebox.askyesno(
+            "Create DICOM RT Dose",
+            "Verified PHITS results will remain unchanged.\n\n"
+            f"The GUI will preserve conflicting downstream files in recovery_history "
+            f"and run: {stages}.\n\nContinue?",
+        )
+        if not confirmed:
+            return
+        config = config_from_entries()
+        missing_roles: list[str] = []
+        for stage_key in inspection.stage_sequence:
+            missing_roles.extend(
+                f"{issue.role}: {issue.message}"
+                for issue in refresh_tool_profile().issues_for_stage(stage_key)
+            )
+        if missing_roles:
+            messagebox.showerror("Create DICOM RT Dose", "\n".join(dict.fromkeys(missing_roles)))
+            return
+        set_busy("generate_sumtally" if "generate_sumtally" in inspection.stage_sequence else inspection.stage_sequence[0])
+        global_status.set("Creating DICOM RT Dose…")
+        append(
+            "Existing-case RT Dose recovery started. PHITS segment execution will not run."
+        )
+
+        def progress(stage_key: str, result: StageResult | None) -> None:
+            if result is None:
+                root.after(
+                    0,
+                    lambda key=stage_key: append(
+                        f"Recovery: {stage_by_key(key).label} started"
+                    ),
+                )
+                return
+            root.after(
+                0,
+                lambda key=stage_key, value=result: append(
+                    f"Recovery: {stage_by_key(key).label} {_stage_status(value)}; "
+                    f"summary: {value.summary_path}",
+                    "success" if value.return_code == 0 else "error",
+                ),
+            )
+
+        def worker() -> None:
+            try:
+                run_workspace_recovery(config, inspection, progress=progress)
+                completed = inspect_existing_workspace(inspection.workspace_root)
+                if completed.state != RECOVERY_COMPLETE or completed.final_output is None:
+                    raise WorkspaceRecoveryError(
+                        "RT Dose stages finished but the current corrected DICOM output did not validate."
+                    )
+            except Exception as exc:
+                detail = str(exc)
+                root.after(0, lambda: finish_recovery_error(detail))
+                return
+            root.after(0, lambda: finish_recovery_success(completed))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def finish_recovery_error(message: str) -> None:
+        nonlocal recovery_inspection
+        recovery_inspection = inspect_existing_workspace(
+            Path(values["workspace_root"].get())
+        )
+        recovery_status.set(
+            "RT Dose creation stopped safely. Existing PHITS results were not rerun. "
+            "Review the activity log, then retry the suggested downstream action."
+        )
+        append(f"Create DICOM RT Dose stopped: {message}", "error")
+        messagebox.showerror(
+            "Create DICOM RT Dose",
+            "RT Dose creation stopped safely.\n\n"
+            "Existing PHITS results were not rerun or changed.\n"
+            "Review the activity log for details, then retry the recovery action.",
+        )
+        set_busy(None)
+
+    def finish_recovery_success(inspection: WorkspaceRecoveryInspection) -> None:
+        nonlocal recovery_inspection
+        recovery_inspection = inspection
+        assert inspection.final_output is not None
+        final_rtdose_output.set(str(inspection.final_output))
+        recovery_status.set(
+            "DICOM RT Dose completed in standard DICOM patient coordinates."
+        )
+        nav_status["sumtally"].set("Completed")
+        nav_status["rtdose"].set("Completed")
+        append(
+            f"DICOM RT Dose completed: {inspection.final_output}",
+            "success",
+        )
+        set_busy(None)
+        show_page("rtdose")
+        messagebox.showinfo(
+            "DICOM RT Dose completed",
+            "The standard DICOM patient-coordinate RT Dose was created.\n\n"
+            f"{inspection.final_output}",
+        )
+
     ct2_button = ttk.Button(
         ct2_actions,
         text="Run CT2PHITS",
@@ -2427,6 +2918,14 @@ def _build_gui() -> int:
     )
     rtdose_actions.grid(row=1, column=0, sticky="ew", pady=(2, 0))
     rtdose_actions.columnconfigure(0, weight=1)
+    recovery_rtdose_button = ttk.Button(
+        rtdose_actions,
+        text="Create DICOM RT Dose",
+        style="Primary.TButton",
+        command=start_workspace_rtdose_recovery,
+    )
+    recovery_rtdose_button.grid(row=0, column=0, sticky="w")
+    action_buttons["recover_rtdose"] = recovery_rtdose_button
     rtdose_prepare_button = ttk.Button(
         rtdose_actions,
         text="Prepare RTDOSE",
