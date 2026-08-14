@@ -5,7 +5,9 @@ import hashlib
 import io
 import json
 import math
+import ntpath
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -76,6 +78,23 @@ PHITS2DICOM_REFERENCED_INPUT_FIELDS = {
     "phits_dose": "phits_dose",
     "phits_out": "phits_out",
 }
+
+
+def workspace_root_was_relocated(
+    recorded_workspace_root: str,
+    current_workspace_root: str | Path,
+) -> bool:
+    """Compare roots with case folding only for Windows path semantics."""
+
+    def portable_key(value: str | Path) -> tuple[str, str]:
+        text = str(value).strip()
+        if re.match(r"^[A-Za-z]:[\\/]", text) or "\\" in text:
+            return "windows", ntpath.normcase(ntpath.normpath(text))
+        return "posix", posixpath.normpath(text)
+
+    return bool(recorded_workspace_root.strip()) and portable_key(
+        recorded_workspace_root
+    ) != portable_key(current_workspace_root)
 IPP_PATTERN = re.compile(
     r"ImagePositionPatient\s+([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
     r"([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
@@ -1642,15 +1661,9 @@ def run_rtdose(
             dat_dir, phits_dose.parent, coordinate_corrected_output.parent
         )
         stdin_content = phits2dicom_inp.read_text(encoding="utf-8")
-        normalized_recorded_root = recorded_workspace_root.replace("\\", "/").rstrip(
-            "/"
-        ).casefold()
-        normalized_current_root = str(workspace_root.resolve()).replace(
-            "\\", "/"
-        ).rstrip("/").casefold()
-        if (
-            normalized_recorded_root
-            and normalized_recorded_root != normalized_current_root
+        if workspace_root_was_relocated(
+            recorded_workspace_root,
+            workspace_root.resolve(),
         ):
             stdin_content = phits2dicom_input_content(
                 template_dicom=Path(

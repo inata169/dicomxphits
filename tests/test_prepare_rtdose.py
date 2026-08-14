@@ -1570,6 +1570,17 @@ def test_run_rebinds_verified_prepared_evidence_after_workspace_relocation(
     assert Path(summary["coordinate_corrected_rtdose_output"]).is_file()
 
 
+def test_workspace_root_relocation_comparison_preserves_posix_case() -> None:
+    assert prepare_rtdose_module.workspace_root_was_relocated(
+        "/data/Case",
+        "/data/case",
+    )
+    assert not prepare_rtdose_module.workspace_root_was_relocated(
+        r"D:\Cases\PHANTOM",
+        r"d:/cases/phantom",
+    )
+
+
 def test_run_preserves_converter_emitted_course_scaled_physical_dose(tmp_path):
     workspace, files = write_workspace(tmp_path, number_of_fractions=3)
     template = tmp_path / "template.dcm"
