@@ -30,6 +30,7 @@ from dicomxphits.gui import (
     _read_gui_settings,
     _save_browse_history,
     _save_gui_settings,
+    apply_existing_handoff_state,
     apply_case_path_suggestions,
     bind_tool_profile_revalidation,
     browse_initial_directory,
@@ -1444,6 +1445,35 @@ def test_saved_legacy_handoff_paths_do_not_authorize_prepare(
             manual_handoff_selected=False,
             verified_handoff_available=False,
         )
+
+
+def test_missing_existing_handoff_clears_prior_case_fields_and_authorization() -> None:
+    values = {
+        "rtplan_path": "case-a-plan.dcm",
+        "ct_reference_dicom": "case-a-ct.dcm",
+        "ct_datfiles_root": "case-a-datfiles",
+    }
+    verified = [True]
+    manual = [True]
+    status = ["Verified existing handoff"]
+
+    applied = apply_existing_handoff_state(
+        None,
+        set_value=values.__setitem__,
+        set_verified=lambda value: verified.__setitem__(0, value),
+        set_manual=lambda value: manual.__setitem__(0, value),
+        set_status=lambda value: status.__setitem__(0, value),
+    )
+
+    assert applied is False
+    assert values == {
+        "rtplan_path": "",
+        "ct_reference_dicom": "",
+        "ct_datfiles_root": "",
+    }
+    assert verified == [False]
+    assert manual == [False]
+    assert status == ["Select one CT2PHITS workspace"]
 
 
 @pytest.mark.parametrize(

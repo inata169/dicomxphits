@@ -1220,6 +1220,32 @@ def ct2phits_handoff_values(
     return {key: str(path) for key, path in handoff.items()}
 
 
+def apply_existing_handoff_state(
+    handoff: Mapping[str, str] | None,
+    *,
+    set_value: Callable[[str, str], None],
+    set_verified: Callable[[bool], None],
+    set_manual: Callable[[bool], None],
+    set_status: Callable[[str], None],
+) -> bool:
+    """Apply one complete handoff or clear all state from the prior case."""
+
+    fields = ("rtplan_path", "ct_reference_dicom", "ct_datfiles_root")
+    if handoff is None or any(not str(handoff.get(name) or "").strip() for name in fields):
+        for name in fields:
+            set_value(name, "")
+        set_verified(False)
+        set_manual(False)
+        set_status("Select one CT2PHITS workspace")
+        return False
+    for name in fields:
+        set_value(name, str(handoff[name]))
+    set_verified(True)
+    set_manual(False)
+    set_status("Verified existing handoff")
+    return True
+
+
 def _ct2phits_handoff_from_result(result: StageResult) -> dict[str, str]:
     return ct2phits_handoff_values(result.summary_path.parent, result.summary)
 
@@ -1854,15 +1880,13 @@ def _build_gui() -> int:
                     Path(ct2_workspace),
                     read_summary(summary_path),
                 )
-        if handoff is None:
-            handoff_status.set("Select one CT2PHITS workspace")
-            return False
-        for name, value in handoff.items():
-            values[name].set(value)
-        verified_handoff_available.set(True)
-        manual_handoff.set(False)
-        handoff_status.set("Verified existing handoff")
-        return True
+        return apply_existing_handoff_state(
+            handoff,
+            set_value=lambda name, value: values[name].set(value),
+            set_verified=verified_handoff_available.set,
+            set_manual=manual_handoff.set,
+            set_status=handoff_status.set,
+        )
 
     def inspect_selected_existing_workspace() -> None:
         nonlocal recovery_inspection

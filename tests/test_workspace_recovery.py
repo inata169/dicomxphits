@@ -207,6 +207,17 @@ def test_relocated_windows_evidence_rebinds_only_below_old_workspace(
             recorded_workspace_root=r"D:\old-machine\case-3dcrt",
             current_workspace_root=workspace,
         )
+    assert rebind_workspace_path(
+        "/data/Case/segments/output.out",
+        recorded_workspace_root="/data/Case",
+        current_workspace_root=workspace,
+    ) == (workspace / "segments" / "output.out").resolve()
+    with pytest.raises(WorkspaceRecoveryError, match="outside"):
+        rebind_workspace_path(
+            "/data/case/segments/output.out",
+            recorded_workspace_root="/data/Case",
+            current_workspace_root=workspace,
+        )
 
 
 def test_relocated_sumtally_summaries_remain_verified_without_rerun(

@@ -116,12 +116,14 @@ def _workspace_path(workspace_root: Path, value: str | Path) -> Path:
     return resolved
 
 
-def _portable_parts(value: str) -> tuple[str, ...] | None:
+def _portable_parts(value: str) -> tuple[str, tuple[str, ...]]:
     if re.match(r"^[A-Za-z]:[\\/]", value) or "\\" in value:
         path = PureWindowsPath(value)
+        semantics = "windows"
     else:
         path = PurePosixPath(value)
-    return tuple(path.parts)
+        semantics = "posix"
+    return semantics, tuple(path.parts)
 
 
 def rebind_workspace_path(
@@ -137,7 +139,13 @@ def rebind_workspace_path(
         raise WorkspaceRecoveryError("Recorded workspace artifact path is empty")
     current_root = current_workspace_root.resolve()
     path = Path(text)
-    if not path.is_absolute() and not re.match(r"^[A-Za-z]:[\\/]", text):
+    value_semantics, value_parts = _portable_parts(text)
+    portable_path = (
+        PureWindowsPath(text)
+        if value_semantics == "windows"
+        else PurePosixPath(text)
+    )
+    if not portable_path.is_absolute():
         return _workspace_path(current_root, path)
 
     old_root_text = str(recorded_workspace_root or "").strip()
@@ -150,14 +158,16 @@ def rebind_workspace_path(
             ) from exc
         return path.resolve()
 
-    value_parts = _portable_parts(text)
-    root_parts = _portable_parts(old_root_text)
-    assert value_parts is not None and root_parts is not None
+    root_semantics, root_parts = _portable_parts(old_root_text)
+    if value_semantics != root_semantics:
+        raise WorkspaceRecoveryError("Recorded artifact is outside its workspace root")
     if len(value_parts) < len(root_parts):
         raise WorkspaceRecoveryError("Recorded artifact is outside its workspace root")
-    folded_value = tuple(part.casefold() for part in value_parts[: len(root_parts)])
-    folded_root = tuple(part.casefold() for part in root_parts)
-    if folded_value != folded_root:
+    value_prefix = value_parts[: len(root_parts)]
+    if value_semantics == "windows":
+        value_prefix = tuple(part.casefold() for part in value_prefix)
+        root_parts = tuple(part.casefold() for part in root_parts)
+    if value_prefix != root_parts:
         raise WorkspaceRecoveryError("Recorded artifact is outside its workspace root")
     relative = value_parts[len(root_parts) :]
     if not relative or any(part in {"", ".", ".."} for part in relative):
