@@ -58,14 +58,23 @@ def synthetic_course_dose_evidence(
     }
 
 
-def synthetic_full_plan_evidence(rtplan_path: Path) -> dict[str, object]:
+def synthetic_full_plan_evidence(
+    rtplan_path: Path,
+    *,
+    workspace_root: Path | None = None,
+) -> dict[str, object]:
     planned_fraction_count = int(rtplan_path.read_text(encoding="utf-8"))
-    return {
+    evidence: dict[str, object] = {
         "rtplan_path": str(rtplan_path.resolve()),
         "rtplan_sha256": file_sha256(rtplan_path),
         "fraction_group_number": 1,
         "planned_fraction_count": planned_fraction_count,
     }
+    if workspace_root is not None:
+        evidence["manifest_path"] = str(
+            (workspace_root / "segments" / "segment_manifest.json").resolve()
+        )
+    return evidence
 
 
 def write_recoverable_workspace(
@@ -366,6 +375,37 @@ def test_gui_recovery_reinspects_before_preserving_or_running(
     assert stages == []
 
 
+def test_gui_recovery_rejects_a_changed_workspace_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspected_workspace = tmp_path / "inspected"
+    configured_workspace = tmp_path / "configured-later"
+    inspected_workspace.mkdir()
+    configured_workspace.mkdir()
+    inspection = WorkspaceRecoveryInspection(
+        inspected_workspace,
+        RECOVERY_READY,
+        "PHITS completed",
+        "generate_sumtally",
+        FULL_DOWNSTREAM_SEQUENCE,
+        "ready",
+        True,
+    )
+    preserved: list[str] = []
+    monkeypatch.setattr(
+        gui_module,
+        "preserve_downstream_for_recovery",
+        lambda *_args, **_kwargs: preserved.append("called"),
+    )
+    config = GuiConfig("", str(configured_workspace), "", "", "", "", "", "")
+
+    with pytest.raises(WorkspaceRecoveryError, match="selection changed"):
+        run_workspace_recovery(config, inspection)
+
+    assert preserved == []
+
+
 def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -374,7 +414,16 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
     binding = {"synthetic": "current"}
     rtplan_path = write_file(workspace / "RTPLAN.dcm", "1")
     ct_reference_path = write_file(workspace / "rtdose" / "ct_reference.dcm")
-    plan_evidence = synthetic_full_plan_evidence(rtplan_path)
+    plan_evidence = synthetic_full_plan_evidence(
+        rtplan_path,
+        workspace_root=workspace,
+    )
+    old_root = r"D:\old-machine\case-3dcrt"
+    recorded_plan_evidence = {
+        **plan_evidence,
+        "rtplan_path": old_root + r"\RTPLAN.dcm",
+        "manifest_path": old_root + r"\segments\segment_manifest.json",
+    }
     course_dose_evidence = synthetic_course_dose_evidence(
         rtplan_sha256=str(plan_evidence["rtplan_sha256"]),
     )
@@ -387,9 +436,10 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
                 "sumtally_manifest_binding": binding,
                 "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
                 "course_dose_evidence": course_dose_evidence,
-                "full_plan_evidence": plan_evidence,
-                "workspace_root": str(workspace.resolve()),
-                "ct_reference_workspace_copy_path": str(ct_reference_path.resolve()),
+                "full_plan_evidence": recorded_plan_evidence,
+                "workspace_root": old_root,
+                "ct_reference_workspace_copy_path": old_root
+                + r"\rtdose\ct_reference.dcm",
             }
         ),
     )
@@ -428,7 +478,10 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
     monkeypatch.setattr(
         recovery_module,
         "validate_full_plan_context",
-        lambda **kwargs: synthetic_full_plan_evidence(Path(kwargs["rtplan_path"])),
+        lambda **kwargs: synthetic_full_plan_evidence(
+            Path(kwargs["rtplan_path"]),
+            workspace_root=Path(kwargs["workspace_root"]),
+        ),
     )
 
     completed = inspect_existing_workspace(workspace)

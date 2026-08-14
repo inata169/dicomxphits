@@ -848,6 +848,12 @@ def run_workspace_recovery(
         for key in inspection.stage_sequence
     ):
         raise WorkspaceRecoveryError("Recovery attempted to include an expensive upstream stage.")
+    configured_workspace = Path(config.workspace_root).expanduser().resolve()
+    if configured_workspace != inspection.workspace_root.resolve():
+        raise WorkspaceRecoveryError(
+            "The workspace selection changed after inspection; inspect the "
+            "selected workspace again before creating DICOM RT Dose."
+        )
     current_inspection = inspect_existing_workspace(inspection.workspace_root)
     if (
         current_inspection.state != inspection.state

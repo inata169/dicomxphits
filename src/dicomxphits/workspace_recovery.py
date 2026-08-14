@@ -307,6 +307,44 @@ def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
         return None
 
 
+def _normalize_relocated_plan_evidence(
+    evidence: Mapping[str, Any],
+    *,
+    recorded_workspace_root: str | Path | None,
+    current_workspace_root: Path,
+) -> dict[str, Any]:
+    normalized = dict(evidence)
+
+    def rebind_if_workspace_local(value: Any) -> Any:
+        if not isinstance(value, str) or not value.strip():
+            return value
+        try:
+            return str(
+                rebind_workspace_path(
+                    value,
+                    recorded_workspace_root=recorded_workspace_root,
+                    current_workspace_root=current_workspace_root,
+                )
+            )
+        except WorkspaceRecoveryError:
+            return value
+
+    for key in ("rtplan_path", "manifest_path"):
+        if key in normalized:
+            normalized[key] = rebind_if_workspace_local(normalized[key])
+    binding = normalized.get("rtplan_binding")
+    if isinstance(binding, dict):
+        normalized_binding = dict(binding)
+        if "ct2phits_manifest_path" in normalized_binding:
+            normalized_binding["ct2phits_manifest_path"] = (
+                rebind_if_workspace_local(
+                    normalized_binding["ct2phits_manifest_path"]
+                )
+            )
+        normalized["rtplan_binding"] = normalized_binding
+    return normalized
+
+
 def _validated_prepared_plan_evidence(
     workspace_root: Path,
     current_binding: Mapping[str, Any],
@@ -324,7 +362,12 @@ def _validated_prepared_plan_evidence(
     recorded_plan_evidence = preparation.get("full_plan_evidence")
     if not isinstance(recorded_plan_evidence, dict):
         return None
-    rtplan_value = str(recorded_plan_evidence.get("rtplan_path") or "").strip()
+    normalized_plan_evidence = _normalize_relocated_plan_evidence(
+        recorded_plan_evidence,
+        recorded_workspace_root=preparation.get("workspace_root"),
+        current_workspace_root=workspace_root,
+    )
+    rtplan_value = str(normalized_plan_evidence.get("rtplan_path") or "").strip()
     ct_value = str(
         preparation.get("ct_reference_workspace_copy_path") or ""
     ).strip()
@@ -344,7 +387,7 @@ def _validated_prepared_plan_evidence(
             workspace_root=workspace_root,
             ct_reference_path=ct_reference_path,
         )
-        if current_plan_evidence != recorded_plan_evidence:
+        if current_plan_evidence != normalized_plan_evidence:
             return None
         validate_course_dose_evidence(
             preparation.get("course_dose_evidence"),
