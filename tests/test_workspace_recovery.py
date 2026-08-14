@@ -39,18 +39,32 @@ def write_file(path: Path, text: str = "x") -> Path:
     return path
 
 
-def synthetic_course_dose_evidence() -> dict[str, object]:
+def synthetic_course_dose_evidence(
+    *,
+    rtplan_sha256: str = "a" * 64,
+    planned_fraction_count: int = 1,
+) -> dict[str, object]:
     return {
         "contract_version": "dicomxphits_plan_course_dose_v1",
         "input_dose_state": "sumtally_one_fraction_delivery_dose",
         "input_dose_unit": "GY",
         "fraction_group_number": 1,
-        "planned_fraction_count": 1,
+        "planned_fraction_count": planned_fraction_count,
         "public_model_base_factor": 1.0,
-        "effective_phits2dicom_factor": 1.0,
+        "effective_phits2dicom_factor": float(planned_fraction_count),
         "equation": "course_dose = dose_per_fraction * NumberOfFractionsPlanned",
-        "rtplan_sha256": "a" * 64,
+        "rtplan_sha256": rtplan_sha256,
         "validated": True,
+    }
+
+
+def synthetic_full_plan_evidence(rtplan_path: Path) -> dict[str, object]:
+    planned_fraction_count = int(rtplan_path.read_text(encoding="utf-8"))
+    return {
+        "rtplan_path": str(rtplan_path.resolve()),
+        "rtplan_sha256": file_sha256(rtplan_path),
+        "fraction_group_number": 1,
+        "planned_fraction_count": planned_fraction_count,
     }
 
 
@@ -297,6 +311,11 @@ def test_gui_recovery_runs_only_inspected_downstream_suffix(
         "preserve_downstream_for_recovery",
         lambda *args, **kwargs: None,
     )
+    monkeypatch.setattr(
+        gui_module,
+        "inspect_existing_workspace",
+        lambda _workspace: inspection,
+    )
 
     def fake_stage_runner(_config: GuiConfig, stage_key: str) -> StageResult:
         calls.append(stage_key)
@@ -316,12 +335,49 @@ def test_gui_recovery_runs_only_inspected_downstream_suffix(
     assert not {"run_ct2phits", "prepare_workspace", "run_segments"}.intersection(calls)
 
 
+def test_gui_recovery_reinspects_before_preserving_or_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = write_recoverable_workspace(tmp_path)
+    inspection = inspect_existing_workspace(workspace)
+    assert inspection.stage_sequence == FULL_DOWNSTREAM_SEQUENCE
+    write_file(
+        workspace / "segments" / "seg_001" / "deposit-target-3D.out",
+        "changed after inspection",
+    )
+    preserved: list[tuple[str, ...]] = []
+    stages: list[str] = []
+    monkeypatch.setattr(
+        gui_module,
+        "preserve_downstream_for_recovery",
+        lambda *_args, **_kwargs: preserved.append(("called",)),
+    )
+
+    def fake_stage_runner(_config: GuiConfig, stage_key: str) -> StageResult:
+        stages.append(stage_key)
+        raise AssertionError("stage runner must not start after workspace mutation")
+
+    config = GuiConfig("", str(workspace), "", "", "", "", "", "")
+    with pytest.raises(WorkspaceRecoveryError, match="changed after inspection"):
+        run_workspace_recovery(config, inspection, stage_runner=fake_stage_runner)
+
+    assert preserved == []
+    assert stages == []
+
+
 def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = write_recoverable_workspace(tmp_path)
     binding = {"synthetic": "current"}
+    rtplan_path = write_file(workspace / "RTPLAN.dcm", "1")
+    ct_reference_path = write_file(workspace / "rtdose" / "ct_reference.dcm")
+    plan_evidence = synthetic_full_plan_evidence(rtplan_path)
+    course_dose_evidence = synthetic_course_dose_evidence(
+        rtplan_sha256=str(plan_evidence["rtplan_sha256"]),
+    )
     prepare_path = write_file(
         workspace / "analysis" / "rtdose_conversion_prepare_summary.json",
         json.dumps(
@@ -330,7 +386,10 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
                 "rtdose_placement": {"schema_version": "synthetic"},
                 "sumtally_manifest_binding": binding,
                 "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
-                "course_dose_evidence": synthetic_course_dose_evidence(),
+                "course_dose_evidence": course_dose_evidence,
+                "full_plan_evidence": plan_evidence,
+                "workspace_root": str(workspace.resolve()),
+                "ct_reference_workspace_copy_path": str(ct_reference_path.resolve()),
             }
         ),
     )
@@ -346,7 +405,7 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
         "coordinate_corrected_rtdose_output_sha256": file_sha256(final_output),
         "coordinate_placement_validation": {"validated": True},
         "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
-        "course_dose_evidence": synthetic_course_dose_evidence(),
+        "course_dose_evidence": course_dose_evidence,
         "coordinate_correction": {
             "schema_version": SCHEMA_VERSION,
             "axis_mapping": AXIS_MAPPING,
@@ -365,6 +424,11 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
         recovery_module,
         "_current_sumtally_binding",
         lambda _workspace: binding,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "validate_full_plan_context",
+        lambda **kwargs: synthetic_full_plan_evidence(Path(kwargs["rtplan_path"])),
     )
 
     completed = inspect_existing_workspace(workspace)
@@ -400,10 +464,87 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
     assert stale_course_dose.state == RECOVERY_READY
     assert stale_course_dose.stage_sequence == ("run_rtdose",)
 
-    execution["course_dose_evidence"] = synthetic_course_dose_evidence()
+    execution["course_dose_evidence"] = course_dose_evidence
     write_file(execution_path, json.dumps(execution))
     final_output.unlink()
 
     missing_output = inspect_existing_workspace(workspace)
     assert missing_output.state == RECOVERY_READY
     assert missing_output.stage_sequence == ("run_rtdose",)
+
+
+def test_completed_recovery_rejects_a_changed_frozen_fraction_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = write_recoverable_workspace(tmp_path)
+    binding = {"synthetic": "current"}
+    rtplan_path = write_file(workspace / "RTPLAN.dcm", "1")
+    ct_reference_path = write_file(workspace / "rtdose" / "ct_reference.dcm")
+    plan_evidence = synthetic_full_plan_evidence(rtplan_path)
+    course_dose_evidence = synthetic_course_dose_evidence(
+        rtplan_sha256=str(plan_evidence["rtplan_sha256"]),
+    )
+    prepare_path = write_file(
+        workspace / "analysis" / "rtdose_conversion_prepare_summary.json",
+        json.dumps(
+            {
+                "stage_status": "success",
+                "workspace_root": str(workspace.resolve()),
+                "ct_reference_workspace_copy_path": str(ct_reference_path.resolve()),
+                "rtdose_placement": {"schema_version": "synthetic"},
+                "sumtally_manifest_binding": binding,
+                "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+                "course_dose_evidence": course_dose_evidence,
+                "full_plan_evidence": plan_evidence,
+            }
+        ),
+    )
+    final_output = write_file(workspace / "sumtally" / "dose.fixed.dcm", "dose")
+    write_file(
+        workspace / "analysis" / "rtdose_conversion_execution_summary.json",
+        json.dumps(
+            {
+                "stage_status": "success",
+                "workspace_root": str(workspace.resolve()),
+                "rtdose_prepare_summary_sha256": file_sha256(prepare_path),
+                "coordinate_corrected_rtdose_output": str(final_output.resolve()),
+                "coordinate_corrected_rtdose_output_relative": "sumtally/dose.fixed.dcm",
+                "coordinate_corrected_rtdose_output_exists": True,
+                "coordinate_corrected_rtdose_output_sha256": file_sha256(final_output),
+                "coordinate_placement_validation": {"validated": True},
+                "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+                "course_dose_evidence": course_dose_evidence,
+                "coordinate_correction": {
+                    "schema_version": SCHEMA_VERSION,
+                    "axis_mapping": AXIS_MAPPING,
+                    "invariants": {
+                        "stored_value_multiset_preserved": True,
+                        "iec_x_to_dicom_x_reversal_applied": True,
+                    },
+                },
+                "final_semantic_validation": {
+                    "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+                    "validated": True,
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "_current_sumtally_binding",
+        lambda _workspace: binding,
+    )
+    monkeypatch.setattr(
+        recovery_module,
+        "validate_full_plan_context",
+        lambda **kwargs: synthetic_full_plan_evidence(Path(kwargs["rtplan_path"])),
+    )
+
+    assert inspect_existing_workspace(workspace).state == RECOVERY_COMPLETE
+
+    write_file(rtplan_path, "2")
+
+    stale = inspect_existing_workspace(workspace)
+    assert stale.state == RECOVERY_READY
+    assert stale.stage_sequence == ("prepare_rtdose", "run_rtdose")

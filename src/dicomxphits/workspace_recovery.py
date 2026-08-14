@@ -23,6 +23,8 @@ from dicomxphits.prepare_3dcrt_workspace import (
 from dicomxphits.rtdose_plan_references import (
     COURSE_DOSE_CONTRACT_VERSION,
     course_dose_evidence_is_current,
+    validate_course_dose_evidence,
+    validate_full_plan_context,
 )
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
@@ -305,24 +307,59 @@ def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
         return None
 
 
-def _prepared_matches(
+def _validated_prepared_plan_evidence(
     workspace_root: Path,
     current_binding: Mapping[str, Any],
-) -> bool:
+) -> dict[str, Any] | None:
     preparation = _load_object(workspace_root / SUMMARY_PATHS["rtdose_prepare"])
-    course_dose = preparation.get("course_dose_evidence") if preparation else None
-    return bool(
-        _succeeded(preparation)
-        and isinstance(preparation, dict)
-        and isinstance(preparation.get("rtdose_placement"), dict)
-        and preparation.get("sumtally_manifest_binding") == current_binding
-        and preparation.get("course_dose_contract_version")
-        == COURSE_DOSE_CONTRACT_VERSION
-        and course_dose_evidence_is_current(course_dose)
-    )
+    if (
+        not _succeeded(preparation)
+        or not isinstance(preparation, dict)
+        or not isinstance(preparation.get("rtdose_placement"), dict)
+        or preparation.get("sumtally_manifest_binding") != current_binding
+        or preparation.get("course_dose_contract_version")
+        != COURSE_DOSE_CONTRACT_VERSION
+    ):
+        return None
+    recorded_plan_evidence = preparation.get("full_plan_evidence")
+    if not isinstance(recorded_plan_evidence, dict):
+        return None
+    rtplan_value = str(recorded_plan_evidence.get("rtplan_path") or "").strip()
+    ct_value = str(
+        preparation.get("ct_reference_workspace_copy_path") or ""
+    ).strip()
+    if not rtplan_value or not ct_value:
+        return None
+    rtplan_path = Path(rtplan_value)
+    if not rtplan_path.is_absolute():
+        rtplan_path = workspace_root / rtplan_path
+    try:
+        ct_reference_path = rebind_workspace_path(
+            ct_value,
+            recorded_workspace_root=preparation.get("workspace_root"),
+            current_workspace_root=workspace_root,
+        )
+        current_plan_evidence = validate_full_plan_context(
+            rtplan_path=rtplan_path,
+            workspace_root=workspace_root,
+            ct_reference_path=ct_reference_path,
+        )
+        if current_plan_evidence != recorded_plan_evidence:
+            return None
+        validate_course_dose_evidence(
+            preparation.get("course_dose_evidence"),
+            plan_evidence=current_plan_evidence,
+        )
+    except Exception:
+        return None
+    return current_plan_evidence
 
 
-def _validated_final_output(workspace_root: Path) -> Path | None:
+def _validated_final_output(
+    workspace_root: Path,
+    *,
+    plan_evidence: dict[str, Any],
+) -> Path | None:
     preparation_path = workspace_root / SUMMARY_PATHS["rtdose_prepare"]
     execution = _load_object(workspace_root / SUMMARY_PATHS["rtdose_run"])
     if not _succeeded(execution) or execution is None or not preparation_path.is_file():
@@ -339,6 +376,13 @@ def _validated_final_output(workspace_root: Path) -> Path | None:
         if isinstance(coordinate_correction, dict)
         else None
     )
+    try:
+        validate_course_dose_evidence(
+            course_dose,
+            plan_evidence=plan_evidence,
+        )
+    except Exception:
+        return None
     if (
         not isinstance(semantic_validation, dict)
         or semantic_validation.get("validated") is not True
@@ -417,8 +461,17 @@ def inspect_existing_workspace(workspace_root: Path) -> WorkspaceRecoveryInspect
         )
 
     current_sumtally = _current_sumtally_binding(root)
-    if current_sumtally is not None and _prepared_matches(root, current_sumtally):
-        final_output = _validated_final_output(root)
+    prepared_plan_evidence = None
+    if current_sumtally is not None:
+        prepared_plan_evidence = _validated_prepared_plan_evidence(
+            root,
+            current_sumtally,
+        )
+    if prepared_plan_evidence is not None:
+        final_output = _validated_final_output(
+            root,
+            plan_evidence=prepared_plan_evidence,
+        )
         if final_output is not None:
             return WorkspaceRecoveryInspection(
                 root,

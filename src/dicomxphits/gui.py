@@ -848,13 +848,28 @@ def run_workspace_recovery(
         for key in inspection.stage_sequence
     ):
         raise WorkspaceRecoveryError("Recovery attempted to include an expensive upstream stage.")
+    current_inspection = inspect_existing_workspace(inspection.workspace_root)
+    if (
+        current_inspection.state != inspection.state
+        or current_inspection.next_stage != inspection.next_stage
+        or current_inspection.stage_sequence != inspection.stage_sequence
+        or current_inspection.phits_reusable != inspection.phits_reusable
+    ):
+        raise WorkspaceRecoveryError(
+            "The workspace changed after inspection; inspect it again before "
+            "creating DICOM RT Dose."
+        )
+    if not current_inspection.can_create_rtdose:
+        raise WorkspaceRecoveryError(
+            "The workspace is no longer ready for RT Dose recovery; inspect it again."
+        )
     preserve_downstream_for_recovery(
-        inspection.workspace_root,
-        stage_sequence=inspection.stage_sequence,
+        current_inspection.workspace_root,
+        stage_sequence=current_inspection.stage_sequence,
     )
     recovery_config = replace(config, allow_overwrite=False)
     results: list[StageResult] = []
-    for stage_key in inspection.stage_sequence:
+    for stage_key in current_inspection.stage_sequence:
         if progress is not None:
             progress(stage_key, None)
         result = stage_runner(recovery_config, stage_key)
