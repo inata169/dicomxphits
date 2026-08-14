@@ -563,9 +563,14 @@ def successful_rtdose_prepare_summary(
 
 
 def successful_rtdose_execution_summary(prepare_path: Path) -> dict[str, object]:
+    workspace = prepare_path.parent.parent
+    output = write_file(workspace / "sumtally" / "dose.fixed.dcm", "dose")
     return {
         "stage_status": "success",
         "rtdose_prepare_summary_sha256": gui_module.file_sha256(prepare_path),
+        "coordinate_corrected_rtdose_output_relative": "sumtally/dose.fixed.dcm",
+        "coordinate_corrected_rtdose_output_exists": True,
+        "coordinate_corrected_rtdose_output_sha256": gui_module.file_sha256(output),
         "coordinate_placement_validation": {"validated": True},
         "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
         "course_dose_evidence": synthetic_course_dose_evidence(),
@@ -800,6 +805,43 @@ def test_rtdose_state_requires_execution_to_match_current_prepare(
             }
         ),
     )
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+
+def test_rtdose_completed_requires_current_bounded_output_and_digest(
+    tmp_path: Path,
+) -> None:
+    workspace = write_dir(tmp_path / "workspace")
+    current_binding = write_current_sumtally_binding(workspace)
+    prepare_path = workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    write_file(
+        prepare_path,
+        json.dumps(
+            successful_rtdose_prepare_summary(
+                sumtally_manifest_binding=current_binding,
+            )
+        ),
+    )
+    execution_path = workspace / stage_by_key("run_rtdose").summary_relative_path
+    execution = successful_rtdose_execution_summary(prepare_path)
+    write_file(execution_path, json.dumps(execution))
+    output = workspace / str(execution["coordinate_corrected_rtdose_output_relative"])
+
+    assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+    output.unlink()
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+    write_file(output, "dose")
+    assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+    write_file(output, "changed")
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+    external = write_file(tmp_path / "outside.dcm", "outside")
+    execution["coordinate_corrected_rtdose_output_relative"] = "../outside.dcm"
+    execution["coordinate_corrected_rtdose_output_sha256"] = gui_module.file_sha256(
+        external
+    )
+    write_file(execution_path, json.dumps(execution))
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
 
 

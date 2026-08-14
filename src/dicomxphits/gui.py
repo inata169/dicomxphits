@@ -9,7 +9,7 @@ import sys
 import threading
 from dataclasses import dataclass, replace
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
 
 from dicomxphits.gui_tool_profile import (
@@ -741,6 +741,38 @@ def _execution_matches_prepare(
         return False
 
 
+def _execution_output_is_current(
+    workspace_root: Path,
+    execution: Mapping[str, object],
+) -> bool:
+    relative_value = execution.get("coordinate_corrected_rtdose_output_relative")
+    recorded_sha256 = execution.get("coordinate_corrected_rtdose_output_sha256")
+    if (
+        execution.get("coordinate_corrected_rtdose_output_exists") is not True
+        or not isinstance(relative_value, str)
+        or not relative_value.strip()
+        or not isinstance(recorded_sha256, str)
+        or not recorded_sha256
+        or "\\" in relative_value
+    ):
+        return False
+    relative = PurePosixPath(relative_value)
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        return False
+    root = workspace_root.resolve()
+    output = root.joinpath(*relative.parts).resolve()
+    try:
+        output.relative_to(root)
+    except ValueError:
+        return False
+    if not output.is_file():
+        return False
+    try:
+        return file_sha256(output) == recorded_sha256
+    except OSError:
+        return False
+
+
 def rtdose_stage_state(workspace_root: Path) -> str:
     prepare_path = (
         workspace_root / stage_by_key("prepare_rtdose").summary_relative_path
@@ -759,6 +791,7 @@ def rtdose_stage_state(workspace_root: Path) -> str:
         rtdose_execution_succeeded(execution)
         and isinstance(execution, Mapping)
         and _execution_matches_prepare(prepare_path, execution)
+        and _execution_output_is_current(workspace_root, execution)
     ):
         return RTDOSE_COMPLETED
     return RTDOSE_PREPARED
