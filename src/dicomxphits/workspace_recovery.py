@@ -12,9 +12,17 @@ from dicomxphits.fix_coordinates import (
     AXIS_MAPPING as COORDINATE_CORRECTION_AXIS_MAPPING,
     SCHEMA_VERSION as COORDINATE_CORRECTION_SCHEMA_VERSION,
 )
+from dicomxphits.gantry_geometry import (
+    GantryGeometryContractError,
+    require_reusable_gantry_geometry_contract,
+)
 from dicomxphits.prepare_3dcrt_workspace import (
     active_segments,
     validate_public_strict_3dcrt_gate,
+)
+from dicomxphits.rtdose_plan_references import (
+    COURSE_DOSE_CONTRACT_VERSION,
+    course_dose_evidence_is_current,
 )
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
@@ -167,6 +175,13 @@ def _manifest_and_outputs(workspace_root: Path) -> tuple[dict[str, Any], list[Pa
         raise WorkspaceRecoveryError(
             "The prepared 3D-CRT manifest no longer passes the public fixed-field gate."
         ) from exc
+    try:
+        require_reusable_gantry_geometry_contract(
+            manifest,
+            allow_legacy_zero_gantry=True,
+        )
+    except GantryGeometryContractError as exc:
+        raise WorkspaceRecoveryError(str(exc)) from exc
     outputs: list[Path] = []
     for segment in active_segments(manifest):
         value = str(segment.get("expected_output_path") or "").strip()
@@ -295,11 +310,15 @@ def _prepared_matches(
     current_binding: Mapping[str, Any],
 ) -> bool:
     preparation = _load_object(workspace_root / SUMMARY_PATHS["rtdose_prepare"])
+    course_dose = preparation.get("course_dose_evidence") if preparation else None
     return bool(
         _succeeded(preparation)
         and isinstance(preparation, dict)
         and isinstance(preparation.get("rtdose_placement"), dict)
         and preparation.get("sumtally_manifest_binding") == current_binding
+        and preparation.get("course_dose_contract_version")
+        == COURSE_DOSE_CONTRACT_VERSION
+        and course_dose_evidence_is_current(course_dose)
     )
 
 
@@ -313,6 +332,7 @@ def _validated_final_output(workspace_root: Path) -> Path | None:
     if execution["coordinate_placement_validation"].get("validated") is not True:
         return None
     semantic_validation = execution.get("final_semantic_validation")
+    course_dose = execution.get("course_dose_evidence")
     coordinate_correction = execution.get("coordinate_correction")
     invariants = (
         coordinate_correction.get("invariants")
@@ -322,6 +342,11 @@ def _validated_final_output(workspace_root: Path) -> Path | None:
     if (
         not isinstance(semantic_validation, dict)
         or semantic_validation.get("validated") is not True
+        or semantic_validation.get("course_dose_contract_version")
+        != COURSE_DOSE_CONTRACT_VERSION
+        or execution.get("course_dose_contract_version")
+        != COURSE_DOSE_CONTRACT_VERSION
+        or not course_dose_evidence_is_current(course_dose)
         or not isinstance(coordinate_correction, dict)
         or coordinate_correction.get("schema_version")
         != COORDINATE_CORRECTION_SCHEMA_VERSION

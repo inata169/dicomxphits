@@ -22,6 +22,11 @@ PLAN_SUMMATION_TYPE = "PLAN"
 MANIFEST_SCHEMA_VERSION = "segment_manifest_v2"
 MU_TOLERANCE = 1.0e-6
 CT2PHITS_MANIFEST_NAME = "ct2phits_workspace_manifest.json"
+COURSE_DOSE_CONTRACT_VERSION = "dicomxphits_plan_course_dose_v1"
+COURSE_DOSE_INPUT_STATE = "sumtally_one_fraction_delivery_dose"
+COURSE_DOSE_EQUATION = (
+    "course_dose = dose_per_fraction * NumberOfFractionsPlanned"
+)
 
 
 def _required_text(dataset: Dataset, name: str, *, label: str) -> str:
@@ -36,9 +41,13 @@ def _positive_int(value: Any, *, label: str) -> int:
         raise ValueError(f"{label} must be a positive integer")
     try:
         result = int(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{label} must be a positive integer") from exc
-    if result <= 0:
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{label} must be a positive integer") from exc
+    if not math.isfinite(numeric_value) or numeric_value != result or result <= 0:
         raise ValueError(f"{label} must be a positive integer")
     return result
 
@@ -69,7 +78,7 @@ def _close_mu(actual: float, expected: float) -> bool:
 
 def _referenced_plan_beams(
     rtplan: Dataset,
-) -> tuple[dict[int, float], dict[int, float], list[int], set[int]]:
+) -> tuple[dict[int, float], dict[int, float], int, int, set[int]]:
     beam_delivery_types: dict[int, str] = {}
     for index, beam in enumerate(getattr(rtplan, "BeamSequence", []) or [], start=1):
         number = _positive_int(
@@ -85,18 +94,30 @@ def _referenced_plan_beams(
     fraction_groups = list(getattr(rtplan, "FractionGroupSequence", []) or [])
     if not fraction_groups:
         raise ValueError("RT Plan has no FractionGroupSequence")
+    if len(fraction_groups) != 1:
+        raise ValueError(
+            "Public PLAN RTDOSE requires exactly one FractionGroupSequence item"
+        )
 
     treatment_metersets: dict[int, float] = {}
     non_treatment_metersets: dict[int, float] = {}
     missing_non_treatment_metersets: set[int] = set()
     referenced_numbers: set[int] = set()
-    fraction_group_numbers: list[int] = []
+    fraction_group_number = 0
+    planned_fraction_count = 0
     for group_index, group in enumerate(fraction_groups, start=1):
         group_number = _positive_int(
             getattr(group, "FractionGroupNumber", group_index),
             label=f"RT Plan fraction group {group_index} number",
         )
-        fraction_group_numbers.append(group_number)
+        fraction_group_number = group_number
+        planned_fraction_count = _positive_int(
+            getattr(group, "NumberOfFractionsPlanned", None),
+            label=(
+                f"RT Plan fraction group {group_number} "
+                "NumberOfFractionsPlanned"
+            ),
+        )
         referenced_beams = list(getattr(group, "ReferencedBeamSequence", []) or [])
         if not referenced_beams:
             raise ValueError(
@@ -150,9 +171,90 @@ def _referenced_plan_beams(
     return (
         treatment_metersets,
         non_treatment_metersets,
-        fraction_group_numbers,
+        fraction_group_number,
+        planned_fraction_count,
         missing_non_treatment_metersets,
     )
+
+
+def build_course_dose_evidence(
+    *,
+    plan_evidence: dict[str, Any],
+    base_factor: float,
+) -> dict[str, Any]:
+    if float(base_factor) != 1.0:
+        raise ValueError("PLAN course-dose public-model base factor must be 1.0")
+    fraction_group_number = _positive_int(
+        plan_evidence.get("fraction_group_number"),
+        label="PLAN course-dose fraction_group_number",
+    )
+    planned_fraction_count = _positive_int(
+        plan_evidence.get("planned_fraction_count"),
+        label="PLAN course-dose planned_fraction_count",
+    )
+    return {
+        "contract_version": COURSE_DOSE_CONTRACT_VERSION,
+        "input_dose_state": COURSE_DOSE_INPUT_STATE,
+        "input_dose_unit": "GY",
+        "fraction_group_number": fraction_group_number,
+        "planned_fraction_count": planned_fraction_count,
+        "public_model_base_factor": 1.0,
+        "effective_phits2dicom_factor": float(planned_fraction_count),
+        "equation": COURSE_DOSE_EQUATION,
+        "rtplan_sha256": str(plan_evidence["rtplan_sha256"]),
+        "validated": True,
+    }
+
+
+def course_dose_evidence_is_current(evidence: Any) -> bool:
+    if not isinstance(evidence, dict):
+        return False
+    try:
+        fraction_group_number = _positive_int(
+            evidence.get("fraction_group_number"),
+            label="course-dose fraction_group_number",
+        )
+        planned_fraction_count = _positive_int(
+            evidence.get("planned_fraction_count"),
+            label="course-dose planned_fraction_count",
+        )
+        base_factor = float(evidence.get("public_model_base_factor"))
+        effective_factor = float(evidence.get("effective_phits2dicom_factor"))
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return bool(
+        fraction_group_number > 0
+        and evidence.get("contract_version") == COURSE_DOSE_CONTRACT_VERSION
+        and evidence.get("input_dose_state") == COURSE_DOSE_INPUT_STATE
+        and str(evidence.get("input_dose_unit") or "").upper() == "GY"
+        and base_factor == 1.0
+        and effective_factor == float(planned_fraction_count)
+        and evidence.get("equation") == COURSE_DOSE_EQUATION
+        and isinstance(evidence.get("rtplan_sha256"), str)
+        and len(evidence["rtplan_sha256"]) == 64
+        and evidence.get("validated") is True
+    )
+
+
+def validate_course_dose_evidence(
+    evidence: Any,
+    *,
+    plan_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    if not course_dose_evidence_is_current(evidence):
+        raise ValueError(
+            "RTDOSE course-dose evidence is missing; rerun RTDOSE Prepare"
+        )
+    expected = build_course_dose_evidence(
+        plan_evidence=plan_evidence,
+        base_factor=1.0,
+    )
+    if evidence != expected:
+        raise ValueError(
+            "RTDOSE course-dose evidence is stale or inconsistent; "
+            "rerun RTDOSE Prepare"
+        )
+    return expected
 
 
 def _beam_isocenter_dicom_mm(
@@ -406,7 +508,8 @@ def validate_full_plan_context(
     (
         expected_metersets,
         non_treatment_metersets,
-        fraction_group_numbers,
+        fraction_group_number,
+        planned_fraction_count,
         missing_non_treatment_metersets,
     ) = _referenced_plan_beams(rtplan)
     rtplan_isocenter_dicom_mm = _shared_treatment_isocenter_dicom_mm(
@@ -512,11 +615,14 @@ def validate_full_plan_context(
     return {
         "dose_summation_type": PLAN_SUMMATION_TYPE,
         "rtplan_path": str(rtplan_path.resolve()),
+        "rtplan_sha256": file_sha256(rtplan_path),
         "referenced_sop_class_uid": sop_class_uid,
         "referenced_sop_instance_uid": sop_instance_uid,
         "frame_of_reference_uid": frame_uid,
         "rtplan_isocenter_dicom_mm": list(rtplan_isocenter_dicom_mm),
-        "fraction_group_numbers": fraction_group_numbers,
+        "fraction_group_numbers": [fraction_group_number],
+        "fraction_group_number": fraction_group_number,
+        "planned_fraction_count": planned_fraction_count,
         "referenced_beam_numbers": sorted(expected_metersets),
         "referenced_beam_metersets": {
             str(number): expected_metersets[number]
@@ -575,7 +681,12 @@ def validate_plan_rtdose(
     path: Path,
     *,
     plan_evidence: dict[str, Any],
+    course_dose_evidence: dict[str, Any],
 ) -> dict[str, Any]:
+    validated_course_dose = validate_course_dose_evidence(
+        course_dose_evidence,
+        plan_evidence=plan_evidence,
+    )
     dataset = pydicom.dcmread(str(path), stop_before_pixels=True)
     if str(getattr(dataset, "Modality", "") or "").upper() != "RTDOSE":
         raise ValueError("Final output must have Modality RTDOSE")
@@ -618,6 +729,12 @@ def validate_plan_rtdose(
         "referenced_sop_instance_uid": referenced_instance,
         "frame_of_reference_uid": frame_uid,
         "dose_units": "GY",
+        "course_dose_contract_version": COURSE_DOSE_CONTRACT_VERSION,
+        "fraction_group_number": validated_course_dose["fraction_group_number"],
+        "planned_fraction_count": validated_course_dose["planned_fraction_count"],
+        "effective_phits2dicom_factor": validated_course_dose[
+            "effective_phits2dicom_factor"
+        ],
         "validated": True,
     }
 
@@ -626,6 +743,7 @@ def synchronize_plan_rtdose(
     path: Path,
     *,
     plan_evidence: dict[str, Any],
+    course_dose_evidence: dict[str, Any],
     guard: WorkspaceOutputGuard | None = None,
 ) -> dict[str, Any]:
     dataset = pydicom.dcmread(str(path))
@@ -662,7 +780,11 @@ def synchronize_plan_rtdose(
         raise ValueError("RTDOSE PixelData changed during plan reference synchronization")
     if geometry_after != geometry_before:
         raise ValueError("RTDOSE dose or geometry fields changed during plan reference synchronization")
-    validation = validate_plan_rtdose(path, plan_evidence=plan_evidence)
+    validation = validate_plan_rtdose(
+        path,
+        plan_evidence=plan_evidence,
+        course_dose_evidence=course_dose_evidence,
+    )
     return {
         "path": str(path),
         "previous_dose_summation_type": previous_summation_type,

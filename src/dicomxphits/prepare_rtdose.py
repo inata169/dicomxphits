@@ -35,7 +35,10 @@ from dicomxphits.prepare_3dcrt_workspace import (
 )
 from dicomxphits.prepare_sumtally import load_json_object, resolve_workspace_path
 from dicomxphits.rtdose_plan_references import (
+    COURSE_DOSE_CONTRACT_VERSION,
+    build_course_dose_evidence,
     synchronize_plan_rtdose,
+    validate_course_dose_evidence,
     validate_full_plan_context,
     validate_plan_rtdose,
 )
@@ -1178,7 +1181,7 @@ def prepare_rtdose(
             generation=generation,
             execution=execution,
         )
-        factor, factor_reason = validate_sumtally_contract(
+        base_factor, base_factor_reason = validate_sumtally_contract(
             generation,
             input_dose_unit=input_dose_unit,
             output_dicom_dose_unit=output_dicom_dose_unit,
@@ -1211,6 +1214,18 @@ def prepare_rtdose(
             rtplan_path=rtplan_path or (workspace_root / "RTPLAN.dcm"),
             workspace_root=workspace_root,
             ct_reference_path=ct_selection.workspace_path,
+        )
+        course_dose_evidence = build_course_dose_evidence(
+            plan_evidence=full_plan_evidence,
+            base_factor=base_factor,
+        )
+        factor = float(course_dose_evidence["effective_phits2dicom_factor"])
+        factor_reason = (
+            f"Effective Factor {factor:.12g} selected as public-model base "
+            f"Factor {base_factor:.12g} multiplied once by "
+            "NumberOfFractionsPlanned "
+            f"{course_dose_evidence['planned_fraction_count']}. "
+            + base_factor_reason
         )
         rtdose_placement = derive_rtdose_placement(
             sumtally_manifest_binding["tally_geometry_binding"]["mesh_geometry"],
@@ -1290,8 +1305,18 @@ def prepare_rtdose(
             ],
             "is_beam_mu_output": IS_BEAM_MU_OUTPUT,
             "factor": factor,
+            "public_model_base_factor": base_factor,
+            "planned_fraction_count": course_dose_evidence[
+                "planned_fraction_count"
+            ],
+            "course_dose_contract_version": COURSE_DOSE_CONTRACT_VERSION,
+            "course_dose_evidence": course_dose_evidence,
             "factor_selection_reason": factor_reason,
-            "dose_semantics": public_absolute_dose_semantics(),
+            "dose_semantics": public_absolute_dose_semantics(
+                planned_fraction_count=course_dose_evidence[
+                    "planned_fraction_count"
+                ]
+            ),
             "sumtally_manifest_binding": sumtally_manifest_binding,
             "full_plan_evidence": full_plan_evidence,
             "rtdose_placement": rtdose_placement,
@@ -1509,6 +1534,24 @@ def run_rtdose(
             raise ValueError(
                 "Frozen RT Plan or full-plan workspace evidence changed after RTDOSE Prepare"
             )
+        course_dose_evidence = validate_course_dose_evidence(
+            prepare_summary.get("course_dose_evidence"),
+            plan_evidence=plan_evidence,
+        )
+        if prepare_summary.get("course_dose_contract_version") != (
+            COURSE_DOSE_CONTRACT_VERSION
+        ):
+            raise ValueError(
+                "RTDOSE prepare summary has a stale course-dose contract; "
+                "rerun RTDOSE Prepare"
+            )
+        if prepare_summary.get("factor") != course_dose_evidence[
+            "effective_phits2dicom_factor"
+        ]:
+            raise ValueError(
+                "RTDOSE prepared factor does not match planned fraction evidence; "
+                "rerun RTDOSE Prepare"
+            )
         current_rtdose_placement = derive_rtdose_placement(
             current_sumtally_binding["tally_geometry_binding"]["mesh_geometry"],
             rtplan_isocenter_dicom_mm=plan_evidence[
@@ -1646,6 +1689,7 @@ def run_rtdose(
                     plan_reference_synchronization = synchronize_plan_rtdose(
                         expected_rtdose_output,
                         plan_evidence=plan_evidence,
+                        course_dose_evidence=course_dose_evidence,
                         guard=guard,
                     )
                     coordinate_correction = fix_coordinates(
@@ -1662,6 +1706,7 @@ def run_rtdose(
                     final_semantic_validation = validate_plan_rtdose(
                         coordinate_corrected_output,
                         plan_evidence=plan_evidence,
+                        course_dose_evidence=course_dose_evidence,
                     )
             except Exception as exc:
                 postprocessing_error = (
@@ -1770,6 +1815,16 @@ def run_rtdose(
             ),
             "is_beam_mu_output": prepare_summary.get("is_beam_mu_output"),
             "factor": prepare_summary.get("factor"),
+            "public_model_base_factor": prepare_summary.get(
+                "public_model_base_factor"
+            ),
+            "planned_fraction_count": prepare_summary.get(
+                "planned_fraction_count"
+            ),
+            "course_dose_contract_version": prepare_summary.get(
+                "course_dose_contract_version"
+            ),
+            "course_dose_evidence": course_dose_evidence,
             "dose_semantics": prepare_summary.get("dose_semantics"),
             "absolute_dose_labeling": absolute_labeling,
             "plan_reference_synchronization": plan_reference_synchronization,

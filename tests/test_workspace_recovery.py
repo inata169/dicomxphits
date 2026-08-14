@@ -13,6 +13,10 @@ if str(PUBLIC_SRC) not in sys.path:
 import dicomxphits.gui as gui_module
 import dicomxphits.workspace_recovery as recovery_module
 from dicomxphits.fix_coordinates import AXIS_MAPPING, SCHEMA_VERSION
+from dicomxphits.gantry_geometry import (
+    CURRENT_GANTRY_GEOMETRY_CONTRACT,
+    GANTRY_GEOMETRY_CONTRACT_FIELD,
+)
 from dicomxphits.gui import GuiConfig, StageResult, run_workspace_recovery
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 from dicomxphits.workspace_recovery import (
@@ -35,7 +39,28 @@ def write_file(path: Path, text: str = "x") -> Path:
     return path
 
 
-def write_recoverable_workspace(tmp_path: Path, *, old_root: str | None = None) -> Path:
+def synthetic_course_dose_evidence() -> dict[str, object]:
+    return {
+        "contract_version": "dicomxphits_plan_course_dose_v1",
+        "input_dose_state": "sumtally_one_fraction_delivery_dose",
+        "input_dose_unit": "GY",
+        "fraction_group_number": 1,
+        "planned_fraction_count": 1,
+        "public_model_base_factor": 1.0,
+        "effective_phits2dicom_factor": 1.0,
+        "equation": "course_dose = dose_per_fraction * NumberOfFractionsPlanned",
+        "rtplan_sha256": "a" * 64,
+        "validated": True,
+    }
+
+
+def write_recoverable_workspace(
+    tmp_path: Path,
+    *,
+    old_root: str | None = None,
+    gantry_angle_deg: float = 90.0,
+    geometry_contract: str | None = CURRENT_GANTRY_GEOMETRY_CONTRACT,
+) -> Path:
     workspace = tmp_path / "case-3dcrt"
     segment = {
         "segment_id": "seg_001",
@@ -45,6 +70,7 @@ def write_recoverable_workspace(tmp_path: Path, *, old_root: str | None = None) 
         "segment_mu": 100.0,
         "mu_weight": 100.0,
         "mu_weight_unit": "MU",
+        "gantry_angle_deg": gantry_angle_deg,
         "phits_input_path": "segments/seg_001/phits.inp",
         "expected_output_path": "segments/seg_001/deposit-target-3D.out",
     }
@@ -57,6 +83,8 @@ def write_recoverable_workspace(tmp_path: Path, *, old_root: str | None = None) 
         "dose_normalization_mu": 100.0,
         "segments": [segment],
     }
+    if geometry_contract is not None:
+        manifest[GANTRY_GEOMETRY_CONTRACT_FIELD] = geometry_contract
     write_file(
         workspace / "segments" / "segment_manifest.json",
         json.dumps(manifest),
@@ -90,6 +118,33 @@ def write_recoverable_workspace(tmp_path: Path, *, old_root: str | None = None) 
         ),
     )
     return workspace
+
+
+def test_old_nonzero_gantry_transport_is_not_reusable(tmp_path: Path) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=90.0,
+        geometry_contract=None,
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "rerun PHITS" in inspection.message
+
+
+def test_proven_legacy_zero_gantry_transport_remains_reusable(tmp_path: Path) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=0.0,
+        geometry_contract=None,
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_READY
+    assert inspection.phits_reusable is True
 
 
 def test_missing_generation_summary_recovers_from_matching_execution_digest(
@@ -274,6 +329,8 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
                 "stage_status": "success",
                 "rtdose_placement": {"schema_version": "synthetic"},
                 "sumtally_manifest_binding": binding,
+                "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+                "course_dose_evidence": synthetic_course_dose_evidence(),
             }
         ),
     )
@@ -288,6 +345,8 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
         "coordinate_corrected_rtdose_output_exists": True,
         "coordinate_corrected_rtdose_output_sha256": file_sha256(final_output),
         "coordinate_placement_validation": {"validated": True},
+        "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+        "course_dose_evidence": synthetic_course_dose_evidence(),
         "coordinate_correction": {
             "schema_version": SCHEMA_VERSION,
             "axis_mapping": AXIS_MAPPING,
@@ -296,7 +355,10 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
                 "iec_x_to_dicom_x_reversal_applied": True,
             },
         },
-        "final_semantic_validation": {"validated": True},
+        "final_semantic_validation": {
+            "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+            "validated": True,
+        },
     }
     write_file(execution_path, json.dumps(execution))
     monkeypatch.setattr(
@@ -327,7 +389,18 @@ def test_completed_recovery_requires_current_coordinate_and_semantic_proof(
     assert incomplete.state == RECOVERY_READY
     assert incomplete.stage_sequence == ("run_rtdose",)
 
-    execution["final_semantic_validation"] = {"validated": True}
+    execution["final_semantic_validation"] = {
+        "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+        "validated": True,
+    }
+    execution.pop("course_dose_evidence")
+    write_file(execution_path, json.dumps(execution))
+
+    stale_course_dose = inspect_existing_workspace(workspace)
+    assert stale_course_dose.state == RECOVERY_READY
+    assert stale_course_dose.stage_sequence == ("run_rtdose",)
+
+    execution["course_dose_evidence"] = synthetic_course_dose_evidence()
     write_file(execution_path, json.dumps(execution))
     final_output.unlink()
 

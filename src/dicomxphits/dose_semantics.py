@@ -62,8 +62,24 @@ def public_relative_dose_semantics() -> dict[str, Any]:
     return deepcopy(_RELATIVE_DOSE_SEMANTICS)
 
 
-def public_absolute_dose_semantics() -> dict[str, Any]:
-    return deepcopy(_ABSOLUTE_DOSE_SEMANTICS)
+def public_absolute_dose_semantics(
+    *, planned_fraction_count: int = 1
+) -> dict[str, Any]:
+    if (
+        isinstance(planned_fraction_count, bool)
+        or not isinstance(planned_fraction_count, int)
+        or planned_fraction_count <= 0
+    ):
+        raise ValueError("planned_fraction_count must be a positive integer")
+    semantics = deepcopy(_ABSOLUTE_DOSE_SEMANTICS)
+    semantics["input_dose_state"] = "sumtally_one_fraction_delivery_dose"
+    semantics["public_model_base_factor"] = 1.0
+    semantics["planned_fraction_count"] = planned_fraction_count
+    semantics["phits2dicom_factor"] = float(planned_fraction_count)
+    semantics["course_dose_equation"] = (
+        "course_dose = dose_per_fraction * NumberOfFractionsPlanned"
+    )
+    return semantics
 
 
 def require_absolute_units(

@@ -529,6 +529,21 @@ def test_prepare_rtdose_stage_passes_default_phits_out(tmp_path: Path) -> None:
     assert result.summary == {"stage_status": "success"}
 
 
+def synthetic_course_dose_evidence() -> dict[str, object]:
+    return {
+        "contract_version": "dicomxphits_plan_course_dose_v1",
+        "input_dose_state": "sumtally_one_fraction_delivery_dose",
+        "input_dose_unit": "GY",
+        "fraction_group_number": 1,
+        "planned_fraction_count": 1,
+        "public_model_base_factor": 1.0,
+        "effective_phits2dicom_factor": 1.0,
+        "equation": "course_dose = dose_per_fraction * NumberOfFractionsPlanned",
+        "rtplan_sha256": "a" * 64,
+        "validated": True,
+    }
+
+
 def successful_rtdose_prepare_summary(
     *,
     sumtally_manifest_binding: dict[str, object] | None = None,
@@ -536,10 +551,26 @@ def successful_rtdose_prepare_summary(
     summary: dict[str, object] = {
         "stage_status": "success",
         "rtdose_placement": {"schema_version": "synthetic-placement-v1"},
+        "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+        "course_dose_evidence": synthetic_course_dose_evidence(),
     }
     if sumtally_manifest_binding is not None:
         summary["sumtally_manifest_binding"] = sumtally_manifest_binding
     return summary
+
+
+def successful_rtdose_execution_summary(prepare_path: Path) -> dict[str, object]:
+    return {
+        "stage_status": "success",
+        "rtdose_prepare_summary_sha256": gui_module.file_sha256(prepare_path),
+        "coordinate_placement_validation": {"validated": True},
+        "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+        "course_dose_evidence": synthetic_course_dose_evidence(),
+        "final_semantic_validation": {
+            "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+            "validated": True,
+        },
+    }
 
 
 def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> None:
@@ -751,15 +782,7 @@ def test_rtdose_state_requires_execution_to_match_current_prepare(
 
     write_file(
         execution_path,
-        json.dumps(
-            {
-                "stage_status": "success",
-                "rtdose_prepare_summary_sha256": gui_module.file_sha256(
-                    prepare_path
-                ),
-                "coordinate_placement_validation": {"validated": True},
-            }
-        ),
+        json.dumps(successful_rtdose_execution_summary(prepare_path)),
     )
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
 
@@ -767,9 +790,9 @@ def test_rtdose_state_requires_execution_to_match_current_prepare(
         prepare_path,
         json.dumps(
             {
-                "stage_status": "success",
-                "sumtally_manifest_binding": current_binding,
-                "rtdose_placement": {"schema_version": "synthetic-placement-v1"},
+                **successful_rtdose_prepare_summary(
+                    sumtally_manifest_binding=current_binding,
+                ),
                 "new_prepare": True,
             }
         ),
@@ -797,7 +820,12 @@ def test_legacy_unbound_rtdose_summaries_do_not_report_completed(
     workspace = write_dir(tmp_path / "workspace")
     write_file(
         workspace / stage_by_key("prepare_rtdose").summary_relative_path,
-        json.dumps(successful_rtdose_prepare_summary()),
+        json.dumps(
+            {
+                "stage_status": "success",
+                "rtdose_placement": {"schema_version": "legacy"},
+            }
+        ),
     )
     write_file(
         workspace / stage_by_key("run_rtdose").summary_relative_path,
@@ -830,15 +858,7 @@ def test_completed_rtdose_requires_explicit_overwrite_to_reprepare(
     )
     write_file(
         workspace / stage_by_key("run_rtdose").summary_relative_path,
-        json.dumps(
-            {
-                "stage_status": "success",
-                "rtdose_prepare_summary_sha256": gui_module.file_sha256(
-                    prepare_path
-                ),
-                "coordinate_placement_validation": {"validated": True},
-            }
-        ),
+        json.dumps(successful_rtdose_execution_summary(prepare_path)),
     )
 
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED

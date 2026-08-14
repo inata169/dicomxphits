@@ -13,6 +13,10 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
+from dicomxphits.gantry_geometry import (
+    CURRENT_GANTRY_GEOMETRY_CONTRACT,
+    GANTRY_GEOMETRY_CONTRACT_FIELD,
+)
 from dicomxphits.run_segments import (
     build_parser,
     main,
@@ -44,6 +48,7 @@ def write_workspace(tmp_path, *segments):
     manifest = {
         "schema_version": "segment_manifest_v2",
         "case_id": "synthetic",
+        GANTRY_GEOMETRY_CONTRACT_FIELD: CURRENT_GANTRY_GEOMETRY_CONTRACT,
         "segments": list(segments) or [active_segment(0)],
     }
     manifest_path = workspace / "segments" / "segment_manifest.json"
@@ -202,6 +207,34 @@ def test_run_segments_promotes_statistical_error_output_for_sumtally(tmp_path):
     assert summary["status"] == "success"
     assert expected_error.read_text(encoding="utf-8") == "relative error\n"
 
+
+def test_old_nonzero_gantry_manifest_is_rejected_before_phits_execution(tmp_path):
+    workspace, manifest = write_workspace(
+        tmp_path,
+        active_segment(0, gantry_angle_deg=90.0),
+    )
+    manifest.pop(GANTRY_GEOMETRY_CONTRACT_FIELD)
+    (workspace / "segments" / "segment_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    calls = []
+
+    with pytest.raises(ValueError, match="rerun PHITS"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            runner=lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
+
+    assert calls == []
+    summary = json.loads(
+        (workspace / "analysis" / "segment_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary["status"] == "gate_failed"
+    assert "rerun PHITS" in summary["failure_reason"]
 
 def test_run_segments_rejects_success_without_statistical_error_output(tmp_path):
     workspace, manifest = write_workspace(tmp_path)

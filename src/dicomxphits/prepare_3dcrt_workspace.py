@@ -20,6 +20,11 @@ from dicomxphits.machine_config import (
     load_machine_config,
     public_default_machine_config,
 )
+from dicomxphits.gantry_geometry import (
+    CURRENT_GANTRY_GEOMETRY_CONTRACT,
+    GANTRY_GEOMETRY_CONTRACT_FIELD,
+    bind_current_gantry_geometry_contract,
+)
 from dicomxphits.prepare_ct_calibration import (
     CtAssetSet,
     render_ct_runtime_input,
@@ -295,6 +300,7 @@ def export_segment_manifest(
             for beam in dcm_get(ds, "BeamSequence", []) or []
         ]
     )
+    bind_current_gantry_geometry_contract(manifest)
     write_outputs(case_root, manifest, beam_rows, cp_rows)
     return manifest, case_root / "segments" / "segment_manifest.json"
 
@@ -476,6 +482,7 @@ def generate_rectangular_phits_workspace(
     maxbch: int = DEFAULT_SEGMENT_MAXBCH,
     omp_threads: int = DEFAULT_SEGMENT_OMP_THREADS,
 ) -> dict[str, Any]:
+    bind_current_gantry_geometry_contract(manifest)
     maxcas = require_positive_integer(maxcas, label="maxcas")
     maxbch = require_positive_integer(maxbch, label="maxbch")
     omp_threads = require_positive_integer(omp_threads, label="omp_threads")
@@ -545,6 +552,7 @@ def generate_rectangular_phits_workspace(
         "generated_segment_count": len(prepared_segments),
         "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
         "generation_mode": generation_mode,
+        GANTRY_GEOMETRY_CONTRACT_FIELD: CURRENT_GANTRY_GEOMETRY_CONTRACT,
         "machine_config_source": machine_config_source,
         "segment_runtime": {
             "maxcas": maxcas,

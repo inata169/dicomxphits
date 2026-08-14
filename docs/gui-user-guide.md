@@ -243,8 +243,8 @@ Select **4 Sumtally**.
 Generate creates the aggregation inputs; Run executes the aggregation with PHITS.
 The result is one MU-weighted `totalfield` covering all active treatment
 segments. SETUP beams contribute neither weight nor `sumfactor`. Treatment
-MU is applied once by Sumtally; the later phits2dicom conversion therefore uses
-factor `1.0`. The result is not a per-beam `beamMU` output.
+MU is applied once by Sumtally, producing one delivery of the selected Fraction
+Group. The result is not a per-beam `beamMU` output.
 
 ### Step 5: RTDOSE
 
@@ -263,6 +263,15 @@ Select **5 RTDOSE**.
 output. The GUI reports **Completed** only when the Prepare summary is bound to
 the current Sumtally evidence and the Run summary records the exact current
 Prepare-summary digest. Stale success summaries cannot enable **Run RTDOSE**.
+
+Prepare also requires one unambiguous Fraction Group and its positive integer
+`NumberOfFractionsPlanned`. The public-model base factor remains `1.0`; the
+effective phits2dicom factor is that base multiplied once by the planned
+fraction count, so the output represents
+`course dose = dose per fraction * NumberOfFractionsPlanned`. Missing, invalid,
+changed, or legacy fraction evidence returns the RTDOSE stage to regeneration
+instead of silently assuming one fraction. Fraction scaling is performed by
+the converter and is not applied later to final DICOM PixelData.
 
 The final RT Dose is written with `DoseUnits = GY` and `DoseSummationType = PLAN`; its Frozen RT Plan reference and coordinates are checked. It is still research absolute dose for the defined public model and does not demonstrate agreement with a clinical machine.
 

@@ -17,6 +17,10 @@ PUBLIC_SRC = PUBLIC_ROOT / "src"
 if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
+from dicomxphits.gantry_geometry import (
+    CURRENT_GANTRY_GEOMETRY_CONTRACT,
+    GANTRY_GEOMETRY_CONTRACT_FIELD,
+)
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.prepare_rtdose import PHITS2DICOM_REQUIRED_TEMPLATE_TAGS, prepare_rtdose, run_rtdose
 from dicomxphits.prepare_sumtally import generate_sumtally, run_sumtally
@@ -125,6 +129,7 @@ def write_synthetic_rtplan(path: Path) -> None:
         referenced_beams.append(reference)
     fraction_group = Dataset()
     fraction_group.FractionGroupNumber = 1
+    fraction_group.NumberOfFractionsPlanned = 1
     fraction_group.ReferencedBeamSequence = referenced_beams
     ds.FractionGroupSequence = [fraction_group]
     ds.save_as(str(path))
@@ -209,6 +214,7 @@ def write_manual_smoke_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any]]:
     workspace = tmp_path / "smoke_workspace"
     manifest = {
         "schema_version": "segment_manifest_v2",
+        GANTRY_GEOMETRY_CONTRACT_FIELD: CURRENT_GANTRY_GEOMETRY_CONTRACT,
         "case_id": "synthetic_smoke",
         "plan_uid": SMOKE_PLAN_UID,
         "workflow_mode": "full_plan",

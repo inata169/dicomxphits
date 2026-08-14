@@ -30,6 +30,10 @@ from dicomxphits.sumtally_inputs import (
     file_sha256,
     manifest_sha256,
 )
+from dicomxphits.rtdose_plan_references import (
+    COURSE_DOSE_CONTRACT_VERSION,
+    course_dose_evidence_is_current,
+)
 from dicomxphits.workspace_recovery import (
     RECOVERY_COMPLETE,
     RECOVERY_READY,
@@ -595,20 +599,44 @@ def rtdose_execution_succeeded(
         if isinstance(summary, Mapping)
         else None
     )
+    course_dose = (
+        summary.get("course_dose_evidence")
+        if isinstance(summary, Mapping)
+        else None
+    )
+    semantic_validation = (
+        summary.get("final_semantic_validation")
+        if isinstance(summary, Mapping)
+        else None
+    )
     return bool(
         summary_succeeded(summary)
         and isinstance(coordinate_validation, Mapping)
         and coordinate_validation.get("validated") is True
+        and summary.get("course_dose_contract_version")
+        == COURSE_DOSE_CONTRACT_VERSION
+        and course_dose_evidence_is_current(course_dose)
+        and isinstance(semantic_validation, Mapping)
+        and semantic_validation.get("course_dose_contract_version")
+        == COURSE_DOSE_CONTRACT_VERSION
     )
 
 
 def rtdose_preparation_succeeded(
     summary: Mapping[str, object] | None,
 ) -> bool:
+    course_dose = (
+        summary.get("course_dose_evidence")
+        if isinstance(summary, Mapping)
+        else None
+    )
     return bool(
         summary_succeeded(summary)
         and isinstance(summary, Mapping)
         and isinstance(summary.get("rtdose_placement"), Mapping)
+        and summary.get("course_dose_contract_version")
+        == COURSE_DOSE_CONTRACT_VERSION
+        and course_dose_evidence_is_current(course_dose)
     )
 
 

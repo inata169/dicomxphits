@@ -373,7 +373,7 @@ def _runtime_source_lines(
         )
 
     gantry_rad = math.radians(gantry_deg)
-    direction_x = -math.sin(gantry_rad)
+    direction_x = math.sin(gantry_rad)
     direction_y = 0.0
     direction_z = math.cos(gantry_rad)
     direction_x = 0.0 if abs(direction_x) < 1.0e-12 else direction_x
@@ -433,6 +433,17 @@ def _runtime_accelerator_transforms(
         raise CtCalibrationError(
             "public v1 runtime supports couch angle 0 degrees only"
         )
+    gantry_sine_rows = (
+        (
+            "      sin(c20/180*pi)",
+            "     -sin(c20/180*pi)",
+        )
+        if math.isclose(gantry, 0.0, rel_tol=0.0, abs_tol=1.0e-9)
+        else (
+            "     -sin(c20/180*pi)",
+            "      sin(c20/180*pi)",
+        )
+    )
     return [
         f"set: c10[{_fmt_runtime(collimator)}] $ Collimator angle (deg)",
         f"set: c20[{_fmt_runtime(gantry)}] $ Gantry angle (deg)",
@@ -452,11 +463,11 @@ def _runtime_accelerator_transforms(
         "tr3   0.0000 0.0000 0.0000",
         "      cos(c20/180*pi)",
         "      0",
-        "      sin(c20/180*pi)",
+        gantry_sine_rows[0],
         "      0",
         "      1",
         "      0",
-        "     -sin(c20/180*pi)",
+        gantry_sine_rows[1],
         "      0",
         "      cos(c20/180*pi)",
         "      1",

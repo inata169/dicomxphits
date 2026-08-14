@@ -14,6 +14,10 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
+from dicomxphits.gantry_geometry import (
+    CURRENT_GANTRY_GEOMETRY_CONTRACT,
+    GANTRY_GEOMETRY_CONTRACT_FIELD,
+)
 from dicomxphits.prepare_sumtally import (
     DEFAULT_SUMTALLY_OUTPUT_NAME,
     build_generate_parser,
@@ -73,6 +77,7 @@ def write_workspace(tmp_path, *segments, metadata=None):
     manifest = {
         "schema_version": "segment_manifest_v2",
         "case_id": "synthetic",
+        GANTRY_GEOMETRY_CONTRACT_FIELD: CURRENT_GANTRY_GEOMETRY_CONTRACT,
         "workflow_mode": "full_plan",
         "plan_total_mu": complete_mu,
         "included_total_mu": complete_mu,
@@ -225,6 +230,36 @@ def test_generate_sumtally_rejects_non_filename_output_name(
     )
     assert failure["stage_status"] == "gate_failed"
     assert failure["phits_execution_started"] is False
+
+
+def test_old_nonzero_gantry_manifest_is_rejected_before_sumtally_generation(
+    tmp_path,
+):
+    workspace, manifest = write_workspace(
+        tmp_path,
+        active_segment(0, gantry_angle_deg=90.0),
+    )
+    manifest.pop(GANTRY_GEOMETRY_CONTRACT_FIELD)
+    (workspace / "segments" / "segment_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="rerun PHITS"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+    assert not (workspace / "sumtally" / "sumtally.inp").exists()
+    failure = json.loads(
+        (workspace / "analysis" / "sumtally_generation_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "gate_failed"
+    assert "rerun PHITS" in failure["failure_reason"]
 
 
 @pytest.mark.parametrize(
