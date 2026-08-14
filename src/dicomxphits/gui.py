@@ -1265,6 +1265,31 @@ def clear_new_case_handoff_state(
     set_value("existing_ct2phits_workspace_root", "")
 
 
+def clear_handoff_for_workspace_change(
+    previous_workspace: Path | None,
+    current_workspace: Path,
+    *,
+    set_value: Callable[[str, str], None],
+    set_verified: Callable[[bool], None],
+    set_manual: Callable[[bool], None],
+    set_status: Callable[[str], None],
+) -> bool:
+    """Clear case-bound handoff state before inspecting a different workspace."""
+
+    if (
+        previous_workspace is not None
+        and previous_workspace.resolve() == current_workspace.resolve()
+    ):
+        return False
+    clear_new_case_handoff_state(
+        set_value=set_value,
+        set_verified=set_verified,
+        set_manual=set_manual,
+        set_status=set_status,
+    )
+    return True
+
+
 def _ct2phits_handoff_from_result(result: StageResult) -> dict[str, str]:
     return ct2phits_handoff_values(result.summary_path.parent, result.summary)
 
@@ -1913,6 +1938,14 @@ def _build_gui() -> int:
         if not raw_workspace:
             return
         inspection = inspect_existing_workspace(Path(raw_workspace))
+        clear_handoff_for_workspace_change(
+            recovery_inspection.workspace_root if recovery_inspection else None,
+            inspection.workspace_root,
+            set_value=lambda name, value: values[name].set(value),
+            set_verified=verified_handoff_available.set,
+            set_manual=manual_handoff.set,
+            set_status=handoff_status.set,
+        )
         recovery_inspection = inspection
         existing_case_mode.set(True)
         final_rtdose_output.set(
