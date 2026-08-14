@@ -41,6 +41,7 @@ from dicomxphits.workspace_recovery import (
     WorkspaceRecoveryInspection,
     inspect_existing_workspace,
     preserve_downstream_for_recovery,
+    rtdose_plan_evidence_is_current,
     standard_ct2phits_handoff,
 )
 
@@ -791,6 +792,7 @@ def rtdose_stage_state(workspace_root: Path) -> str:
         rtdose_execution_succeeded(execution)
         and isinstance(execution, Mapping)
         and _execution_matches_prepare(prepare_path, execution)
+        and rtdose_plan_evidence_is_current(workspace_root, execution)
         and _execution_output_is_current(workspace_root, execution)
     ):
         return RTDOSE_COMPLETED

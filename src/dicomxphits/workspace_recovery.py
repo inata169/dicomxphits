@@ -624,6 +624,31 @@ def _validated_prepared_plan_evidence(
     return current_plan_evidence
 
 
+def rtdose_plan_evidence_is_current(
+    workspace_root: Path,
+    execution: Mapping[str, Any],
+) -> bool:
+    """Validate prepared and executed course-dose evidence against the current plan."""
+
+    current_binding = _current_sumtally_binding(workspace_root)
+    if current_binding is None:
+        return False
+    plan_evidence = _validated_prepared_plan_evidence(
+        workspace_root,
+        current_binding,
+    )
+    if plan_evidence is None:
+        return False
+    try:
+        validate_course_dose_evidence(
+            execution.get("course_dose_evidence"),
+            plan_evidence=plan_evidence,
+        )
+    except Exception:
+        return False
+    return True
+
+
 def _validated_final_output(
     workspace_root: Path,
     *,

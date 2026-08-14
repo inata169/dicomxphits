@@ -30,6 +30,7 @@ from dicomxphits.workspace_recovery import (
     inspect_existing_workspace,
     preserve_downstream_for_recovery,
     rebind_workspace_path,
+    rtdose_plan_evidence_is_current,
     standard_ct2phits_handoff,
 )
 
@@ -631,34 +632,33 @@ def test_completed_recovery_rejects_a_changed_frozen_fraction_plan(
         ),
     )
     final_output = write_file(workspace / "sumtally" / "dose.fixed.dcm", "dose")
+    execution = {
+        "stage_status": "success",
+        "workspace_root": str(workspace.resolve()),
+        "rtdose_prepare_summary_sha256": file_sha256(prepare_path),
+        "coordinate_corrected_rtdose_output": str(final_output.resolve()),
+        "coordinate_corrected_rtdose_output_relative": "sumtally/dose.fixed.dcm",
+        "coordinate_corrected_rtdose_output_exists": True,
+        "coordinate_corrected_rtdose_output_sha256": file_sha256(final_output),
+        "coordinate_placement_validation": {"validated": True},
+        "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+        "course_dose_evidence": course_dose_evidence,
+        "coordinate_correction": {
+            "schema_version": SCHEMA_VERSION,
+            "axis_mapping": AXIS_MAPPING,
+            "invariants": {
+                "stored_value_multiset_preserved": True,
+                "iec_x_to_dicom_x_reversal_applied": True,
+            },
+        },
+        "final_semantic_validation": {
+            "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+            "validated": True,
+        },
+    }
     write_file(
         workspace / "analysis" / "rtdose_conversion_execution_summary.json",
-        json.dumps(
-            {
-                "stage_status": "success",
-                "workspace_root": str(workspace.resolve()),
-                "rtdose_prepare_summary_sha256": file_sha256(prepare_path),
-                "coordinate_corrected_rtdose_output": str(final_output.resolve()),
-                "coordinate_corrected_rtdose_output_relative": "sumtally/dose.fixed.dcm",
-                "coordinate_corrected_rtdose_output_exists": True,
-                "coordinate_corrected_rtdose_output_sha256": file_sha256(final_output),
-                "coordinate_placement_validation": {"validated": True},
-                "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
-                "course_dose_evidence": course_dose_evidence,
-                "coordinate_correction": {
-                    "schema_version": SCHEMA_VERSION,
-                    "axis_mapping": AXIS_MAPPING,
-                    "invariants": {
-                        "stored_value_multiset_preserved": True,
-                        "iec_x_to_dicom_x_reversal_applied": True,
-                    },
-                },
-                "final_semantic_validation": {
-                    "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
-                    "validated": True,
-                },
-            }
-        ),
+        json.dumps(execution),
     )
     monkeypatch.setattr(
         recovery_module,
@@ -672,9 +672,11 @@ def test_completed_recovery_rejects_a_changed_frozen_fraction_plan(
     )
 
     assert inspect_existing_workspace(workspace).state == RECOVERY_COMPLETE
+    assert rtdose_plan_evidence_is_current(workspace, execution) is True
 
     write_file(rtplan_path, "2")
 
+    assert rtdose_plan_evidence_is_current(workspace, execution) is False
     stale = inspect_existing_workspace(workspace)
     assert stale.state == RECOVERY_READY
     assert stale.stage_sequence == ("prepare_rtdose", "run_rtdose")

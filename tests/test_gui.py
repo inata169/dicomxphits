@@ -767,7 +767,13 @@ def test_rtdose_state_rejects_sumtally_run_without_output_update(
 
 def test_rtdose_state_requires_execution_to_match_current_prepare(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
     workspace = write_dir(tmp_path / "workspace")
     current_binding = write_current_sumtally_binding(workspace)
     prepare_path = (
@@ -794,6 +800,18 @@ def test_rtdose_state_requires_execution_to_match_current_prepare(
     )
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
 
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: False,
+    )
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
+
     write_file(
         prepare_path,
         json.dumps(
@@ -810,7 +828,13 @@ def test_rtdose_state_requires_execution_to_match_current_prepare(
 
 def test_rtdose_completed_requires_current_bounded_output_and_digest(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
     workspace = write_dir(tmp_path / "workspace")
     current_binding = write_current_sumtally_binding(workspace)
     prepare_path = workspace / stage_by_key("prepare_rtdose").summary_relative_path
@@ -889,7 +913,13 @@ def test_legacy_unbound_rtdose_summaries_do_not_report_completed(
 
 def test_completed_rtdose_requires_explicit_overwrite_to_reprepare(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
     workspace = write_dir(tmp_path / "workspace")
     current_binding = write_current_sumtally_binding(workspace)
     prepare_path = workspace / stage_by_key("prepare_rtdose").summary_relative_path
