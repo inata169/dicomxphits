@@ -252,13 +252,22 @@ def test_cmd_rejects_incomplete_or_manifest_inconsistent_inventory_before_python
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
-def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
+@pytest.mark.parametrize("launcher", ["cmd", "powershell-parent"])
+def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path, launcher):
     root = tmp_path / "日本語 user" / "valid offline bootstrap"
     root.mkdir(parents=True)
     manifest, marker = _make_cmd_bootstrap_bundle(root)
     stage = root / "tools" / "install_offline_verified.ps1"
     stage.write_text(
         "$ErrorActionPreference = 'Stop'\n"
+        "$Root = $env:DICOMXPHITS_BUNDLE_ROOT\n"
+        "$MovedRoot = $Root + '-moved'\n"
+        "$RootMoved = $false\n"
+        "try { [IO.Directory]::Move($Root, $MovedRoot); $RootMoved = $true }\n"
+        "catch { [IO.File]::WriteAllText((Join-Path "
+        "$Root 'root-directory-rename-blocked.txt'),'blocked') }\n"
+        "if ($RootMoved) { [IO.Directory]::Move($MovedRoot, $Root); "
+        "throw 'bundle root rename was not blocked' }\n"
         "$Tools = Join-Path $env:DICOMXPHITS_BUNDLE_ROOT 'tools'\n"
         "try { [IO.Directory]::Move($Tools, ($Tools + '-moved')); exit 98 }\n"
         "catch { [IO.File]::WriteAllText((Join-Path "
@@ -304,8 +313,29 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
         {"PYTHONUTF8": "1", "DICOMXPHITS_TEST_PYTHON": sys.executable}
     )
 
+    if launcher == "powershell-parent":
+        trusted_powershell = (
+            Path(os.environ["SystemRoot"])
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+        command = [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "& '.\\install_offline.cmd'; exit $LASTEXITCODE",
+        ]
+    else:
+        command = ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")]
+
     result = subprocess.run(
-        ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
+        command,
         cwd=root,
         check=False,
         capture_output=True,
@@ -317,6 +347,7 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Initial SHA-256 verification passed." in result.stdout
+    assert (root / "root-directory-rename-blocked.txt").read_text() == "blocked"
     assert (root / "directory-rename-blocked.txt").read_text() == "blocked"
     assert (root / "replacement-blocked.txt").read_text(encoding="utf-8") == "blocked"
     assert marker.read_text(encoding="utf-8") == "executed"
@@ -652,7 +683,7 @@ def test_bundle_directory_locks_block_rename(tmp_path):
         "$Payload = [IO.Path]::Combine($Tools, 'install_offline_verified.ps1')\n"
         "$Handles = @(Lock-BundleDirectoryPaths $Root @($Payload))\n"
         "try {\n"
-        "  if ($Handles.Count -ne 2) { exit 7 }\n"
+        "  if ($Handles.Count -ne 1) { exit 7 }\n"
         "  $Blocked = $false\n"
         "  try { [IO.Directory]::Move($Tools, $Moved) } catch { $Blocked = $true }\n"
         "  if (-not $Blocked -or -not [IO.Directory]::Exists($Tools) -or "
@@ -723,7 +754,7 @@ def test_bundle_directory_lock_follows_shared_delete_verification(tmp_path):
         "$Strict = $null\n"
         "try {\n"
         "  $Handles = @(Lock-BundleDirectoryPaths $Root @($Payload))\n"
-        "  if ($Handles.Count -ne 2) { exit 11 }\n"
+        "  if ($Handles.Count -ne 1) { exit 11 }\n"
         "  $Strict = [IO.File]::Open(\n"
         "    $Payload,\n"
         "    [IO.FileMode]::Open,\n"

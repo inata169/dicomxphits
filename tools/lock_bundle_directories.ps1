@@ -106,6 +106,10 @@ function Lock-BundleDirectoryPaths(
     $DirectoryPaths = New-Object 'System.Collections.Generic.HashSet[string]' (
         [System.StringComparer]::OrdinalIgnoreCase
     )
+    # The authenticated install_offline.cmd read-lock holds BundlePath itself
+    # against rename. Exclude that root here because a calling PowerShell may
+    # legitimately retain it as its current directory; lock every child
+    # directory in the protected payload parent chains instead.
     foreach ($PayloadPath in $PayloadPaths) {
         $FullPayloadPath = [System.IO.Path]::GetFullPath($PayloadPath)
         if (-not $FullPayloadPath.StartsWith(
@@ -118,13 +122,13 @@ function Lock-BundleDirectoryPaths(
             $FullPayloadPath
         )
         while ($null -ne $Cursor) {
-            $DirectoryPaths.Add($Cursor.FullName) | Out-Null
             if ($Cursor.FullName.Equals(
                 $BundlePath,
                 [System.StringComparison]::OrdinalIgnoreCase
             )) {
                 break
             }
+            $DirectoryPaths.Add($Cursor.FullName) | Out-Null
             $Cursor = $Cursor.Parent
         }
         if ($null -eq $Cursor) {
