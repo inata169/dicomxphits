@@ -139,6 +139,24 @@ a new empty extraction directory and must not overwrite the prior successful
 installation folder. Any UAC installation and visual inspection remain
 human-operated.
 
+## Windows Offline Settings Acceptance Correction
+
+Windows acceptance of the first integration artifact proved that the fixed
+model, Help menu, shared Activity log, and page scrolling worked, but also
+exposed a settings-persistence defect. The editable offline installation
+imports the GUI from the integrity-protected source snapshot below
+`ProgramData`; the previous repository-relative default therefore attempted to
+write `config/dicomxphits.gui.local.json` below a deliberately non-writable
+tree.
+
+The bounded correction keeps `DICOMXPHITS_GUI_DEFAULTS_JSON` as the highest
+priority explicit override and otherwise selects the current user's
+`LOCALAPPDATA/dicomxphits/dicomxphits.gui.local.json` on Windows. The existing
+atomic temporary-file replacement, persisted-field allowlist, non-persistence
+of case and safety state, protected runtime ACLs, and tool/stage validation
+remain unchanged. This restores the already specified local-settings behavior
+and does not introduce a new capability or external execution.
+
 ## Unchanged Boundaries
 
 This change does not add 10 MV, an energy selector, FFF validation,

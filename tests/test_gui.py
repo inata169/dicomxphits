@@ -511,12 +511,81 @@ def test_gui_defaults_invalid_geometry_mode_falls_back_to_rectangular(tmp_path: 
 
 def test_gui_defaults_path_uses_local_config_or_environment(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("DICOMXPHITS_GUI_DEFAULTS_JSON", raising=False)
-    assert gui_defaults_path() == PUBLIC_ROOT / "config" / "dicomxphits.gui.local.json"
+    local_app_data = tmp_path / "LocalAppData"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    expected_default = (
+        local_app_data / "dicomxphits" / "dicomxphits.gui.local.json"
+        if sys.platform == "win32"
+        else PUBLIC_ROOT / "config" / "dicomxphits.gui.local.json"
+    )
+    assert gui_defaults_path() == expected_default
 
     custom_path = tmp_path / "custom-local-defaults.json"
     monkeypatch.setenv("DICOMXPHITS_GUI_DEFAULTS_JSON", str(custom_path))
 
     assert gui_defaults_path() == custom_path
+
+
+def test_windows_gui_defaults_path_is_user_writable_not_protected_source(
+    tmp_path: Path,
+) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    protected_source = (
+        tmp_path
+        / "ProgramData"
+        / "dicomxphits"
+        / "offline-runtimes"
+        / "runtime-id"
+        / "dicomxphits-source"
+    )
+
+    path = gui_defaults_path(
+        platform_name="nt",
+        environment={"LOCALAPPDATA": str(local_app_data)},
+    )
+
+    assert path == (
+        local_app_data / "dicomxphits" / "dicomxphits.gui.local.json"
+    )
+    assert not path.is_relative_to(protected_source)
+
+
+def test_windows_gui_defaults_path_keeps_explicit_override_precedence(
+    tmp_path: Path,
+) -> None:
+    override = tmp_path / "explicit" / "settings.json"
+
+    path = gui_defaults_path(
+        platform_name="nt",
+        environment={
+            "LOCALAPPDATA": str(tmp_path / "LocalAppData"),
+            "DICOMXPHITS_GUI_DEFAULTS_JSON": str(override),
+        },
+    )
+
+    assert path == override
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows LocalAppData path")
+def test_windows_default_gui_settings_save_uses_local_app_data(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    monkeypatch.delenv("DICOMXPHITS_GUI_DEFAULTS_JSON", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+
+    saved_path = _save_gui_settings(
+        {"geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT},
+        {"source_rtplan_path": str(tmp_path / "DICOM")},
+    )
+
+    assert saved_path == (
+        local_app_data / "dicomxphits" / "dicomxphits.gui.local.json"
+    )
+    assert json.loads(saved_path.read_text(encoding="utf-8"))[
+        "browse_directories"
+    ] == {"source_rtplan_path": str(tmp_path / "DICOM")}
 
 
 def test_public_tree_workspace_does_not_start_subprocess(tmp_path: Path) -> None:

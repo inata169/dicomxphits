@@ -72,7 +72,7 @@
 - [x] 6.2 Run `python -m compileall src`.
 - [x] 6.3 Run `python -m pytest -q -p no:cacheprovider`. The Windows run used
   a repository-external dedicated pytest base directory so directory-lock
-  tests could exercise their intended host behavior: 796 passed, 11 skipped.
+  tests could exercise their intended host behavior: 799 passed, 11 skipped.
 - [x] 6.4 Run `python tools/verify_public_tree.py`.
 - [x] 6.5 Run strict OpenSpec validation on the active change and full tree.
 - [x] 6.6 Run `git diff --check`, `git diff --stat`, and `git status --short`.
@@ -91,6 +91,14 @@
   window scrolling, and all five pages' action reachability.
 - [ ] 7.4 Record any explicitly deferred non-blocking external installation
   evidence accurately; do not run real PHITS-related tools or real DICOM.
+- [x] 7.5 Treat the acceptance-time attempt to save GUI settings below the
+  protected `ProgramData` source snapshot as a merge-blocking integration
+  defect rather than weakening the protected runtime permissions.
+- [x] 7.6 Move the Windows default to the per-user `LOCALAPPDATA` settings path
+  while preserving the explicit environment override, atomic replacement,
+  persisted-field allowlist, and non-persistent safety state.
+- [x] 7.7 Add Windows-path, explicit-override, actual-save, GUI, and offline
+  installer regression coverage for the settings correction.
 
 ## 8. Complete OpenSpec Cleanup
 

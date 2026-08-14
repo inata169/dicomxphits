@@ -985,10 +985,31 @@ def _base_default_values() -> dict[str, str]:
     return values
 
 
-def gui_defaults_path() -> Path:
-    env_path = os.environ.get(GUI_DEFAULTS_ENV_VAR)
+def gui_defaults_path(
+    *,
+    platform_name: str | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    environment = os.environ if environment is None else environment
+    env_path = environment.get(GUI_DEFAULTS_ENV_VAR)
     if env_path:
         return Path(env_path).expanduser()
+    effective_platform = os.name if platform_name is None else platform_name
+    if effective_platform == "nt":
+        local_app_data = str(environment.get("LOCALAPPDATA", "")).strip()
+        if local_app_data:
+            return (
+                Path(local_app_data).expanduser()
+                / "dicomxphits"
+                / GUI_DEFAULTS_FILE_NAME
+            )
+        return (
+            Path.home()
+            / "AppData"
+            / "Local"
+            / "dicomxphits"
+            / GUI_DEFAULTS_FILE_NAME
+        )
     return public_root() / "config" / GUI_DEFAULTS_FILE_NAME
 
 
