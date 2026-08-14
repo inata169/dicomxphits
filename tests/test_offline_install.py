@@ -728,6 +728,59 @@ def test_bundle_directory_locks_block_rename(tmp_path):
     assert "DIRECTORY_RENAME_DENIED" in result.stdout.splitlines()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_verified_stage_resolves_the_running_system_powershell(tmp_path):
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "trusted-powershell-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\n$Trusted = Assert-TrustedPowerShellProcess\n"
+        "Write-Output ('TRUSTED_POWERSHELL=' + $Trusted)\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"TRUSTED_POWERSHELL={trusted_powershell}".casefold() in {
+        line.casefold() for line in result.stdout.splitlines()
+    }
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")
 def test_bundle_directory_lock_follows_shared_delete_verification(tmp_path):
     root = tmp_path / "bundle"
@@ -1220,6 +1273,7 @@ def test_verified_stage_never_starts_host_python_with_malicious_standard_library
     environment.update(
         {
             "LocalAppData": str(local_app_data),
+            "DICOMXPHITS_ELEVATED_ACTION": "construct-runtime",
             "PYTHONUTF8": "1",
         }
     )
@@ -1659,6 +1713,7 @@ def test_cmd_pins_powershell_modules_before_authenticode_lookup(tmp_path):
     environment.update(
         {
             "LocalAppData": str(local_app_data),
+            "DICOMXPHITS_ELEVATED_ACTION": "construct-runtime",
             "PSModulePath": os.pathsep.join(
                 [str(malicious_modules), str(system_modules)]
             ),
