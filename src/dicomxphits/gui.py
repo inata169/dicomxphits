@@ -1246,6 +1246,25 @@ def apply_existing_handoff_state(
     return True
 
 
+def clear_new_case_handoff_state(
+    *,
+    set_value: Callable[[str, str], None],
+    set_verified: Callable[[bool], None],
+    set_manual: Callable[[bool], None],
+    set_status: Callable[[str], None],
+) -> None:
+    """Remove every frozen existing-case handoff before starting a new case."""
+
+    apply_existing_handoff_state(
+        None,
+        set_value=set_value,
+        set_verified=set_verified,
+        set_manual=set_manual,
+        set_status=set_status,
+    )
+    set_value("existing_ct2phits_workspace_root", "")
+
+
 def _ct2phits_handoff_from_result(result: StageResult) -> dict[str, str]:
     return ct2phits_handoff_values(result.summary_path.parent, result.summary)
 
@@ -2003,6 +2022,12 @@ def _build_gui() -> int:
         nonlocal recovery_inspection
         recovery_inspection = None
         existing_case_mode.set(False)
+        clear_new_case_handoff_state(
+            set_value=lambda name, value: values[name].set(value),
+            set_verified=verified_handoff_available.set,
+            set_manual=manual_handoff.set,
+            set_status=handoff_status.set,
+        )
         final_rtdose_output.set("")
         recovery_status.set(
             "Open an existing 3D-CRT workspace to inspect reusable results."

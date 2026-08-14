@@ -35,6 +35,7 @@ from dicomxphits.gui import (
     bind_tool_profile_revalidation,
     browse_initial_directory,
     build_stage_command,
+    clear_new_case_handoff_state,
     ct2phits_handoff_values,
     gui_defaults_path,
     geometry_mode_guidance,
@@ -1470,6 +1471,35 @@ def test_missing_existing_handoff_clears_prior_case_fields_and_authorization() -
         "rtplan_path": "",
         "ct_reference_dicom": "",
         "ct_datfiles_root": "",
+    }
+    assert verified == [False]
+    assert manual == [False]
+    assert status == ["Select one CT2PHITS workspace"]
+
+
+def test_start_new_case_clears_frozen_handoff_and_both_authorizations() -> None:
+    values = {
+        "rtplan_path": "case-a-plan.dcm",
+        "ct_reference_dicom": "case-a-ct.dcm",
+        "ct_datfiles_root": "case-a-datfiles",
+        "existing_ct2phits_workspace_root": "case-a-ct2phits",
+    }
+    verified = [True]
+    manual = [True]
+    status = ["Verified existing handoff"]
+
+    clear_new_case_handoff_state(
+        set_value=values.__setitem__,
+        set_verified=lambda value: verified.__setitem__(0, value),
+        set_manual=lambda value: manual.__setitem__(0, value),
+        set_status=lambda value: status.__setitem__(0, value),
+    )
+
+    assert values == {
+        "rtplan_path": "",
+        "ct_reference_dicom": "",
+        "ct_datfiles_root": "",
+        "existing_ct2phits_workspace_root": "",
     }
     assert verified == [False]
     assert manual == [False]
