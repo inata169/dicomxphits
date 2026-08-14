@@ -295,6 +295,7 @@ def write_workspace(
     phits_out.write_text("phits companion", encoding="utf-8")
     generation = {
         "stage_status": "success",
+        "workspace_root": str(workspace.resolve()),
         "manifest_sha256": bound_manifest_sha256,
         "sum_input_sha256": sum_input_sha256,
         "sumtally_input_sha256": sumtally_input_sha256,
@@ -327,6 +328,7 @@ def write_workspace(
     }
     execution = {
         "stage_status": "success",
+        "workspace_root": str(workspace.resolve()),
         "manifest_sha256": bound_manifest_sha256,
         "sum_input_sha256": sum_input_sha256,
         "sumtally_input_sha256": sumtally_input_sha256,
@@ -1513,6 +1515,59 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert summary["coordinate_placement_validation"]["maximum_absolute_component_residual_mm"] <= 1.0e-6
     assert summary["dose_semantics"]["absolute_calibration_approved"] is True
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
+
+
+def test_run_rebinds_verified_prepared_evidence_after_workspace_relocation(
+    tmp_path,
+):
+    original_parent = tmp_path / "original"
+    original_parent.mkdir()
+    workspace, files = write_workspace(original_parent)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    relocated_parent = tmp_path / "relocated"
+    relocated_parent.mkdir()
+    relocated = relocated_parent / workspace.name
+    workspace.rename(relocated)
+    calls = {}
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            calls["input"] = input
+            staged_dose = Path(input.splitlines()[3])
+            write_coordinate_rtdose(staged_dose.with_suffix(".dcm"))
+            return "ok", None
+
+    summary = run_rtdose(
+        workspace_root=relocated,
+        paths=paths(phits2dicom=str(exe)),
+        command_argv=["run"],
+        runner=lambda cmd, **kwargs: FakeProc(),
+    )
+
+    referenced_paths = [
+        Path(value.rstrip("/")) for value in calls["input"].splitlines()[1:6]
+    ]
+    for path in referenced_paths:
+        path.resolve().relative_to(relocated.resolve())
+    assert summary["stage_status"] == "success"
+    assert Path(summary["coordinate_corrected_rtdose_output"]).is_file()
 
 
 def test_run_preserves_converter_emitted_course_scaled_physical_dose(tmp_path):

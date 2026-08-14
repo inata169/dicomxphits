@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -291,13 +292,14 @@ def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
     if not _succeeded(generation) or not _succeeded(execution):
         return None
     assert generation is not None and execution is not None
-    if generation.get("workspace_root") not in {None, str(workspace_root.resolve())}:
-        return None
-    if execution.get("workspace_root") not in {None, str(workspace_root.resolve())}:
-        return None
     try:
         from dicomxphits.prepare_rtdose import validate_sumtally_manifest_binding
 
+        generation, execution = normalize_relocated_sumtally_summaries(
+            workspace_root,
+            generation=generation,
+            execution=execution,
+        )
         return validate_sumtally_manifest_binding(
             workspace_root=workspace_root,
             generation=generation,
@@ -305,6 +307,157 @@ def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
         )
     except Exception:
         return None
+
+
+def _rebind_present_path(
+    record: dict[str, Any],
+    key: str,
+    *,
+    recorded_workspace_root: str | Path | None,
+    current_workspace_root: Path,
+) -> None:
+    value = record.get(key)
+    if value is None or not str(value).strip():
+        return
+    record[key] = str(
+        rebind_workspace_path(
+            str(value),
+            recorded_workspace_root=recorded_workspace_root,
+            current_workspace_root=current_workspace_root,
+        )
+    )
+
+
+def _normalize_path_evidence(
+    value: Any,
+    *,
+    recorded_workspace_root: str | Path | None,
+    current_workspace_root: Path,
+) -> Any:
+    if not isinstance(value, list):
+        return value
+    normalized = deepcopy(value)
+    for item in normalized:
+        if isinstance(item, dict):
+            _rebind_present_path(
+                item,
+                "path",
+                recorded_workspace_root=recorded_workspace_root,
+                current_workspace_root=current_workspace_root,
+            )
+    return normalized
+
+
+def _normalize_tally_geometry_binding(
+    value: Any,
+    *,
+    recorded_workspace_root: str | Path | None,
+    current_workspace_root: Path,
+) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = deepcopy(value)
+    normalized["segment_tallies"] = _normalize_path_evidence(
+        normalized.get("segment_tallies"),
+        recorded_workspace_root=recorded_workspace_root,
+        current_workspace_root=current_workspace_root,
+    )
+    return normalized
+
+
+def _normalize_sumtally_binding(
+    value: Any,
+    *,
+    recorded_workspace_root: str | Path | None,
+    current_workspace_root: Path,
+) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = deepcopy(value)
+    for key in ("manifest_path", "sumtally_input_path", "sumtally_output_path"):
+        _rebind_present_path(
+            normalized,
+            key,
+            recorded_workspace_root=recorded_workspace_root,
+            current_workspace_root=current_workspace_root,
+        )
+    for key in ("segment_output_evidence", "wrapper_include_evidence"):
+        if key in normalized:
+            normalized[key] = _normalize_path_evidence(
+                normalized[key],
+                recorded_workspace_root=recorded_workspace_root,
+                current_workspace_root=current_workspace_root,
+            )
+    if "tally_geometry_binding" in normalized:
+        normalized["tally_geometry_binding"] = _normalize_tally_geometry_binding(
+            normalized["tally_geometry_binding"],
+            recorded_workspace_root=recorded_workspace_root,
+            current_workspace_root=current_workspace_root,
+        )
+    output_geometry = normalized.get("sumtally_output_geometry")
+    if isinstance(output_geometry, dict):
+        _rebind_present_path(
+            output_geometry,
+            "path",
+            recorded_workspace_root=recorded_workspace_root,
+            current_workspace_root=current_workspace_root,
+        )
+    return normalized
+
+
+def normalize_relocated_sumtally_summaries(
+    workspace_root: Path,
+    *,
+    generation: Mapping[str, Any],
+    execution: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Rebind hash-bound Sumtally paths after an explicitly selected relocation."""
+
+    current_root = workspace_root.resolve()
+    normalized_summaries: list[dict[str, Any]] = []
+    for source in (generation, execution):
+        normalized = deepcopy(dict(source))
+        recorded_root = source.get("workspace_root")
+        for key in ("manifest_path", "expected_sumtally_output"):
+            _rebind_present_path(
+                normalized,
+                key,
+                recorded_workspace_root=recorded_root,
+                current_workspace_root=current_root,
+            )
+        outputs = normalized.get("outputs")
+        if isinstance(outputs, dict):
+            for key in tuple(outputs):
+                _rebind_present_path(
+                    outputs,
+                    key,
+                    recorded_workspace_root=recorded_root,
+                    current_workspace_root=current_root,
+                )
+        for key in ("segment_output_evidence", "wrapper_include_evidence"):
+            if key in normalized:
+                normalized[key] = _normalize_path_evidence(
+                    normalized[key],
+                    recorded_workspace_root=recorded_root,
+                    current_workspace_root=current_root,
+                )
+        if "tally_geometry_binding" in normalized:
+            normalized["tally_geometry_binding"] = _normalize_tally_geometry_binding(
+                normalized["tally_geometry_binding"],
+                recorded_workspace_root=recorded_root,
+                current_workspace_root=current_root,
+            )
+        output_geometry = normalized.get("sumtally_output_geometry_evidence")
+        if isinstance(output_geometry, dict):
+            _rebind_present_path(
+                output_geometry,
+                "path",
+                recorded_workspace_root=recorded_root,
+                current_workspace_root=current_root,
+            )
+        normalized["workspace_root"] = str(current_root)
+        normalized_summaries.append(normalized)
+    return normalized_summaries[0], normalized_summaries[1]
 
 
 def _normalize_relocated_plan_evidence(
@@ -345,11 +498,74 @@ def _normalize_relocated_plan_evidence(
     return normalized
 
 
+def normalize_relocated_rtdose_prepare_summary(
+    workspace_root: Path,
+    preparation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return validated-input evidence with workspace-local paths rebound in memory."""
+
+    current_root = workspace_root.resolve()
+    recorded_root = preparation.get("workspace_root")
+    normalized = deepcopy(dict(preparation))
+    for key in (
+        "template_dicom_workspace_copy_path",
+        "ct_reference_workspace_copy_path",
+        "phits_dose",
+        "phits_out",
+        "phits_dose_source_path",
+        "phits_out_source_path",
+        "dat_dir",
+        "phits2dicom_input_path",
+    ):
+        _rebind_present_path(
+            normalized,
+            key,
+            recorded_workspace_root=recorded_root,
+            current_workspace_root=current_root,
+        )
+    for evidence_key in (
+        "phits2dicom_referenced_input_evidence",
+        "upstream_source_evidence",
+    ):
+        evidence = normalized.get(evidence_key)
+        if isinstance(evidence, dict):
+            for record in evidence.values():
+                if isinstance(record, dict):
+                    _rebind_present_path(
+                        record,
+                        "path",
+                        recorded_workspace_root=recorded_root,
+                        current_workspace_root=current_root,
+                    )
+    normalized["sumtally_manifest_binding"] = _normalize_sumtally_binding(
+        normalized.get("sumtally_manifest_binding"),
+        recorded_workspace_root=recorded_root,
+        current_workspace_root=current_root,
+    )
+    plan_evidence = normalized.get("full_plan_evidence")
+    if isinstance(plan_evidence, dict):
+        normalized["full_plan_evidence"] = _normalize_relocated_plan_evidence(
+            plan_evidence,
+            recorded_workspace_root=recorded_root,
+            current_workspace_root=current_root,
+        )
+    normalized["workspace_root"] = str(current_root)
+    return normalized
+
+
 def _validated_prepared_plan_evidence(
     workspace_root: Path,
     current_binding: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     preparation = _load_object(workspace_root / SUMMARY_PATHS["rtdose_prepare"])
+    if isinstance(preparation, dict):
+        try:
+            preparation = normalize_relocated_rtdose_prepare_summary(
+                workspace_root,
+                preparation,
+            )
+        except WorkspaceRecoveryError:
+            return None
     if (
         not _succeeded(preparation)
         or not isinstance(preparation, dict)

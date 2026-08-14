@@ -11,6 +11,7 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 import dicomxphits.gui as gui_module
+import dicomxphits.prepare_rtdose as prepare_rtdose_module
 import dicomxphits.workspace_recovery as recovery_module
 from dicomxphits.fix_coordinates import AXIS_MAPPING, SCHEMA_VERSION
 from dicomxphits.gantry_geometry import (
@@ -206,6 +207,71 @@ def test_relocated_windows_evidence_rebinds_only_below_old_workspace(
             recorded_workspace_root=r"D:\old-machine\case-3dcrt",
             current_workspace_root=workspace,
         )
+
+
+def test_relocated_sumtally_summaries_remain_verified_without_rerun(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_root = r"D:\old-machine\case-3dcrt"
+    workspace = write_recoverable_workspace(tmp_path, old_root=old_root)
+    manifest = json.loads(
+        (workspace / "segments" / "segment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    segment = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
+    sumtally_input = write_file(workspace / "sumtally" / "sumtally.inp")
+    sumtally_output = write_file(workspace / "sumtally" / "dose.out")
+    recorded_segment = old_root + r"\segments\seg_001\deposit-target-3D.out"
+    generation = {
+        "stage_status": "success",
+        "workspace_root": old_root,
+        "manifest_sha256": manifest_sha256(manifest),
+        "segment_output_evidence": [
+            {"path": recorded_segment, "sha256": file_sha256(segment)}
+        ],
+        "outputs": {
+            "sumtally_input": old_root + r"\sumtally\sumtally.inp",
+            "sumtally_output": old_root + r"\sumtally\dose.out",
+        },
+    }
+    execution = {
+        **generation,
+        "expected_sumtally_output": old_root + r"\sumtally\dose.out",
+    }
+    write_file(
+        workspace / "analysis" / "sumtally_generation_summary.json",
+        json.dumps(generation),
+    )
+    write_file(
+        workspace / "analysis" / "sumtally_execution_summary.json",
+        json.dumps(execution),
+    )
+    binding = {"synthetic": "current"}
+
+    def validate_relocated_summaries(*, workspace_root, generation, execution):
+        assert generation["workspace_root"] == str(workspace.resolve())
+        assert execution["workspace_root"] == str(workspace.resolve())
+        assert Path(generation["outputs"]["sumtally_input"]) == sumtally_input.resolve()
+        assert Path(generation["outputs"]["sumtally_output"]) == sumtally_output.resolve()
+        assert Path(execution["expected_sumtally_output"]) == sumtally_output.resolve()
+        assert Path(generation["segment_output_evidence"][0]["path"]) == (
+            segment.resolve()
+        )
+        return binding
+
+    monkeypatch.setattr(
+        prepare_rtdose_module,
+        "validate_sumtally_manifest_binding",
+        validate_relocated_summaries,
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_READY
+    assert inspection.highest_verified_stage == "Sumtally completed"
+    assert inspection.stage_sequence == ("prepare_rtdose", "run_rtdose")
 
 
 def test_changed_segment_output_blocks_phits_reuse(tmp_path: Path) -> None:

@@ -1497,9 +1497,24 @@ def run_rtdose(
         prepare_summary = load_json_object(recorded_prepare_summary_path)
         if prepare_summary.get("stage_status") != "success":
             raise ValueError("RTDOSE prepare summary is not successful")
+        recorded_workspace_root = str(prepare_summary.get("workspace_root") or "")
+        from dicomxphits.workspace_recovery import (
+            normalize_relocated_rtdose_prepare_summary,
+            normalize_relocated_sumtally_summaries,
+        )
+
+        prepare_summary = normalize_relocated_rtdose_prepare_summary(
+            workspace_root,
+            prepare_summary,
+        )
         validate_phits2dicom_referenced_input_evidence(prepare_summary)
         validate_upstream_source_evidence(prepare_summary)
         generation, execution = load_sumtally_summaries(workspace_root)
+        generation, execution = normalize_relocated_sumtally_summaries(
+            workspace_root,
+            generation=generation,
+            execution=execution,
+        )
         current_sumtally_binding = validate_sumtally_manifest_binding(
             workspace_root=workspace_root,
             generation=generation,
@@ -1627,6 +1642,28 @@ def run_rtdose(
             dat_dir, phits_dose.parent, coordinate_corrected_output.parent
         )
         stdin_content = phits2dicom_inp.read_text(encoding="utf-8")
+        normalized_recorded_root = recorded_workspace_root.replace("\\", "/").rstrip(
+            "/"
+        ).casefold()
+        normalized_current_root = str(workspace_root.resolve()).replace(
+            "\\", "/"
+        ).rstrip("/").casefold()
+        if (
+            normalized_recorded_root
+            and normalized_recorded_root != normalized_current_root
+        ):
+            stdin_content = phits2dicom_input_content(
+                template_dicom=Path(
+                    str(prepare_summary["template_dicom_workspace_copy_path"])
+                ),
+                ct_reference=Path(
+                    str(prepare_summary["ct_reference_workspace_copy_path"])
+                ),
+                phits_dose=phits_dose,
+                phits_out=Path(str(prepare_summary["phits_out"])),
+                dat_dir=dat_dir,
+                factor=float(prepare_summary["factor"]),
+            )
         before = dicom_snapshot(output_dirs)
         stdout_path = workspace_root / "rtdose" / "phits2dicom_stdout.txt"
         stderr_path = workspace_root / "rtdose" / "phits2dicom_stderr.txt"
