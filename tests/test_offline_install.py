@@ -629,6 +629,9 @@ def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     assert "$DirectoryPath,\n        0x10080," in lock_helper
     assert "if ($ErrorCode -eq 5)" not in lock_helper
     assert "if ($null -eq $Handle) { continue }" not in lock_helper
+    assert text.count(
+        "[IO.FileShare]::Read -bor [IO.FileShare]::Delete"
+    ) == 2
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")
@@ -692,6 +695,88 @@ def test_bundle_directory_locks_block_rename(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "DIRECTORY_RENAME_DENIED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")
+def test_bundle_directory_lock_follows_shared_delete_verification(tmp_path):
+    root = tmp_path / "bundle"
+    tools = root / "tools"
+    tools.mkdir(parents=True)
+    payload = tools / "payload.txt"
+    payload.write_text("payload\n", encoding="utf-8")
+    harness = tmp_path / "bundle-directory-bootstrap-order-harness.ps1"
+    harness.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        + ". "
+        + repr(str(ROOT / "tools" / "lock_bundle_directories.ps1"))
+        + "\n$Root = [IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_BUNDLE_ROOT)\n"
+        "$Tools = [IO.Path]::Combine($Root, 'tools')\n"
+        "$Moved = [IO.Path]::Combine($Root, 'tools-moved')\n"
+        "$Payload = [IO.Path]::Combine($Tools, 'payload.txt')\n"
+        "$Initial = [IO.File]::Open(\n"
+        "  $Payload,\n"
+        "  [IO.FileMode]::Open,\n"
+        "  [IO.FileAccess]::Read,\n"
+        "  [IO.FileShare]::Read -bor [IO.FileShare]::Delete\n"
+        ")\n"
+        "$Handles = @()\n"
+        "$Strict = $null\n"
+        "try {\n"
+        "  $Handles = @(Lock-BundleDirectoryPaths $Root @($Payload))\n"
+        "  if ($Handles.Count -ne 2) { exit 11 }\n"
+        "  $Strict = [IO.File]::Open(\n"
+        "    $Payload,\n"
+        "    [IO.FileMode]::Open,\n"
+        "    [IO.FileAccess]::Read,\n"
+        "    [IO.FileShare]::Read\n"
+        "  )\n"
+        "  $Blocked = $false\n"
+        "  try { [IO.Directory]::Move($Tools, $Moved) } catch { $Blocked = $true }\n"
+        "  if (-not $Blocked -or -not [IO.Directory]::Exists($Tools)) { exit 12 }\n"
+        "  Write-Output 'SHARED_DELETE_VERIFY_THEN_STRICT_LOCK_SUCCEEDED'\n"
+        "}\n"
+        "finally {\n"
+        "  if ($null -ne $Strict) { $Strict.Dispose() }\n"
+        "  foreach ($Handle in $Handles) { $Handle.Dispose() }\n"
+        "  $Initial.Dispose()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_TEST_BUNDLE_ROOT": str(root),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "SHARED_DELETE_VERIFY_THEN_STRICT_LOCK_SUCCEEDED"
+        in result.stdout.splitlines()
+    )
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows reparse handles")
