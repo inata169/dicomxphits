@@ -63,6 +63,14 @@ from dicomxphits.gui_tool_profile import (
     validate_custom_tool_profile,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
+from dicomxphits.project_identity import (
+    PROJECT_AUTHOR_DISPLAY,
+    PROJECT_REPOSITORY_URL,
+)
+from dicomxphits.public_spectrum import (
+    PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE,
+    PUBLIC_BEAM_MODEL_GUI_LINE,
+)
 
 
 def write_file(path: Path, text: str = "x") -> Path:
@@ -200,6 +208,96 @@ def test_gui_config_defaults_to_rectangular_public_model(tmp_path: Path) -> None
     config = base_config(tmp_path)
 
     assert config.geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT
+
+
+def test_gui_source_uses_shared_fixed_6mv_identity_without_energy_selector() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+
+    assert PUBLIC_BEAM_MODEL_GUI_LINE == (
+        "Beam model: Elekta Precise 6 MV public research model"
+    )
+    assert PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE == "Nominal energy: 6 MV (fixed)"
+    assert "text=PUBLIC_BEAM_MODEL_GUI_LINE" in source
+    assert "text=PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE" in source
+    assert "nominal_energy_selector" not in source
+    assert "energy_selector" not in source
+
+
+def test_help_menu_exposes_website_author_and_current_version() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+    about = gui_module.project_about_text()
+    opened: list[str] = []
+
+    gui_module.request_project_website(
+        opener=lambda url: opened.append(url) or True,
+    )
+
+    assert PROJECT_REPOSITORY_URL == "https://github.com/inata169/dicomxphits"
+    assert PROJECT_AUTHOR_DISPLAY == "Hiroki Inata (inata169)"
+    assert f"dicomxphits {gui_module.__version__}" in about
+    assert f"Author: {PROJECT_AUTHOR_DISPLAY}" in about
+    assert f"Web site: {PROJECT_REPOSITORY_URL}" in about
+    assert opened == [PROJECT_REPOSITORY_URL]
+    assert 'label="Help"' in source
+    assert 'label="Web site"' in source
+    assert 'label="About"' in source
+    assert source.count("request_project_website()") == 1
+
+
+def test_website_request_reports_rejected_browser_request() -> None:
+    with pytest.raises(RuntimeError, match="did not accept"):
+        gui_module.request_project_website(opener=lambda _url: False)
+
+
+def test_common_activity_log_keeps_three_rows_scroll_and_latest_entry() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+    activity_source = source.split(
+        "output = scrolledtext.ScrolledText(", 1
+    )[1].split("def save_local_settings", 1)[0]
+
+    assert "height=3" in activity_source
+    assert "output.see(tk.END)" in activity_source
+    assert "output.grid(" in activity_source
+    assert source.count("scrolledtext.ScrolledText(") == 1
+
+
+def test_minimum_window_page_viewport_reaches_all_five_primary_actions() -> None:
+    source = (PUBLIC_SRC / "dicomxphits" / "gui.py").read_text(encoding="utf-8")
+    viewport_source = source.split(
+        'page_viewport = ttk.Frame(content, style="Content.TFrame")', 1
+    )[1].split(
+        'activity_frame = ttk.Frame(content, style="Surface.TFrame"', 1
+    )[0]
+    show_page_source = source.split(
+        "def show_page(page_key: str) -> None:", 1
+    )[1].split("for index, (key, label)", 1)[0]
+
+    assert 'root.minsize(1120, 720)' in source
+    assert "page_canvas = tk.Canvas(" in viewport_source
+    assert 'orient="vertical"' in viewport_source
+    assert "command=page_canvas.yview" in viewport_source
+    assert "yscrollcommand=page_scrollbar.set" in viewport_source
+    assert 'scrollregion=page_canvas.bbox("all")' in viewport_source
+    assert "page_container = ttk.Frame(page_canvas" in viewport_source
+    assert "page_canvas.yview_moveto(0.0)" in show_page_source
+    assert source.index("page_viewport =") < source.index("activity_frame =")
+
+    for variable_name, page_key in (
+        ("ct2_page", "ct2phits"),
+        ("workspace_page", "workspace"),
+        ("phits_page", "phits"),
+        ("sumtally_page", "sumtally"),
+        ("rtdose_page", "rtdose"),
+    ):
+        assert f'{variable_name} = new_page("{page_key}")' in source
+    for action_key in (
+        "run_ct2phits",
+        "prepare_workspace",
+        "run_segments",
+        "run_sumtally",
+        "recover_rtdose",
+    ):
+        assert f'action_buttons["{action_key}"]' in source
 
 
 def test_missing_sumtally_summary_has_existing_case_recovery_guidance() -> None:

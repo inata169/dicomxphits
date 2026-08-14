@@ -37,6 +37,10 @@ from dicomxphits.public_aperture_guard import (
     PUBLIC_APERTURE_DECISION_FIELD,
     require_v1_effective_apertures,
 )
+from dicomxphits.public_beam_model import (
+    PUBLIC_BEAM_MODEL_EVIDENCE_FIELD,
+    validate_public_beam_model,
+)
 from dicomxphits.rectangular_geometry import build_intermediate_geometry
 from dicomxphits.public_spectrum import PUBLIC_SPECTRUM_NAME, PUBLIC_SPECTRUM_TEXT
 from dicomxphits.rtplan_state import beam_number, carried_control_point_states
@@ -294,6 +298,16 @@ def export_segment_manifest(
         sampling_config_path=sampling_config_path,
     )
     validate_public_strict_3dcrt_gate(manifest)
+    included_beam_numbers = tuple(
+        dict.fromkeys(
+            int(segment["beam_number"])
+            for segment in active_segments(manifest)
+        )
+    )
+    manifest[PUBLIC_BEAM_MODEL_EVIDENCE_FIELD] = validate_public_beam_model(
+        ds,
+        included_beam_numbers=included_beam_numbers,
+    )
     manifest[PUBLIC_APERTURE_DECISION_FIELD] = require_v1_effective_apertures(
         [
             (beam_number(beam), carried_control_point_states(beam))
@@ -745,6 +759,9 @@ def prepare_public_3dcrt_workspace(
             "phits2dicom_executable_path": paths.phits2dicom_executable_path,
         },
         "strict_gate": gate_summary,
+        PUBLIC_BEAM_MODEL_EVIDENCE_FIELD: manifest[
+            PUBLIC_BEAM_MODEL_EVIDENCE_FIELD
+        ],
         "segment_runtime": {
             "maxcas": maxcas,
             "maxbch": maxbch,
