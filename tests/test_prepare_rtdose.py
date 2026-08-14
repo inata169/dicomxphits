@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pydicom
@@ -18,6 +19,7 @@ if str(PUBLIC_SRC) not in sys.path:
 PUBLIC_ROOT = Path(__file__).resolve().parents[1]
 
 import dicomxphits.prepare_rtdose as prepare_rtdose_module
+import dicomxphits.rtdose_plan_references as rtdose_plan_references_module
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.dose_semantics import require_relative_rtdose
 from dicomxphits.prepare_rtdose import (
@@ -99,6 +101,7 @@ def write_rtplan(
     frame_uid: str = "1.2.3",
     beam_metersets: dict[int, float] | None = None,
     treatment_delivery_type: str | None = "TREATMENT",
+    number_of_fractions: int = 1,
 ) -> Path:
     metersets = beam_metersets or {1: 100.0}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,6 +131,7 @@ def write_rtplan(
         referenced_beams.append(reference)
     fraction_group = Dataset()
     fraction_group.FractionGroupNumber = 1
+    fraction_group.NumberOfFractionsPlanned = number_of_fractions
     fraction_group.ReferencedBeamSequence = referenced_beams
     ds.FractionGroupSequence = [fraction_group]
     ds.save_as(str(path))
@@ -162,7 +166,11 @@ def tally_output_text(body: str = "") -> str:
     )
 
 
-def write_coordinate_rtdose(path: Path) -> None:
+def write_coordinate_rtdose(
+    path: Path,
+    *,
+    stored_value_multiplier: int = 1,
+) -> None:
     write_dicom(path, modality="RTDOSE")
     ds = pydicom.dcmread(str(path))
     ds.NumberOfFrames = 3
@@ -179,7 +187,10 @@ def write_coordinate_rtdose(path: Path) -> None:
     ds.HighBit = 15
     ds.PixelRepresentation = 0
     ds.DoseGridScaling = 0.125
-    ds.PixelData = np.arange(24, dtype=np.uint16).reshape(3, 2, 4).tobytes()
+    ds.PixelData = (
+        np.arange(24, dtype=np.uint16).reshape(3, 2, 4)
+        * stored_value_multiplier
+    ).astype(np.uint16).tobytes()
     ds.DoseSummationType = "BEAM"
     stale_plan = Dataset()
     stale_plan.ReferencedSOPClassUID = pydicom.uid.RTPlanStorage
@@ -202,12 +213,22 @@ def paths(phits2dicom: str | None = None) -> ExternalToolPaths:
     )
 
 
-def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "GY") -> tuple[Path, dict]:
+def write_workspace(
+    tmp_path: Path,
+    *,
+    beam_mu: bool = False,
+    units: str = "GY",
+    number_of_fractions: int = 1,
+) -> tuple[Path, dict]:
     workspace = tmp_path / "workspace"
     analysis = workspace / "analysis"
     analysis.mkdir(parents=True)
     plan_uid = "1.2.826.0.1.3680043.10.54321.9001"
-    rtplan = write_rtplan(workspace / "RTPLAN.dcm", sop_instance_uid=plan_uid)
+    rtplan = write_rtplan(
+        workspace / "RTPLAN.dcm",
+        sop_instance_uid=plan_uid,
+        number_of_fractions=number_of_fractions,
+    )
     write_rtplan_snapshot_evidence(rtplan)
     manifest = {
         "schema_version": "segment_manifest_v2",
@@ -274,6 +295,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "GY")
     phits_out.write_text("phits companion", encoding="utf-8")
     generation = {
         "stage_status": "success",
+        "workspace_root": str(workspace.resolve()),
         "manifest_sha256": bound_manifest_sha256,
         "sum_input_sha256": sum_input_sha256,
         "sumtally_input_sha256": sumtally_input_sha256,
@@ -306,6 +328,7 @@ def write_workspace(tmp_path: Path, *, beam_mu: bool = False, units: str = "GY")
     }
     execution = {
         "stage_status": "success",
+        "workspace_root": str(workspace.resolve()),
         "manifest_sha256": bound_manifest_sha256,
         "sum_input_sha256": sum_input_sha256,
         "sumtally_input_sha256": sumtally_input_sha256,
@@ -397,7 +420,7 @@ def add_non_treatment_setup_beam(
     rtplan_path: Path,
     *,
     active: bool = False,
-    setup_mu: float = 10.0,
+    setup_mu: float | str | None = 10.0,
 ) -> None:
     plan = pydicom.dcmread(str(rtplan_path))
     setup_beam = Dataset()
@@ -406,14 +429,16 @@ def add_non_treatment_setup_beam(
     plan.BeamSequence.append(setup_beam)
     setup_reference = Dataset()
     setup_reference.ReferencedBeamNumber = 2
-    setup_reference.BeamMeterset = setup_mu
+    if setup_mu is not None:
+        setup_reference.BeamMeterset = setup_mu
     plan.FractionGroupSequence[0].ReferencedBeamSequence.append(setup_reference)
     plan.save_as(str(rtplan_path))
     write_rtplan_snapshot_evidence(rtplan_path)
 
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    referenced_total_mu = 100.0 + setup_mu
+    effective_setup_mu = 0.0 if setup_mu in {None, ""} else float(setup_mu)
+    referenced_total_mu = 100.0 + effective_setup_mu
     manifest["plan_total_mu"] = referenced_total_mu
     manifest["included_total_mu"] = referenced_total_mu
     manifest["dose_normalization_mu"] = referenced_total_mu
@@ -421,9 +446,9 @@ def add_non_treatment_setup_beam(
         {
             "segment_id": "seg_b0002_s0000",
             "beam_number": 2,
-            "beam_meterset_mu": setup_mu,
-            "segment_mu": setup_mu if active else 0.0,
-            "mu_weight": setup_mu if active else 0.0,
+            "beam_meterset_mu": effective_setup_mu,
+            "segment_mu": effective_setup_mu if active else 0.0,
+            "mu_weight": effective_setup_mu if active else 0.0,
             "mu_weight_unit": "MU",
             "delivery_type": "unsupported",
             "skip_reason": (
@@ -435,7 +460,7 @@ def add_non_treatment_setup_beam(
     )
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     rewrite_sumtally_manifest_digests(workspace, manifest)
-    if not active and setup_mu >= 0.0:
+    if not active and effective_setup_mu >= 0.0:
         evidence = plan_mu_normalization_evidence(manifest)
         for name in (
             "sumtally_generation_summary.json",
@@ -473,12 +498,22 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert summary["input_dose_unit"] == "GY"
     assert summary["output_dicom_dose_unit"] == "GY"
     assert summary["factor"] == 1.0
+    assert summary["public_model_base_factor"] == 1.0
+    assert summary["planned_fraction_count"] == 1
+    assert summary["course_dose_contract_version"] == (
+        "dicomxphits_plan_course_dose_v1"
+    )
+    assert summary["course_dose_evidence"]["input_dose_state"] == (
+        "sumtally_one_fraction_delivery_dose"
+    )
+    assert summary["course_dose_evidence"]["effective_phits2dicom_factor"] == 1.0
     assert len(summary["phits_dose_sha256_after_prepare"]) == 64
     assert "Factor 1.0 selected" in summary["factor_selection_reason"]
     assert summary["dose_semantics"]["mode"] == "absolute_public_reference_model"
     assert summary["dose_semantics"]["dicom_dose_units"] == "GY"
     assert summary["dose_semantics"]["totfact_per_mu_applied"] is True
     assert summary["dose_semantics"]["totfact_per_mu"] == "8.7608E+11"
+    assert summary["dose_semantics"]["planned_fraction_count"] == 1
     assert summary["dose_semantics"]["normalization_rule"] == (
         "approved_public_model_totfact_per_mu_applied_in_phits"
     )
@@ -508,8 +543,86 @@ def test_prepare_rtdose_records_factor_one_contract_and_inputs(tmp_path):
     assert all(len(record["sha256"]) == 64 for record in referenced_inputs.values())
     assert summary["dat_dir"].endswith("DATfiles")
     assert summary["path_config"]["phits2dicom_executable_path"] is None
-    assert summary["image_position_patient_patch"]["image_position_patient"] == [1.0, 2.0, 3.0]
+    assert summary["image_position_patient_patch"]["image_position_patient"] == [
+        1.0,
+        2.0,
+        3.0,
+    ]
     assert summary["template_dicom_preflight"]["missing_tag_count"] == 0
+
+
+def test_prepare_applies_planned_fraction_count_once_as_converter_factor(tmp_path):
+    workspace, files = write_workspace(tmp_path, number_of_fractions=30)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    upstream_dose_before = file_sha256(files["sumtally_output"])
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=None),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    assert summary["public_model_base_factor"] == 1.0
+    assert summary["planned_fraction_count"] == 30
+    assert summary["factor"] == 30.0
+    assert summary["course_dose_evidence"]["equation"] == (
+        "course_dose = dose_per_fraction * NumberOfFractionsPlanned"
+    )
+    assert summary["dose_semantics"]["phits2dicom_factor"] == 30.0
+    assert summary["phits2dicom_stdin_content"].splitlines()[-1] == "30"
+    assert file_sha256(files["sumtally_output"]) == upstream_dose_before
+
+
+@pytest.mark.parametrize(
+    "invalid_count",
+    [None, "", 0, -1, 1.5, float("nan"), float("inf")],
+)
+def test_referenced_plan_beams_rejects_invalid_planned_fraction_count(
+    invalid_count,
+):
+    plan = SimpleNamespace(
+        BeamSequence=[
+            SimpleNamespace(BeamNumber=1, TreatmentDeliveryType="TREATMENT")
+        ],
+        FractionGroupSequence=[
+            SimpleNamespace(
+                FractionGroupNumber=1,
+                NumberOfFractionsPlanned=invalid_count,
+                ReferencedBeamSequence=[
+                    SimpleNamespace(ReferencedBeamNumber=1, BeamMeterset=100.0)
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="NumberOfFractionsPlanned.*positive integer"):
+        rtdose_plan_references_module._referenced_plan_beams(plan)
+
+
+def test_referenced_plan_beams_rejects_ambiguous_fraction_groups():
+    group = SimpleNamespace(
+        FractionGroupNumber=1,
+        NumberOfFractionsPlanned=1,
+        ReferencedBeamSequence=[
+            SimpleNamespace(ReferencedBeamNumber=1, BeamMeterset=100.0)
+        ],
+    )
+    plan = SimpleNamespace(
+        BeamSequence=[
+            SimpleNamespace(BeamNumber=1, TreatmentDeliveryType="TREATMENT")
+        ],
+        FractionGroupSequence=[group, group],
+    )
+
+    with pytest.raises(ValueError, match="exactly one FractionGroupSequence"):
+        rtdose_plan_references_module._referenced_plan_beams(plan)
 
 
 def test_prepare_rejects_legacy_sumtally_normalization_before_conversion(tmp_path):
@@ -1351,6 +1464,13 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert summary["expected_rtdose_output"].endswith("deposit-target-3D_sum_all_active_segments_totalfield.dcm")
     assert summary["expected_rtdose_output_exists"] is True
     assert summary["coordinate_corrected_rtdose_output_exists"] is True
+    corrected_path = Path(summary["coordinate_corrected_rtdose_output"])
+    assert summary["coordinate_corrected_rtdose_output_relative"] == (
+        corrected_path.resolve().relative_to(workspace.resolve()).as_posix()
+    )
+    assert summary["coordinate_corrected_rtdose_output_sha256"] == file_sha256(
+        corrected_path
+    )
     output = Path(summary["expected_rtdose_output"])
     ds = pydicom.dcmread(str(output), stop_before_pixels=True)
     assert ds.DoseUnits == "GY"
@@ -1395,6 +1515,177 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert summary["coordinate_placement_validation"]["maximum_absolute_component_residual_mm"] <= 1.0e-6
     assert summary["dose_semantics"]["absolute_calibration_approved"] is True
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
+
+
+def test_run_rebinds_verified_prepared_evidence_after_workspace_relocation(
+    tmp_path,
+):
+    original_parent = tmp_path / "original"
+    original_parent.mkdir()
+    workspace, files = write_workspace(original_parent)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    relocated_parent = tmp_path / "relocated"
+    relocated_parent.mkdir()
+    relocated = relocated_parent / workspace.name
+    workspace.rename(relocated)
+    calls = {}
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            calls["input"] = input
+            staged_dose = Path(input.splitlines()[3])
+            write_coordinate_rtdose(staged_dose.with_suffix(".dcm"))
+            return "ok", None
+
+    summary = run_rtdose(
+        workspace_root=relocated,
+        paths=paths(phits2dicom=str(exe)),
+        command_argv=["run"],
+        runner=lambda cmd, **kwargs: FakeProc(),
+    )
+
+    referenced_paths = [
+        Path(value.rstrip("/")) for value in calls["input"].splitlines()[1:6]
+    ]
+    for path in referenced_paths:
+        path.resolve().relative_to(relocated.resolve())
+    assert summary["stage_status"] == "success"
+    assert Path(summary["coordinate_corrected_rtdose_output"]).is_file()
+
+
+def test_workspace_root_relocation_comparison_preserves_posix_case() -> None:
+    assert prepare_rtdose_module.workspace_root_was_relocated(
+        "/data/Case",
+        "/data/case",
+    )
+    assert not prepare_rtdose_module.workspace_root_was_relocated(
+        r"D:\Cases\PHANTOM",
+        r"d:/cases/phantom",
+    )
+
+
+def test_run_preserves_converter_emitted_course_scaled_physical_dose(tmp_path):
+    workspace, files = write_workspace(tmp_path, number_of_fractions=3)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("synthetic fake executable", encoding="utf-8")
+    prepare = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            lines = input.splitlines()
+            factor = int(float(lines[7]))
+            staged_dose = Path(lines[3])
+            write_coordinate_rtdose(
+                staged_dose.with_suffix(".dcm"),
+                stored_value_multiplier=factor,
+            )
+            return "ok", None
+
+    summary = run_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        command_argv=["run"],
+        runner=lambda _cmd, **_kwargs: FakeProc(),
+    )
+
+    corrected = pydicom.dcmread(summary["coordinate_corrected_rtdose_output"])
+    assert prepare["factor"] == 3.0
+    assert summary["planned_fraction_count"] == 3
+    assert summary["course_dose_contract_version"] == (
+        "dicomxphits_plan_course_dose_v1"
+    )
+    assert sorted(corrected.pixel_array.ravel().tolist()) == [
+        value * 3 for value in range(24)
+    ]
+    assert float(corrected.DoseGridScaling) == 0.125
+    assert sorted(
+        (corrected.pixel_array.astype(float) * float(corrected.DoseGridScaling))
+        .ravel()
+        .tolist()
+    ) == [value * 3 * 0.125 for value in range(24)]
+    assert summary["coordinate_correction"]["invariants"][
+        "stored_value_multiset_preserved"
+    ] is True
+    assert summary["final_semantic_validation"]["planned_fraction_count"] == 3
+
+
+def test_run_rejects_changed_planned_fraction_count_before_converter(tmp_path):
+    workspace, files = write_workspace(tmp_path, number_of_fractions=3)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("synthetic fake executable", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    write_rtplan(
+        files["rtplan"],
+        sop_instance_uid="1.2.826.0.1.3680043.10.54321.9001",
+        number_of_fractions=4,
+    )
+    write_rtplan_snapshot_evidence(files["rtplan"])
+
+    called = False
+
+    def unexpected_runner(_cmd, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("fake converter must not be invoked")
+
+    with pytest.raises(ValueError, match="changed after RTDOSE Prepare"):
+        run_rtdose(
+            workspace_root=workspace,
+            paths=paths(phits2dicom=str(exe)),
+            command_argv=["run"],
+            runner=unexpected_runner,
+        )
+
+    assert called is False
+    failure = json.loads(
+        (workspace / "analysis" / "rtdose_conversion_execution_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["phits2dicom_execution_started"] is False
 
 
 def test_run_rejects_final_only_phits2dicom_output_and_contains_staging(tmp_path):
@@ -2008,6 +2299,135 @@ def test_prepare_accepts_zero_mu_skipped_non_treatment_setup_beam(tmp_path):
     assert evidence["skipped_non_treatment_beam_metersets"] == {"2": 0.0}
     assert evidence["treatment_total_mu"] == 100.0
     assert evidence["plan_total_mu"] == 100.0
+
+
+@pytest.mark.parametrize("setup_mu", [None, ""])
+def test_prepare_accepts_missing_mu_skipped_non_treatment_setup_beam(
+    tmp_path,
+    setup_mu,
+):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(
+        workspace,
+        files["rtplan"],
+        setup_mu=setup_mu,
+    )
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    summary = prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+
+    evidence = summary["full_plan_evidence"]
+    assert evidence["skipped_non_treatment_beam_metersets"] == {"2": 0.0}
+    assert evidence["missing_non_treatment_beam_meterset_numbers"] == [2]
+    assert evidence["treatment_total_mu"] == 100.0
+    assert evidence["plan_total_mu"] == 100.0
+    assert evidence["dose_normalization_mu"] == 100.0
+
+
+def test_prepare_rejects_missing_treatment_beam_meterset(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    plan = pydicom.dcmread(str(files["rtplan"]))
+    del plan.FractionGroupSequence[0].ReferencedBeamSequence[0].BeamMeterset
+    plan.save_as(str(files["rtplan"]))
+    write_rtplan_snapshot_evidence(files["rtplan"])
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(ValueError, match="finite positive number"):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
+
+
+@pytest.mark.parametrize("invalid_meterset", ["invalid", -1.0, float("nan"), float("inf")])
+def test_referenced_plan_beams_rejects_unsafe_non_treatment_meterset(
+    invalid_meterset,
+):
+    plan = SimpleNamespace(
+        BeamSequence=[
+            SimpleNamespace(BeamNumber=1, TreatmentDeliveryType="TREATMENT"),
+            SimpleNamespace(BeamNumber=2, TreatmentDeliveryType="SETUP"),
+        ],
+        FractionGroupSequence=[
+            SimpleNamespace(
+                FractionGroupNumber=1,
+                NumberOfFractionsPlanned=1,
+                ReferencedBeamSequence=[
+                    SimpleNamespace(ReferencedBeamNumber=1, BeamMeterset=100.0),
+                    SimpleNamespace(
+                        ReferencedBeamNumber=2,
+                        BeamMeterset=invalid_meterset,
+                    ),
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="finite nonnegative number"):
+        rtdose_plan_references_module._referenced_plan_beams(plan)
+
+
+def test_prepare_rejects_missing_non_treatment_meterset_manifest_mismatch(tmp_path):
+    workspace, files = write_workspace(tmp_path)
+    add_non_treatment_setup_beam(
+        workspace,
+        files["rtplan"],
+        setup_mu=None,
+    )
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["segments"][-1]["beam_meterset_mu"] = 1.0
+    manifest["plan_total_mu"] = 101.0
+    manifest["included_total_mu"] = 101.0
+    manifest["dose_normalization_mu"] = 101.0
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    rewrite_sumtally_manifest_digests(workspace, manifest)
+    normalization = plan_mu_normalization_evidence(manifest)
+    for name in (
+        "sumtally_generation_summary.json",
+        "sumtally_execution_summary.json",
+    ):
+        summary_path = workspace / "analysis" / name
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["sumtally_normalization_evidence"] = normalization
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+
+    with pytest.raises(
+        ValueError,
+        match="Skipped non-treatment BeamNumber 2 meterset does not match",
+    ):
+        prepare_rtdose(
+            workspace_root=workspace,
+            paths=paths(),
+            paths_config={},
+            template_dicom=template,
+            ct_reference_dicom=ct,
+            phits_out=files["phits_out"],
+            command_argv=["prepare"],
+        )
 
 
 def test_prepare_rejects_negative_mu_skipped_non_treatment_setup_beam(tmp_path):

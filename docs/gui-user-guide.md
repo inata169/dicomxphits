@@ -24,7 +24,10 @@ The final GUI output is normally:
   deposit-target-3D_sum_all_active_segments_totalfield.fixed.dcm
 ```
 
-Confirm the exact output path in `coordinate_corrected_rtdose_output` within `analysis/rtdose_conversion_execution_summary.json`.
+The RTDOSE page displays this exact final path as **Final DICOM
+patient-coordinate output**. The same path remains recorded in
+`coordinate_corrected_rtdose_output` within
+`analysis/rtdose_conversion_execution_summary.json` for audit.
 
 ## 2. Supported scope
 
@@ -136,6 +139,29 @@ This setup validation checks required paths only. It does not run PHITS or anoth
 
 Stable tool paths, runtime preferences, and the most recent Browse locations may be saved. The RT Plan, CT folder, case output, non-patient confirmation, and overwrite permission are never restored automatically.
 
+### Continue an existing calculation after restart
+
+Do not repeat Workspace Prepare or PHITS to reopen a calculated case.
+
+1. On the first page, select **Open existing case…**.
+2. Select the existing `*-3dcrt` workspace folder.
+3. The GUI verifies the manifest, PHITS execution evidence, every active PHITS
+   output, and its recorded SHA-256 without running an external tool.
+4. In the standard PHITS layout, the GUI also checks the one corresponding
+   `*-ct2phits` folder below the validated RT-PHITS `work` directory. If that
+   handoff cannot be verified automatically, select its case folder once with
+   **Select CT2PHITS workspace…**. Do not select the frozen plan, CT slice, and
+   DATfiles separately.
+5. Select **5 RTDOSE**, review the recovery explanation, then select
+   **Create DICOM RT Dose**.
+
+The GUI states which downstream stages are required. After confirmation, it
+preserves conflicting Sumtally and RTDOSE files under
+`<workspace>\recovery_history\`, then runs only the required suffix of
+Sumtally Generate, Sumtally Run, RTDOSE Prepare, and RTDOSE Run. Workspace
+Prepare and PHITS are disabled while the verified existing case is open. A
+failure stops the sequence at that stage; it does not rerun PHITS.
+
 ## 6. Standard GUI workflow
 
 ### Step 1: CT2PHITS
@@ -217,8 +243,8 @@ Select **4 Sumtally**.
 Generate creates the aggregation inputs; Run executes the aggregation with PHITS.
 The result is one MU-weighted `totalfield` covering all active treatment
 segments. SETUP beams contribute neither weight nor `sumfactor`. Treatment
-MU is applied once by Sumtally; the later phits2dicom conversion therefore uses
-factor `1.0`. The result is not a per-beam `beamMU` output.
+MU is applied once by Sumtally, producing one delivery of the selected Fraction
+Group. The result is not a per-beam `beamMU` output.
 
 ### Step 5: RTDOSE
 
@@ -237,6 +263,15 @@ Select **5 RTDOSE**.
 output. The GUI reports **Completed** only when the Prepare summary is bound to
 the current Sumtally evidence and the Run summary records the exact current
 Prepare-summary digest. Stale success summaries cannot enable **Run RTDOSE**.
+
+Prepare also requires one unambiguous Fraction Group and its positive integer
+`NumberOfFractionsPlanned`. The public-model base factor remains `1.0`; the
+effective phits2dicom factor is that base multiplied once by the planned
+fraction count, so the output represents
+`course dose = dose per fraction * NumberOfFractionsPlanned`. Missing, invalid,
+changed, or legacy fraction evidence returns the RTDOSE stage to regeneration
+instead of silently assuming one fraction. Fraction scaling is performed by
+the converter and is not applied later to final DICOM PixelData.
 
 The final RT Dose is written with `DoseUnits = GY` and `DoseSummationType = PLAN`; its Frozen RT Plan reference and coordinates are checked. It is still research absolute dose for the defined public model and does not demonstrate agreement with a clinical machine.
 
@@ -281,7 +316,18 @@ Choose a new output name that does not yet exist. Do not delete or overwrite an 
 
 ### `workspace root already contains files`
 
-Workspace Prepare normally requires a new or empty workspace. Use **Allow overwrite of downstream stage summaries** only when you understand which previous evidence must be replaced.
+Workspace Prepare is only for a new workspace. For a calculated workspace,
+return to the first page and use **Open existing case…**. The guided recovery
+action identifies and preserves only the conflicting downstream evidence; do
+not repeat Workspace Prepare.
+
+### A missing `sumtally_generation_summary.json` path is reported
+
+Use **Open existing case…** and select the existing 3D-CRT workspace. If the
+remaining Sumtally or RTDOSE evidence proves matching PHITS output SHA-256
+values, the GUI offers **Create DICOM RT Dose** and rebuilds Sumtally without
+PHITS transport. If those digests cannot be proved, the GUI stops rather than
+guessing that existing PHITS files are valid.
 
 ### An action button is disabled
 
@@ -293,7 +339,10 @@ Enter the intended `SeriesInstanceUID` under **Series UID (optional)**. The GUI 
 
 ### RTDOSE already shows `Prepared`
 
-Do not repeat Prepare. Select **Run RTDOSE**. If you reran Sumtally and invalidated the prepared evidence, select **Allow overwrite of downstream stage summaries**, then prepare again.
+For a new case that remains open in the same GUI process, do not repeat
+Prepare; select **Run RTDOSE**. After a restart, use **Open existing case…** and
+**Create DICOM RT Dose**. The GUI runs only RTDOSE Run when the current Prepare
+evidence still validates.
 
 ### A stage failed and the cause is unclear
 

@@ -235,6 +235,12 @@ public research model:
 - the reviewed rectangular MLC and Y-Diaphragm model, shielding material, and
   PHITS transport settings.
 
+For the supported HFS, couch-zero workflow, DICOM Gantry Angle `g` is rendered
+with PHITS beam direction `(sin(g), 0, cos(g))`. Together with the documented
+patient mapping `I + 10 * (-x, z, y)`, gantry 90 degrees places the source at
+DICOM `+X` and directs the beam toward `-X`; gantry 270 degrees is the opposite.
+The source position and accelerator `tr3` transform use this same central axis.
+
 These values were selected and tuned by the repository authors and
 collaborators after reviewing literature, manufacturer information, and model
 agreement. They are not represented as values copied wholly from one paper,
@@ -395,13 +401,23 @@ Use the [Windows GUI Quick Start](#windows-gui-quick-start) to create the
 Python 3.12 environment and launch the guided Tkinter interface. The details
 below describe the guided workflow after launch.
 
-The GUI presents CT2PHITS as the first stage, then keeps workspace preparation,
+For a new case, the GUI presents CT2PHITS as the first stage, then keeps workspace preparation,
 PHITS, Sumtally, and RTDOSE conversion as separate gated actions. After a
 successful CT2PHITS run, it automatically passes the frozen `RTPLAN.dcm`,
 `CT/CT000001.dcm`, and `DATfiles` paths to workspace preparation. An existing
 validated handoff can still be entered from the advanced workspace controls.
 
-RTDOSE remains a two-step action. After **Prepare RTDOSE** succeeds, the GUI
+After a restart, select **Open existing case…** and choose the existing 3D-CRT
+workspace. The GUI verifies the current IEC gantry-geometry contract and
+reusable PHITS output digests without external execution, restores one bounded
+standard CT2PHITS handoff when available, and
+shows the first safe downstream action. **Create DICOM RT Dose** preserves
+conflicting downstream material in workspace-local recovery history and runs
+only the required Sumtally/RTDOSE suffix. It disables Workspace Prepare and
+PHITS for that existing case and never treats an internal missing JSON path as
+an instruction to rerun the expensive transport.
+
+For a new case, RTDOSE remains a two-step action. After **Prepare RTDOSE** succeeds, the GUI
 shows **Prepared**, disables the prepare action, and makes **Run RTDOSE** the
 next available action. Only **Run RTDOSE** invokes phits2dicom and creates the
 raw and coordinate-corrected DICOM outputs. **Completed** requires a successful
@@ -621,12 +637,19 @@ without explicit mesh fields otherwise remains reusable when its segment
 outputs and accepted Sumtally output match their recorded SHA-256 values and
 contain one consistent mesh header. If reconstruction cannot be proven, rerun
 Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and Run.
-Existing segment PHITS outputs remain reusable without PHITS transport.
-For a workspace with stale or factor-one weighted-average evidence, select
-**Allow overwrite of downstream stage summaries**, then rerun **Sumtally
-Generate**, **Sumtally Run**, **Prepare RTDOSE**, and **Run RTDOSE**. Existing
-digest-bound segment PHITS outputs remain reusable; PHITS transport does not
-need to be rerun solely for this normalization correction. Old Sumtally or
+Existing segment PHITS outputs remain reusable without PHITS transport only
+when their manifest records the current IEC gantry-geometry contract, or when
+every active segment explicitly proves gantry zero, whose rendered geometry is
+unchanged. Old, missing, ambiguous, or nonzero-angle geometry provenance
+requires a newly prepared workspace and PHITS, Sumtally, and RTDOSE
+recalculation. Mirroring or relabeling only the final DICOM is not a repair for
+transport performed from the wrong patient side.
+For a workspace with stale or factor-one weighted-average evidence, reopen it
+with **Open existing case…** and select **Create DICOM RT Dose**. The contextual
+confirmation lists the downstream stages and preserves old Sumtally/RTDOSE
+files before replacement. Existing digest-bound segment PHITS outputs remain
+reusable when the gantry-geometry rule above also passes; PHITS transport does
+not need to be rerun solely for this normalization correction. Old Sumtally or
 DICOM outputs must not be repaired with an empirical scale factor.
 
 The adapter writes `phits2dicom.inp` as UTF-8 LF stdin content with
@@ -640,10 +663,16 @@ reference synchronization. For PHITS `isumtally = 2`, `X = F * sum((r_j / sum(r)
 workflow uses active treatment-segment MU as `r_j` and their sum as `F`, so the
 Sumtally result is `sum(active_segment_mu * segment_dose_per_mu)` in `GY`.
 The approved public-model `totfact_per_MU` is applied in each PHITS segment and
-the treatment MU is applied once by Sumtally. PHITS2DICOM therefore keeps
-Factor `1.0` and the generated RTDOSE is labeled DICOM `DoseUnits = GY`. Its
-summaries record
-`approved_public_model_totfact_per_mu_applied_in_phits` and the exact factor.
+the treatment MU is applied once by Sumtally. This Sumtally result is one
+delivery of the single accepted Fraction Group. RTDOSE Prepare requires its
+positive integer `NumberOfFractionsPlanned`, keeps the active-MU public-model
+base factor at `1.0`, and passes
+`1.0 * NumberOfFractionsPlanned` to PHITS2DICOM exactly once. The generated
+RTDOSE is therefore the PLAN course dose in `GY`. Its summaries record
+`approved_public_model_totfact_per_mu_applied_in_phits`, the base factor,
+fraction count, effective factor, equation, and frozen-plan binding. Missing,
+invalid, ambiguous, or changed fraction evidence fails before converter
+execution; the workflow does not multiply an already converted PixelData array.
 After conversion, `dicomxphits-run-rtdose` synchronizes the output to
 `DoseSummationType = PLAN` with exactly one reference to the validated frozen
 RT Plan, then creates the accepted `.fixed.dcm` output next to the Sumtally
@@ -701,6 +730,7 @@ RTDOSE Run stage performs its accepted correction handoff automatically.
 
 ## Related Documentation
 
+- [Development handoff — 2026-08-13](docs/development-handoff-2026-08-13.md)
 - [Public feasibility demonstration and research boundaries](docs/public-feasibility-demonstration.md)
 - [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)

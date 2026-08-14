@@ -5,7 +5,9 @@ import hashlib
 import io
 import json
 import math
+import ntpath
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -21,6 +23,8 @@ from dicomxphits.dose_semantics import (
     require_absolute_units,
 )
 from dicomxphits.fix_coordinates import (
+    AXIS_MAPPING as COORDINATE_CORRECTION_AXIS_MAPPING,
+    SCHEMA_VERSION as COORDINATE_CORRECTION_SCHEMA_VERSION,
     coordinate_summary_path,
     corrected_rtdose_path,
     fix_coordinates,
@@ -33,7 +37,10 @@ from dicomxphits.prepare_3dcrt_workspace import (
 )
 from dicomxphits.prepare_sumtally import load_json_object, resolve_workspace_path
 from dicomxphits.rtdose_plan_references import (
+    COURSE_DOSE_CONTRACT_VERSION,
+    build_course_dose_evidence,
     synchronize_plan_rtdose,
+    validate_course_dose_evidence,
     validate_full_plan_context,
     validate_plan_rtdose,
 )
@@ -71,6 +78,23 @@ PHITS2DICOM_REFERENCED_INPUT_FIELDS = {
     "phits_dose": "phits_dose",
     "phits_out": "phits_out",
 }
+
+
+def workspace_root_was_relocated(
+    recorded_workspace_root: str,
+    current_workspace_root: str | Path,
+) -> bool:
+    """Compare roots with case folding only for Windows path semantics."""
+
+    def portable_key(value: str | Path) -> tuple[str, str]:
+        text = str(value).strip()
+        if re.match(r"^[A-Za-z]:[\\/]", text) or "\\" in text:
+            return "windows", ntpath.normcase(ntpath.normpath(text))
+        return "posix", posixpath.normpath(text)
+
+    return bool(recorded_workspace_root.strip()) and portable_key(
+        recorded_workspace_root
+    ) != portable_key(current_workspace_root)
 IPP_PATTERN = re.compile(
     r"ImagePositionPatient\s+([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
     r"([-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?)\s+"
@@ -1176,7 +1200,7 @@ def prepare_rtdose(
             generation=generation,
             execution=execution,
         )
-        factor, factor_reason = validate_sumtally_contract(
+        base_factor, base_factor_reason = validate_sumtally_contract(
             generation,
             input_dose_unit=input_dose_unit,
             output_dicom_dose_unit=output_dicom_dose_unit,
@@ -1209,6 +1233,18 @@ def prepare_rtdose(
             rtplan_path=rtplan_path or (workspace_root / "RTPLAN.dcm"),
             workspace_root=workspace_root,
             ct_reference_path=ct_selection.workspace_path,
+        )
+        course_dose_evidence = build_course_dose_evidence(
+            plan_evidence=full_plan_evidence,
+            base_factor=base_factor,
+        )
+        factor = float(course_dose_evidence["effective_phits2dicom_factor"])
+        factor_reason = (
+            f"Effective Factor {factor:.12g} selected as public-model base "
+            f"Factor {base_factor:.12g} multiplied once by "
+            "NumberOfFractionsPlanned "
+            f"{course_dose_evidence['planned_fraction_count']}. "
+            + base_factor_reason
         )
         rtdose_placement = derive_rtdose_placement(
             sumtally_manifest_binding["tally_geometry_binding"]["mesh_geometry"],
@@ -1288,8 +1324,18 @@ def prepare_rtdose(
             ],
             "is_beam_mu_output": IS_BEAM_MU_OUTPUT,
             "factor": factor,
+            "public_model_base_factor": base_factor,
+            "planned_fraction_count": course_dose_evidence[
+                "planned_fraction_count"
+            ],
+            "course_dose_contract_version": COURSE_DOSE_CONTRACT_VERSION,
+            "course_dose_evidence": course_dose_evidence,
             "factor_selection_reason": factor_reason,
-            "dose_semantics": public_absolute_dose_semantics(),
+            "dose_semantics": public_absolute_dose_semantics(
+                planned_fraction_count=course_dose_evidence[
+                    "planned_fraction_count"
+                ]
+            ),
             "sumtally_manifest_binding": sumtally_manifest_binding,
             "full_plan_evidence": full_plan_evidence,
             "rtdose_placement": rtdose_placement,
@@ -1470,9 +1516,24 @@ def run_rtdose(
         prepare_summary = load_json_object(recorded_prepare_summary_path)
         if prepare_summary.get("stage_status") != "success":
             raise ValueError("RTDOSE prepare summary is not successful")
+        recorded_workspace_root = str(prepare_summary.get("workspace_root") or "")
+        from dicomxphits.workspace_recovery import (
+            normalize_relocated_rtdose_prepare_summary,
+            normalize_relocated_sumtally_summaries,
+        )
+
+        prepare_summary = normalize_relocated_rtdose_prepare_summary(
+            workspace_root,
+            prepare_summary,
+        )
         validate_phits2dicom_referenced_input_evidence(prepare_summary)
         validate_upstream_source_evidence(prepare_summary)
         generation, execution = load_sumtally_summaries(workspace_root)
+        generation, execution = normalize_relocated_sumtally_summaries(
+            workspace_root,
+            generation=generation,
+            execution=execution,
+        )
         current_sumtally_binding = validate_sumtally_manifest_binding(
             workspace_root=workspace_root,
             generation=generation,
@@ -1506,6 +1567,24 @@ def run_rtdose(
         if plan_evidence != recorded_plan_evidence:
             raise ValueError(
                 "Frozen RT Plan or full-plan workspace evidence changed after RTDOSE Prepare"
+            )
+        course_dose_evidence = validate_course_dose_evidence(
+            prepare_summary.get("course_dose_evidence"),
+            plan_evidence=plan_evidence,
+        )
+        if prepare_summary.get("course_dose_contract_version") != (
+            COURSE_DOSE_CONTRACT_VERSION
+        ):
+            raise ValueError(
+                "RTDOSE prepare summary has a stale course-dose contract; "
+                "rerun RTDOSE Prepare"
+            )
+        if prepare_summary.get("factor") != course_dose_evidence[
+            "effective_phits2dicom_factor"
+        ]:
+            raise ValueError(
+                "RTDOSE prepared factor does not match planned fraction evidence; "
+                "rerun RTDOSE Prepare"
             )
         current_rtdose_placement = derive_rtdose_placement(
             current_sumtally_binding["tally_geometry_binding"]["mesh_geometry"],
@@ -1582,6 +1661,22 @@ def run_rtdose(
             dat_dir, phits_dose.parent, coordinate_corrected_output.parent
         )
         stdin_content = phits2dicom_inp.read_text(encoding="utf-8")
+        if workspace_root_was_relocated(
+            recorded_workspace_root,
+            workspace_root.resolve(),
+        ):
+            stdin_content = phits2dicom_input_content(
+                template_dicom=Path(
+                    str(prepare_summary["template_dicom_workspace_copy_path"])
+                ),
+                ct_reference=Path(
+                    str(prepare_summary["ct_reference_workspace_copy_path"])
+                ),
+                phits_dose=phits_dose,
+                phits_out=Path(str(prepare_summary["phits_out"])),
+                dat_dir=dat_dir,
+                factor=float(prepare_summary["factor"]),
+            )
         before = dicom_snapshot(output_dirs)
         stdout_path = workspace_root / "rtdose" / "phits2dicom_stdout.txt"
         stderr_path = workspace_root / "rtdose" / "phits2dicom_stderr.txt"
@@ -1644,6 +1739,7 @@ def run_rtdose(
                     plan_reference_synchronization = synchronize_plan_rtdose(
                         expected_rtdose_output,
                         plan_evidence=plan_evidence,
+                        course_dose_evidence=course_dose_evidence,
                         guard=guard,
                     )
                     coordinate_correction = fix_coordinates(
@@ -1660,6 +1756,7 @@ def run_rtdose(
                     final_semantic_validation = validate_plan_rtdose(
                         coordinate_corrected_output,
                         plan_evidence=plan_evidence,
+                        course_dose_evidence=course_dose_evidence,
                     )
             except Exception as exc:
                 postprocessing_error = (
@@ -1677,6 +1774,18 @@ def run_rtdose(
             if coordinate_corrected_exists
             else None
         )
+        coordinate_corrected_sha256 = (
+            file_sha256(coordinate_corrected_output)
+            if coordinate_corrected_exists
+            else None
+        )
+        coordinate_corrected_relative = (
+            coordinate_corrected_output.resolve()
+            .relative_to(workspace_root.resolve())
+            .as_posix()
+            if coordinate_corrected_exists
+            else None
+        )
         stage_status = (
             "success"
             if returncode == 0
@@ -1691,9 +1800,19 @@ def run_rtdose(
             and bool(final_semantic_validation and final_semantic_validation["validated"])
             and bool(
                 coordinate_correction
-                and coordinate_correction["invariants"][
+                and coordinate_correction.get("schema_version")
+                == COORDINATE_CORRECTION_SCHEMA_VERSION
+                and coordinate_correction.get("axis_mapping")
+                == COORDINATE_CORRECTION_AXIS_MAPPING
+                and isinstance(coordinate_correction.get("invariants"), dict)
+                and coordinate_correction["invariants"].get(
                     "stored_value_multiset_preserved"
-                ]
+                )
+                is True
+                and coordinate_correction["invariants"].get(
+                    "iec_x_to_dicom_x_reversal_applied"
+                )
+                is True
             )
             else "failed"
         )
@@ -1729,8 +1848,10 @@ def run_rtdose(
             "expected_rtdose_output_after_conversion": expected_after_conversion,
             "expected_rtdose_output_after_run": expected_after,
             "coordinate_corrected_rtdose_output": str(coordinate_corrected_output),
+            "coordinate_corrected_rtdose_output_relative": coordinate_corrected_relative,
             "coordinate_corrected_rtdose_output_exists": coordinate_corrected_exists,
             "coordinate_corrected_rtdose_output_size": coordinate_corrected_size,
+            "coordinate_corrected_rtdose_output_sha256": coordinate_corrected_sha256,
             "coordinate_correction_summary_path": str(
                 coordinate_summary_path(coordinate_corrected_output)
             ),
@@ -1744,6 +1865,16 @@ def run_rtdose(
             ),
             "is_beam_mu_output": prepare_summary.get("is_beam_mu_output"),
             "factor": prepare_summary.get("factor"),
+            "public_model_base_factor": prepare_summary.get(
+                "public_model_base_factor"
+            ),
+            "planned_fraction_count": prepare_summary.get(
+                "planned_fraction_count"
+            ),
+            "course_dose_contract_version": prepare_summary.get(
+                "course_dose_contract_version"
+            ),
+            "course_dose_evidence": course_dose_evidence,
             "dose_semantics": prepare_summary.get("dose_semantics"),
             "absolute_dose_labeling": absolute_labeling,
             "plan_reference_synchronization": plan_reference_synchronization,

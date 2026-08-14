@@ -17,8 +17,11 @@ from dicomxphits.rtdose_geometry import validate_rtdose_placement
 from dicomxphits.sumtally_inputs import file_sha256
 
 
-SCHEMA_VERSION = "dicomxphits_public_rtdose_coordinate_correction_v1"
-AXIS_MAPPING = "phits2dicom_frames_rows_columns_to_dicom_rows_frames_columns_v1"
+SCHEMA_VERSION = "dicomxphits_public_rtdose_coordinate_correction_v2"
+AXIS_MAPPING = (
+    "phits2dicom_frames_rows_columns_to_"
+    "dicom_rows_frames_reversed_columns_v2"
+)
 EXPECTED_AXIAL_IOP = np.asarray([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
 GEOMETRY_TOLERANCE = 1.0e-6
 
@@ -207,7 +210,7 @@ def fix_coordinates(
         + row_direction * ((rows - 1) * source_row_spacing / 2.0)
         + normal_direction * ((source_offsets[0] + source_offsets[-1]) / 2.0)
     )
-    corrected = np.ascontiguousarray(source.transpose(1, 0, 2))
+    corrected = np.ascontiguousarray(source.transpose(1, 0, 2)[:, :, ::-1])
     corrected_frames, corrected_rows, corrected_columns = corrected.shape
     corrected_pixel_spacing = np.asarray(
         (source_frame_spacing, source_column_spacing),
@@ -334,6 +337,10 @@ def fix_coordinates(
         "invariants": {
             "stored_value_multiset_preserved": bool(
                 np.array_equal(np.sort(source, axis=None), np.sort(corrected, axis=None))
+            ),
+            "iec_x_to_dicom_x_reversal_applied": True,
+            "output_column_source_column_rule": (
+                "source_columns - 1 - output_column"
             ),
             "DoseGridScaling_preserved": True,
             "physical_dose_values_preserved": True,

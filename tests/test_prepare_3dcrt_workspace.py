@@ -14,6 +14,10 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 import dicomxphits.prepare_3dcrt_workspace as workspace_module
+from dicomxphits.gantry_geometry import (
+    CURRENT_GANTRY_GEOMETRY_CONTRACT,
+    GANTRY_GEOMETRY_CONTRACT_FIELD,
+)
 from dicomxphits.prepare_3dcrt_workspace import (
     ExternalToolPaths,
     build_parser,
@@ -563,7 +567,7 @@ def test_rectangular_3dcrt_applies_explicit_runtime_to_all_inputs_and_summary(
         assert " maxbch = 24" in text
 
 
-def test_rectangular_3dcrt_preserves_validated_gantry_source_and_transform_pair(
+def test_rectangular_3dcrt_uses_iec_gantry_source_and_transform_pair(
     tmp_path,
 ):
     workspace = tmp_path / "workspace"
@@ -592,16 +596,24 @@ def test_rectangular_3dcrt_preserves_validated_gantry_source_and_transform_pair(
     ).read_text(encoding="utf-8")
     source = text.split("[ S o u r c e ]\n", 1)[1].split("\n[ Surface ]", 1)[0]
     transform = text.split("[ Transform ]\n", 1)[1].split("\n[ T-Deposit ]", 1)[0]
-    assert "x0 = 99.85" in source
-    assert "x1 = 100.15" in source
+    assert "x0 = -100.15" in source
+    assert "x1 = -99.85" in source
     assert "z0 = 0" in source
     assert "z1 = 0" in source
     assert "dir = 0" in source
-    assert "phi = 180" in source
+    assert "phi = 0" in source
     assert "set: c10[45] $ Collimator angle (deg)" in transform
     assert "set: c20[90] $ Gantry angle (deg)" in transform
     assert "      sin(c20/180*pi)" in transform
     assert "     -sin(c20/180*pi)" in transform
+    assert (
+        manifest[GANTRY_GEOMETRY_CONTRACT_FIELD]
+        == CURRENT_GANTRY_GEOMETRY_CONTRACT
+    )
+    assert (
+        summary[GANTRY_GEOMETRY_CONTRACT_FIELD]
+        == CURRENT_GANTRY_GEOMETRY_CONTRACT
+    )
 
 
 def test_rectangular_3dcrt_rejects_nonzero_couch_without_partial_output(tmp_path):

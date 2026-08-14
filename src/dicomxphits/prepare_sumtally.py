@@ -36,6 +36,9 @@ from dicomxphits.sumtally_inputs import (
     manifest_sha256,
     validate_sumtally_normalization_input,
 )
+from dicomxphits.gantry_geometry import (
+    require_reusable_gantry_geometry_contract,
+)
 
 
 DEFAULT_SUMTALLY_OUTPUT_NAME = "deposit-target-3D_sum_all_active_segments_totalfield.out"
@@ -266,6 +269,10 @@ def select_sumtally_base_input(
 
 
 def validate_manifest_for_sumtally(manifest: dict[str, Any]) -> dict[str, Any]:
+    require_reusable_gantry_geometry_contract(
+        manifest,
+        allow_legacy_zero_gantry=True,
+    )
     gate = validate_public_strict_3dcrt_gate(manifest)
     for segment in active_segments(manifest):
         expected_output_path = str(segment.get("expected_output_path") or "")

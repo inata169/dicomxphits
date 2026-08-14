@@ -16,6 +16,9 @@ from dicomxphits.prepare_3dcrt_workspace import (
     merged_tool_paths,
     write_json,
 )
+from dicomxphits.gantry_geometry import (
+    require_reusable_gantry_geometry_contract,
+)
 from dicomxphits.safe_output import UnsafeWorkspacePathError, WorkspaceOutputGuard
 
 
@@ -464,6 +467,10 @@ def run_segments(
     try:
         require_execution_paths(paths)
         manifest, _manifest_path = load_manifest(workspace_root)
+        require_reusable_gantry_geometry_contract(
+            manifest,
+            allow_legacy_zero_gantry=True,
+        )
         raw_segments = manifest.get("segments")
         if not isinstance(raw_segments, list):
             raise ValueError("segment manifest must contain a segments list")

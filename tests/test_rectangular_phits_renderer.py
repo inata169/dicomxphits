@@ -183,6 +183,31 @@ def parsed_section_key_values(text, section_name):
     return values
 
 
+def parsed_runtime_tr3(text, gantry_deg):
+    transform = text.split("[ Transform ]\n", 1)[1].split("\n[ T-Deposit ]", 1)[0]
+    lines = transform.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("tr3 "))
+    tokens = [line.strip() for line in lines[start + 1 : start + 10]]
+    sine = math.sin(math.radians(gantry_deg))
+    cosine = math.cos(math.radians(gantry_deg))
+
+    def value(token):
+        if token == "0":
+            return 0.0
+        if token == "1":
+            return 1.0
+        if token == "cos(c20/180*pi)":
+            return cosine
+        if token == "sin(c20/180*pi)":
+            return sine
+        if token == "-sin(c20/180*pi)":
+            return -sine
+        raise AssertionError(f"unexpected tr3 token: {token}")
+
+    values = [value(token) for token in tokens]
+    return [values[0:3], values[3:6], values[6:9]]
+
+
 def complement_cell_ids(expression):
     return {int(token[1:]) for token in expression if token.startswith("#") and token[1:].isdigit()}
 
@@ -299,9 +324,101 @@ def test_angles_drive_runtime_source_and_transforms():
     assert "tr2   0 0 0" in text
     assert "tr3   0.0000 0.0000 0.0000" in text
     source = text.split("[ S o u r c e ]\n", 1)[1].split("\n[ Surface ]", 1)[0]
-    assert " x0 = 100" in source
+    assert " x0 = -100" in source
     assert " dir = 0" in source
-    assert " phi = 180" in source
+    assert " phi = 0" in source
+
+
+@pytest.mark.parametrize(
+    ("gantry_deg", "source_lps_mm", "direction_lps"),
+    [
+        (0.0, (0.0, -1000.0, 0.0), (0.0, 1.0, 0.0)),
+        (90.0, (1000.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+        (180.0, (0.0, 1000.0, 0.0), (0.0, -1.0, 0.0)),
+        (270.0, (-1000.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+        (
+            45.0,
+            (1000.0 / math.sqrt(2.0), -1000.0 / math.sqrt(2.0), 0.0),
+            (-1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0), 0.0),
+        ),
+        (
+            315.0,
+            (-1000.0 / math.sqrt(2.0), -1000.0 / math.sqrt(2.0), 0.0),
+            (1.0 / math.sqrt(2.0), 1.0 / math.sqrt(2.0), 0.0),
+        ),
+    ],
+)
+def test_runtime_gantry_geometry_has_independent_dicom_lps_anchors(
+    gantry_deg,
+    source_lps_mm,
+    direction_lps,
+):
+    text = render_runtime(
+        jaw_mlc_geometry(
+            angles_deg={"gantry": gantry_deg, "collimator": 0.0, "couch": 0.0}
+        )
+    )
+    source = parsed_section_key_values(text, "[ S o u r c e ]")
+    source_phits = (
+        float(source["x0"]),
+        float(source["y0"]),
+        float(source["z0"]),
+    )
+    polar_cosine = float(source["dir"])
+    azimuth = math.radians(float(source["phi"]))
+    transverse = math.sqrt(max(0.0, 1.0 - polar_cosine**2))
+    direction_phits = (
+        transverse * math.cos(azimuth),
+        transverse * math.sin(azimuth),
+        polar_cosine,
+    )
+    expected_direction_phits = (
+        math.sin(math.radians(gantry_deg)),
+        0.0,
+        math.cos(math.radians(gantry_deg)),
+    )
+    expected_source_phits = tuple(-100.0 * value for value in expected_direction_phits)
+    assert source_phits == pytest.approx(expected_source_phits, abs=1.0e-10)
+    assert direction_phits == pytest.approx(expected_direction_phits, abs=1.0e-10)
+    assert tuple(
+        source_phits[index] + 100.0 * direction_phits[index]
+        for index in range(3)
+    ) == pytest.approx((0.0, 0.0, 0.0), abs=1.0e-10)
+
+    tr3 = parsed_runtime_tr3(text, gantry_deg)
+    transformed_local_beam = tuple(tr3[2])
+    transformed_local_source = tuple(-100.0 * value for value in tr3[2])
+    assert transformed_local_beam == pytest.approx(direction_phits, abs=1.0e-10)
+    assert transformed_local_source == pytest.approx(source_phits, abs=1.0e-10)
+
+    mapped_source = (
+        -10.0 * source_phits[0],
+        10.0 * source_phits[2],
+        10.0 * source_phits[1],
+    )
+    mapped_direction = (
+        -direction_phits[0],
+        direction_phits[2],
+        direction_phits[1],
+    )
+    assert mapped_source == pytest.approx(source_lps_mm, abs=1.0e-9)
+    assert mapped_direction == pytest.approx(direction_lps, abs=1.0e-10)
+
+
+def test_gantry_zero_source_and_transform_text_remain_unchanged():
+    text = render_runtime(
+        jaw_mlc_geometry(
+            angles_deg={"gantry": 0.0, "collimator": 0.0, "couch": 0.0}
+        )
+    )
+    source = text.split("[ S o u r c e ]\n", 1)[1].split("\n[ Surface ]", 1)[0]
+    transform = text.split("[ Transform ]\n", 1)[1].split("\n[ T-Deposit ]", 1)[0]
+    assert " x0 = 0\n" in source
+    assert " z0 = -100\n" in source
+    assert " dir = 1\n" in source
+    assert " phi = 0\n" in source
+    assert "      sin(c20/180*pi)\n" in transform
+    assert "     -sin(c20/180*pi)\n" in transform
 
 
 def test_relative_expected_output_path_is_reflected_in_t_deposit():

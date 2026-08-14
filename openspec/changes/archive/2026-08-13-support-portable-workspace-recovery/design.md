@@ -1,4 +1,4 @@
-# Design: Portable Workspace Recovery
+# Design: Existing Workspace Recovery
 
 ## Observed failure
 
@@ -18,11 +18,17 @@ under the former workspace root. On the receiving computer:
 No patient data, DICOM identifiers, machine-specific path, calculation output,
 or licensed distribution content is recorded in this change.
 
+The same-computer restart failure additionally showed that a missing internal
+Sumtally summary was rendered as a raw `Errno 2` path and that Workspace Prepare
+remained available after PHITS completion. The recovery design treats those as
+workflow-state problems. The user is not expected to understand summary file
+names or reconstruct three frozen-handoff paths.
+
 ## Explicit import rather than implicit path repair
 
-Relocation recovery begins only after the user explicitly selects an existing
-workspace. It is not part of CT2PHITS new-workspace creation, does not search
-the computer, and does not silently rewrite JSON.
+Recovery begins only after the user explicitly selects an existing workspace.
+It is not part of CT2PHITS new-workspace creation, does not search the computer,
+and does not silently rewrite JSON.
 
 The recovery inspector compares the recorded workspace root with the selected
 current root. A recorded absolute path is eligible for relocation only when it
@@ -33,6 +39,15 @@ setting through an existing validated input.
 
 This prevents a copied summary from redirecting validation to an unrelated
 local file and prevents basename-only or drive-wide discovery.
+
+For a standard local tool profile, the GUI may derive exactly one CT2PHITS
+handoff candidate from the selected 3D-CRT workspace name: a terminal
+`-3dcrt` suffix maps to `-ct2phits` below the validated RT-PHITS `work`
+directory. The candidate is accepted only when its completion summary and the
+documented `RTPLAN.dcm`, `CT/CT000001.dcm`, and `DATfiles` artifacts validate.
+This is a deterministic bounded derivation, not a directory search. If it does
+not validate, recovery reports that one CT2PHITS workspace selection is still
+required; it never guesses three independent paths.
 
 ## Evidence classes
 
@@ -89,6 +104,21 @@ constructs a proposed new workspace. After inspection, the GUI displays the
 highest verified stage, the first stage needing recovery, a concise reason,
 and one safe next action. Historical success is not rendered as current
 Completed state.
+
+When the inspector proves that PHITS segment results are reusable, the primary
+RTDOSE action is `Create DICOM RT Dose`. The GUI runs only the required suffix
+of this sequence: Sumtally Generate, Sumtally Run, RTDOSE Prepare, and RTDOSE
+Run. It stops on the first failed adapter and keeps the existing adapter gates
+authoritative. Workspace Prepare and PHITS Segment Execution are disabled in
+this mode. A completed conversion displays the accepted `.fixed.dcm` path and
+labels it as DICOM patient coordinates.
+
+Recovery copy uses a contextual confirmation that states which downstream
+artifacts will be preserved and that PHITS results will not be changed. This
+confirmation is the non-persistent recovery permission; users do not need to
+discover a global overwrite checkbox. Error dialogs have a short outcome,
+safety statement, and next action. Raw exception details remain available in
+the activity log but are not the only message in a modal dialog.
 
 The existing non-persistent downstream overwrite permission remains explicit,
 but the user is not expected to infer recovery solely from a red

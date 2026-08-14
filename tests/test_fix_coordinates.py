@@ -54,7 +54,7 @@ def write_rtdose(
     return array
 
 
-def test_anisotropic_axis_mapping_preserves_dose_and_volume_center(
+def test_anisotropic_axis_mapping_reverses_iec_x_and_preserves_volume_center(
     tmp_path: Path,
 ) -> None:
     source_path = tmp_path / "raw.dcm"
@@ -64,7 +64,10 @@ def test_anisotropic_axis_mapping_preserves_dose_and_volume_center(
     summary = fix_coordinates(source_path, output_path)
 
     fixed = pydicom.dcmread(str(output_path))
-    np.testing.assert_array_equal(fixed.pixel_array, source.transpose(1, 0, 2))
+    expected = source.transpose(1, 0, 2)[:, :, ::-1]
+    np.testing.assert_array_equal(fixed.pixel_array, expected)
+    np.testing.assert_array_equal(fixed.pixel_array[:, :, 0], source[:, :, -1].T)
+    np.testing.assert_array_equal(fixed.pixel_array[:, :, -1], source[:, :, 0].T)
     assert fixed.pixel_array.shape == (2, 3, 4)
     assert [float(value) for value in fixed.PixelSpacing] == [4.0, 3.0]
     assert [float(value) for value in fixed.GridFrameOffsetVector] == [0.0, 2.0]
@@ -138,7 +141,8 @@ def test_plan_and_tally_affine_replaces_converter_inherited_translation(
     )
 
     fixed = pydicom.dcmread(str(output_path))
-    np.testing.assert_array_equal(fixed.pixel_array, source.transpose(1, 0, 2))
+    expected = source.transpose(1, 0, 2)[:, :, ::-1]
+    np.testing.assert_array_equal(fixed.pixel_array, expected)
     assert [float(value) for value in fixed.ImagePositionPatient] == pytest.approx(
         [6.5, -27.0, 28.0]
     )

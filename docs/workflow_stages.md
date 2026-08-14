@@ -81,10 +81,32 @@ tool profile settings and per-field Browse history may be stored only in the
 ignored local GUI settings file. Case inputs, the derived CT2PHITS output,
 confirmation, and overwrite controls are not persisted.
 
+An existing calculation is reopened through the distinct **Open existing
+case…** action. Selecting one 3D-CRT workspace triggers read-only validation of
+the strict manifest, the current IEC gantry-geometry contract, PHITS execution
+evidence, and every recorded active-output SHA-256. A legacy manifest without
+the current contract is reusable only when every active segment explicitly
+proves gantry zero. Missing, ambiguous, or nonzero-angle legacy geometry
+requires preparing new segment inputs and rerunning PHITS and all downstream
+stages; a final-DICOM mirror cannot repair the transported dose. A
+standard-profile `*-3dcrt` case may restore exactly one corresponding
+`*-ct2phits` handoff below the validated RT-PHITS work root; no drive or DICOM
+search is performed. When PHITS evidence is reusable, Workspace Prepare and
+PHITS execution remain disabled and **Create DICOM RT Dose** runs only the
+required downstream suffix after preserving conflicts in workspace-local
+recovery history.
+
 ## Prepare Workspace Adapter
 
 `dicomxphits-prepare-3dcrt-workspace` validates the RT Plan and generates the
 strict segment manifest and PHITS workspace using package-owned runtime code.
+
+For HFS with couch zero, the generated source direction is
+`(sin(g), 0, cos(g))` in PHITS coordinates. The source remains one SAD upstream
+of isocenter and the accelerator `tr3` transform maps its local `+Z` axis onto
+that same direction. Under `DICOM = I + 10 * (-PHITS x, PHITS z, PHITS y)`, the
+patient-coordinate beam direction is `(-sin(g), cos(g), 0)`. Gantry zero output
+is unchanged.
 
 This adapter writes:
 
@@ -147,8 +169,9 @@ In the guided GUI, a successful Prepare summary changes the RTDOSE state to
 `Prepared`, disables **Prepare RTDOSE**, and enables **Run RTDOSE**. The Run
 action is the step that invokes phits2dicom and creates the DICOM output. The
 GUI changes the state to `Completed` only when the execution summary contains
-a successful independent final coordinate-placement validation. Legacy
-Prepare/Run success summaries without placement proof are not accepted. The
+a successful independent final coordinate-placement validation and the current
+versioned PLAN course-dose fraction contract. Legacy Prepare/Run success
+summaries without placement or fraction proof are not accepted. The
 GUI returns to `Not run` and permits explicit Prepare/Run actions to replace
 only those legacy successful summaries; failed summaries and current evidence
 retain the normal overwrite guards.
@@ -163,6 +186,13 @@ the current Sumtally binding and the execution summary records the exact current
 Prepare-summary SHA-256. Stale successful summaries remain auditable but return
 the GUI to `Not run` or `Prepared` and cannot enable a stale Run.
 
+In existing-case mode, the primary action is **Create DICOM RT Dose**. Depending
+on current verified evidence it runs Sumtally Generate through RTDOSE Run,
+RTDOSE Prepare through Run, or RTDOSE Run alone. It stops on the first failed
+accepted adapter. Completion displays the coordinate-corrected `.fixed.dcm`
+path as the standard DICOM patient-coordinate output; internal IEC coordinates
+are not mislabeled as a DICOM patient coordinate system.
+
 It consumes the preceding all-active-segments totalfield Sumtally output and
 records the conversion contract:
 
@@ -171,7 +201,10 @@ records the conversion contract:
 - `is_beam_mu_output = false`
 - `input_dose_unit = GY`
 - `output_dicom_dose_unit = GY`
-- `factor = 1.0`
+- `public_model_base_factor = 1.0`
+- `planned_fraction_count = NumberOfFractionsPlanned`
+- `factor = 1.0 * NumberOfFractionsPlanned`
+- `course_dose = dose_per_fraction * NumberOfFractionsPlanned`
 - `totfact_per_MU = 8.7608E+11 source/MU` is already applied in PHITS
 - `normalization_rule = approved_public_model_totfact_per_mu_applied_in_phits`
 
@@ -180,7 +213,10 @@ user-specified template DICOM, and a CT reference selected by the public
 workflow priority. User-provided DICOM files are copied into the workspace
 before use; source files are not modified in place. The RT Plan SOP Instance
 UID, Frame of Reference, workflow mode, treatment-beam coverage, and MU totals
-must match the accepted segment manifest before conversion can proceed.
+must match the accepted segment manifest before conversion can proceed. The
+public PLAN path requires exactly one Fraction Group with a finite positive
+integer `NumberOfFractionsPlanned`; it does not guess a default or combine
+multiple Fraction Groups.
 The supplied frozen RT Plan must match the full-file SHA-256 recorded in the
 adjacent completed CT2PHITS workspace manifest. For a legacy handoff without
 that record, rebuilding the segment geometry with the manifest's sampling
@@ -218,12 +254,19 @@ Sumtally Generate and Run with the existing segment PHITS outputs.
 RTDOSE Prepare also records the generated phits2dicom.inp SHA-256; Run verifies
 it before converter launch. The template, CT reference, staged dose, and staged
 phits.out referenced by that input are hashed and revalidated before launch.
+The frozen RT Plan fraction count and versioned course-dose evidence are also
+revalidated before launch. A changed count requires a new RTDOSE Prepare.
 For a legacy factor-one weighted-average workspace, select **Allow overwrite
 of downstream stage summaries**, then rerun **Sumtally Generate**, **Sumtally
 Run**, **Prepare RTDOSE**, and **Run RTDOSE**. Existing digest-bound segment
 PHITS outputs are reused; PHITS transport does not need to be rerun solely for
 this normalization correction. Do not empirically rescale an old Sumtally or
 DICOM output.
+For a legacy RTDOSE labeled `PLAN` without current fraction-count provenance,
+rerun **Prepare RTDOSE** and **Run RTDOSE**. Current digest-bound PHITS and
+Sumtally results may be reused for this fraction-only correction. If the result
+also uses the stale nonzero-gantry transport contract, regeneration must begin
+with PHITS and continue through Sumtally and RTDOSE.
 The produced RTDOSE must likewise be new or have a different SHA-256 from any
 preexisting expected output. A timestamp-only change fails before plan-reference
 synchronization.
@@ -240,7 +283,10 @@ After successful conversion, the generated DICOM is explicitly labeled
 `ReferencedRTPlanSequence` item is synchronized to the validated frozen RT
 Plan; stale fraction-group or beam references inherited from the template are
 removed. The sidecar summary records the same semantics, exact plan-reference
-validation, and the approved factor identity. The result is absolute dose only
+validation, one-fraction input state, planned fraction count, base factor
+`1.0`, and effective course factor. Plan-reference synchronization and
+coordinate correction preserve the already course-scaled physical dose; they
+do not apply fraction scaling after conversion. The result is absolute dose only
 for the defined public education and research model. It is not evidence of clinical
 commissioning, universal machine `Gy/MU` accuracy, vendor approval, or
 agreement with a physical Elekta unit.

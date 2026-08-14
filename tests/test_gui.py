@@ -26,13 +26,17 @@ from dicomxphits.gui import (
     _browse_directories,
     _ct2phits_handoff_from_result,
     _default_values,
+    _friendly_stage_failure,
     _read_gui_settings,
     _save_browse_history,
     _save_gui_settings,
+    apply_existing_handoff_state,
     apply_case_path_suggestions,
     bind_tool_profile_revalidation,
     browse_initial_directory,
     build_stage_command,
+    clear_handoff_for_workspace_change,
+    clear_new_case_handoff_state,
     ct2phits_handoff_values,
     gui_defaults_path,
     geometry_mode_guidance,
@@ -196,6 +200,17 @@ def test_gui_config_defaults_to_rectangular_public_model(tmp_path: Path) -> None
     config = base_config(tmp_path)
 
     assert config.geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT
+
+
+def test_missing_sumtally_summary_has_existing_case_recovery_guidance() -> None:
+    message = _friendly_stage_failure(
+        stage_by_key("prepare_rtdose"),
+        "[Errno 2] No such file or directory: 'analysis/sumtally_generation_summary.json'",
+    )
+
+    assert "Open the existing 3D-CRT case" in message
+    assert "Create DICOM RT Dose" in message
+    assert "No such file" not in message
 
 
 def test_standard_tool_profile_resolves_approved_phits_335_layout(
@@ -517,6 +532,21 @@ def test_prepare_rtdose_stage_passes_default_phits_out(tmp_path: Path) -> None:
     assert result.summary == {"stage_status": "success"}
 
 
+def synthetic_course_dose_evidence() -> dict[str, object]:
+    return {
+        "contract_version": "dicomxphits_plan_course_dose_v1",
+        "input_dose_state": "sumtally_one_fraction_delivery_dose",
+        "input_dose_unit": "GY",
+        "fraction_group_number": 1,
+        "planned_fraction_count": 1,
+        "public_model_base_factor": 1.0,
+        "effective_phits2dicom_factor": 1.0,
+        "equation": "course_dose = dose_per_fraction * NumberOfFractionsPlanned",
+        "rtplan_sha256": "a" * 64,
+        "validated": True,
+    }
+
+
 def successful_rtdose_prepare_summary(
     *,
     sumtally_manifest_binding: dict[str, object] | None = None,
@@ -524,10 +554,31 @@ def successful_rtdose_prepare_summary(
     summary: dict[str, object] = {
         "stage_status": "success",
         "rtdose_placement": {"schema_version": "synthetic-placement-v1"},
+        "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+        "course_dose_evidence": synthetic_course_dose_evidence(),
     }
     if sumtally_manifest_binding is not None:
         summary["sumtally_manifest_binding"] = sumtally_manifest_binding
     return summary
+
+
+def successful_rtdose_execution_summary(prepare_path: Path) -> dict[str, object]:
+    workspace = prepare_path.parent.parent
+    output = write_file(workspace / "sumtally" / "dose.fixed.dcm", "dose")
+    return {
+        "stage_status": "success",
+        "rtdose_prepare_summary_sha256": gui_module.file_sha256(prepare_path),
+        "coordinate_corrected_rtdose_output_relative": "sumtally/dose.fixed.dcm",
+        "coordinate_corrected_rtdose_output_exists": True,
+        "coordinate_corrected_rtdose_output_sha256": gui_module.file_sha256(output),
+        "coordinate_placement_validation": {"validated": True},
+        "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+        "course_dose_evidence": synthetic_course_dose_evidence(),
+        "final_semantic_validation": {
+            "course_dose_contract_version": "dicomxphits_plan_course_dose_v1",
+            "validated": True,
+        },
+    }
 
 
 def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> None:
@@ -716,7 +767,13 @@ def test_rtdose_state_rejects_sumtally_run_without_output_update(
 
 def test_rtdose_state_requires_execution_to_match_current_prepare(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
     workspace = write_dir(tmp_path / "workspace")
     current_binding = write_current_sumtally_binding(workspace)
     prepare_path = (
@@ -739,29 +796,76 @@ def test_rtdose_state_requires_execution_to_match_current_prepare(
 
     write_file(
         execution_path,
-        json.dumps(
-            {
-                "stage_status": "success",
-                "rtdose_prepare_summary_sha256": gui_module.file_sha256(
-                    prepare_path
-                ),
-                "coordinate_placement_validation": {"validated": True},
-            }
-        ),
+        json.dumps(successful_rtdose_execution_summary(prepare_path)),
     )
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: False,
+    )
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
 
     write_file(
         prepare_path,
         json.dumps(
             {
-                "stage_status": "success",
-                "sumtally_manifest_binding": current_binding,
-                "rtdose_placement": {"schema_version": "synthetic-placement-v1"},
+                **successful_rtdose_prepare_summary(
+                    sumtally_manifest_binding=current_binding,
+                ),
                 "new_prepare": True,
             }
         ),
     )
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+
+def test_rtdose_completed_requires_current_bounded_output_and_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
+    workspace = write_dir(tmp_path / "workspace")
+    current_binding = write_current_sumtally_binding(workspace)
+    prepare_path = workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    write_file(
+        prepare_path,
+        json.dumps(
+            successful_rtdose_prepare_summary(
+                sumtally_manifest_binding=current_binding,
+            )
+        ),
+    )
+    execution_path = workspace / stage_by_key("run_rtdose").summary_relative_path
+    execution = successful_rtdose_execution_summary(prepare_path)
+    write_file(execution_path, json.dumps(execution))
+    output = workspace / str(execution["coordinate_corrected_rtdose_output_relative"])
+
+    assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+    output.unlink()
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+    write_file(output, "dose")
+    assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+    write_file(output, "changed")
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+
+    external = write_file(tmp_path / "outside.dcm", "outside")
+    execution["coordinate_corrected_rtdose_output_relative"] = "../outside.dcm"
+    execution["coordinate_corrected_rtdose_output_sha256"] = gui_module.file_sha256(
+        external
+    )
+    write_file(execution_path, json.dumps(execution))
     assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
 
 
@@ -785,7 +889,12 @@ def test_legacy_unbound_rtdose_summaries_do_not_report_completed(
     workspace = write_dir(tmp_path / "workspace")
     write_file(
         workspace / stage_by_key("prepare_rtdose").summary_relative_path,
-        json.dumps(successful_rtdose_prepare_summary()),
+        json.dumps(
+            {
+                "stage_status": "success",
+                "rtdose_placement": {"schema_version": "legacy"},
+            }
+        ),
     )
     write_file(
         workspace / stage_by_key("run_rtdose").summary_relative_path,
@@ -804,7 +913,13 @@ def test_legacy_unbound_rtdose_summaries_do_not_report_completed(
 
 def test_completed_rtdose_requires_explicit_overwrite_to_reprepare(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        gui_module,
+        "rtdose_plan_evidence_is_current",
+        lambda *_args, **_kwargs: True,
+    )
     workspace = write_dir(tmp_path / "workspace")
     current_binding = write_current_sumtally_binding(workspace)
     prepare_path = workspace / stage_by_key("prepare_rtdose").summary_relative_path
@@ -818,15 +933,7 @@ def test_completed_rtdose_requires_explicit_overwrite_to_reprepare(
     )
     write_file(
         workspace / stage_by_key("run_rtdose").summary_relative_path,
-        json.dumps(
-            {
-                "stage_status": "success",
-                "rtdose_prepare_summary_sha256": gui_module.file_sha256(
-                    prepare_path
-                ),
-                "coordinate_placement_validation": {"validated": True},
-            }
-        ),
+        json.dumps(successful_rtdose_execution_summary(prepare_path)),
     )
 
     assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
@@ -1412,6 +1519,104 @@ def test_saved_legacy_handoff_paths_do_not_authorize_prepare(
             manual_handoff_selected=False,
             verified_handoff_available=False,
         )
+
+
+def test_missing_existing_handoff_clears_prior_case_fields_and_authorization() -> None:
+    values = {
+        "rtplan_path": "case-a-plan.dcm",
+        "ct_reference_dicom": "case-a-ct.dcm",
+        "ct_datfiles_root": "case-a-datfiles",
+    }
+    verified = [True]
+    manual = [True]
+    status = ["Verified existing handoff"]
+
+    applied = apply_existing_handoff_state(
+        None,
+        set_value=values.__setitem__,
+        set_verified=lambda value: verified.__setitem__(0, value),
+        set_manual=lambda value: manual.__setitem__(0, value),
+        set_status=lambda value: status.__setitem__(0, value),
+    )
+
+    assert applied is False
+    assert values == {
+        "rtplan_path": "",
+        "ct_reference_dicom": "",
+        "ct_datfiles_root": "",
+    }
+    assert verified == [False]
+    assert manual == [False]
+    assert status == ["Select one CT2PHITS workspace"]
+
+
+def test_start_new_case_clears_frozen_handoff_and_both_authorizations() -> None:
+    values = {
+        "rtplan_path": "case-a-plan.dcm",
+        "ct_reference_dicom": "case-a-ct.dcm",
+        "ct_datfiles_root": "case-a-datfiles",
+        "existing_ct2phits_workspace_root": "case-a-ct2phits",
+    }
+    verified = [True]
+    manual = [True]
+    status = ["Verified existing handoff"]
+
+    clear_new_case_handoff_state(
+        set_value=values.__setitem__,
+        set_verified=lambda value: verified.__setitem__(0, value),
+        set_manual=lambda value: manual.__setitem__(0, value),
+        set_status=lambda value: status.__setitem__(0, value),
+    )
+
+    assert values == {
+        "rtplan_path": "",
+        "ct_reference_dicom": "",
+        "ct_datfiles_root": "",
+        "existing_ct2phits_workspace_root": "",
+    }
+    assert verified == [False]
+    assert manual == [False]
+    assert status == ["Select one CT2PHITS workspace"]
+
+
+def test_opening_different_workspace_clears_prior_ct2phits_selection(
+    tmp_path: Path,
+) -> None:
+    values = {
+        "rtplan_path": "case-a-plan.dcm",
+        "ct_reference_dicom": "case-a-ct.dcm",
+        "ct_datfiles_root": "case-a-datfiles",
+        "existing_ct2phits_workspace_root": "case-a-ct2phits",
+    }
+    verified = [True]
+    manual = [True]
+    status = ["Verified existing handoff"]
+
+    unchanged = clear_handoff_for_workspace_change(
+        tmp_path / "case-a-3dcrt",
+        tmp_path / "case-a-3dcrt",
+        set_value=values.__setitem__,
+        set_verified=lambda value: verified.__setitem__(0, value),
+        set_manual=lambda value: manual.__setitem__(0, value),
+        set_status=lambda value: status.__setitem__(0, value),
+    )
+    assert unchanged is False
+    assert values["existing_ct2phits_workspace_root"] == "case-a-ct2phits"
+
+    changed = clear_handoff_for_workspace_change(
+        tmp_path / "case-a-3dcrt",
+        tmp_path / "case-b-3dcrt",
+        set_value=values.__setitem__,
+        set_verified=lambda value: verified.__setitem__(0, value),
+        set_manual=lambda value: manual.__setitem__(0, value),
+        set_status=lambda value: status.__setitem__(0, value),
+    )
+
+    assert changed is True
+    assert all(value == "" for value in values.values())
+    assert verified == [False]
+    assert manual == [False]
+    assert status == ["Select one CT2PHITS workspace"]
 
 
 @pytest.mark.parametrize(
