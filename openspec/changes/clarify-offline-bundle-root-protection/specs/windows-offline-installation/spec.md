@@ -85,7 +85,7 @@ installation.
 - **THEN** bootstrap fails before elevation and does not execute a bundle
   verifier, Windows Installer, Python, helper, or pip
 
-#### Scenario: Bundle child-directory lock is denied
+#### Scenario: Bundle directory lock is denied
 
 - **WHEN** a required child directory can be inspected but its protective
   no-delete-sharing handle cannot be acquired

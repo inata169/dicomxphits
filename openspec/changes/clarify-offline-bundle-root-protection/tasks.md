@@ -16,7 +16,7 @@
 
 ## 3. Validation
 
-- [ ] 3.1 Run strict validation for this change.
+- [x] 3.1 Run strict validation for this change.
 - [ ] 3.2 Run the focused synthetic offline bootstrap tests.
 - [ ] 3.3 Run `python -m compileall src`.
 - [ ] 3.4 Run `python -m pytest -q -p no:cacheprovider`.
