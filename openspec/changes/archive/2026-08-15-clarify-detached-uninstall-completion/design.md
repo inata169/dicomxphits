@@ -16,9 +16,13 @@ boundary:
 5. The detached finalizer observes those exits, repeats its bounded checks,
    removes only the exact installation-owned targets, and verifies their
    absence.
-6. On success, the finalizer removes its own bounded cleanup staging. On
-   failure, it retains that staging and writes the reported `failure.json`
-   containing the exact remaining-path evidence.
+6. After installation-target removal, the finalizer writes `failure.json` with
+   the exact message `Final cleanup staging removal is pending.` and starts a
+   child that waits for the finalizer to exit before removing bounded cleanup
+   staging.
+7. On success, that child removes cleanup staging. On terminal failure, the
+   catch path replaces the pending sentinel with a different error message and
+   retains exact remaining-path evidence.
 
 The extracted bundle can therefore still exist between steps 3 and 5. This is
 an expected in-progress state. Treating it as immediate failure encourages an
@@ -36,8 +40,13 @@ finish and then distinguish the terminal outcomes:
 - success: the exact extracted bundle and every matching installation-owned
   target have passed the final elevated absence check, and the bounded cleanup
   staging no longer exists;
-- failure: the bounded cleanup staging remains and its reported `failure.json`
-  identifies the exact remaining installation-owned paths.
+- pending: bounded cleanup staging remains with the exact
+  `Final cleanup staging removal is pending.` sentinel;
+- failure: bounded cleanup staging remains after that sentinel is replaced by a
+  different error message identifying the exact remaining paths; and
+- indeterminate: the report is missing, unreadable, malformed, or does not
+  progress beyond the pending sentinel. Evidence is preserved without retry or
+  manual deletion.
 
 A folder observed immediately after prompt return is neither outcome by
 itself. The operator must not rerun uninstall or manually delete targets while

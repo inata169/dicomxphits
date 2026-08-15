@@ -159,10 +159,16 @@ Future acceptance must distinguish these states:
   failure and does not authorize manual cleanup;
 - the scheduled message and prompt return mean detached cleanup is in progress,
   not success or failure, and the uninstaller must not be rerun during it;
+- retained cleanup staging whose protected `failure.json` message is exactly
+  `Final cleanup staging removal is pending.` is also an intermediate state,
+  after installation-target removal and before staging self-removal;
 - success is final only after every exact installation-owned target and the
   cleanup staging are absent; and
-- failure retains the reported cleanup staging and `failure.json` with the
-  exact remaining-path evidence.
+- terminal failure retains the reported cleanup staging after replacing that
+  pending sentinel with a different error message and exact remaining-path
+  evidence. A missing, unreadable, malformed, or non-progressing pending report
+  is indeterminate and must be preserved for investigation without retry or
+  manual deletion.
 
 Do not diagnose failure solely because the extracted folder is still visible
 immediately after prompt return.

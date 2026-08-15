@@ -29,7 +29,11 @@ enough.
   exact installation-owned target and disappearance of its bounded cleanup
   staging.
 - Define failed completion by retained bounded cleanup staging containing the
-  reported `failure.json` with exact remaining-path evidence.
+  reported `failure.json` with a non-pending error and exact remaining-path
+  evidence.
+- Distinguish the exact `Final cleanup staging removal is pending.` sentinel
+  from terminal failure, and classify a missing, malformed, unreadable, or
+  non-progressing pending report as indeterminate evidence to preserve.
 - Record the Windows 11 acceptance observations and the distinction between a
   pre-scheduling refusal and post-scheduling finalizer progress in the
   development handoff so future release work does not repeat the diagnosis.

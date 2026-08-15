@@ -22,6 +22,8 @@
   DICOM, external-tool, or protected-data behavior changes are included.
 - [x] 2.6 Record that the existing pre-change ZIP remains untouched and must be
   regenerated and revalidated from the eventual merged HEAD before release.
+- [x] 2.7 Address PR review by distinguishing the exact cleanup-staging pending
+  sentinel from terminal failure and indeterminate retained evidence.
 
 ## 3. Validation
 
