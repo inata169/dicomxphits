@@ -25,11 +25,9 @@ dose, MU, machine, or DICOM scope.
 The public automated suite uses synthetic or mock inputs and does not execute
 PHITS, RT-PHITS, CT2PHITS, Sumtally, `phits2dicom`, external GPR software, or
 real DICOM. The human operator reported that the current integrated GUI
-completed the bounded external workflow from CT2PHITS through RTDOSE. The
-operator had separately reported no abnormal dose distribution or absolute
-dose in the bounded external GPR comparison. Exact paths, DICOM identifiers,
-numeric results, screenshots, result files, and generated outputs remain
-outside this repository.
+completed the bounded external workflow from CT2PHITS through RTDOSE. Exact
+paths, DICOM identifiers, numeric results, screenshots, result files, and
+generated outputs remain outside this repository.
 
 This evidence is one bounded education-and-research workflow. It is not
 clinical validation, commissioning, patient QA, vendor certification, or a
