@@ -18,6 +18,9 @@ $ProtectedSourceRoot = Join-Path $RuntimeRoot "dicomxphits-source"
 $ProtectedRuntimeParent = $null
 $ProtectedRuntimeReceipt = $null
 $ProtectedRuntimeId = $null
+$ProtectedFailureDiagnostic = $null
+$RuntimeIdentitySchema = "bundle-root-manifest-v1"
+$BundleManifestSha256 = $env:DICOMXPHITS_BUNDLE_MANIFEST_SHA256
 $LogFile = Join-Path $BundleRoot "offline-install.log"
 $RuntimeLog = $null
 $PythonNuGetSignerSha256 = "1F4B311D9ACC115C8DC8018B5A49E00FCE6DA8E2855F9F014CA6F34570BC482D"
@@ -76,6 +79,7 @@ function Invoke-ElevatedRuntimeConstruction {
         BUNDLE_ROOT = $BundleRoot
         VERIFIED_STAGE = $env:DICOMXPHITS_VERIFIED_STAGE
         INSTALLING_USER_SID = $ParentIdentity.User.Value
+        MANIFEST_SHA256 = $BundleManifestSha256
         ELEVATED_STAGE = $env:DICOMXPHITS_VERIFIED_STAGE
         ELEVATED_ACTION = "construct-runtime"
     }.GetEnumerator()) {
@@ -91,6 +95,7 @@ $decode={param($value)[Text.Encoding]::UTF8.GetString([Convert]::FromBase64Strin
 $env:DICOMXPHITS_BUNDLE_ROOT=& $decode '{BUNDLE_ROOT}'
 $env:DICOMXPHITS_VERIFIED_STAGE=& $decode '{VERIFIED_STAGE}'
 $env:DICOMXPHITS_INSTALLING_USER_SID=& $decode '{INSTALLING_USER_SID}'
+$env:DICOMXPHITS_BUNDLE_MANIFEST_SHA256=& $decode '{MANIFEST_SHA256}'
 $env:DICOMXPHITS_ELEVATED_STAGE=& $decode '{ELEVATED_STAGE}'
 $env:DICOMXPHITS_ELEVATED_ACTION=& $decode '{ELEVATED_ACTION}'
 & ([IO.Path]::Combine([IO.Path]::GetFullPath($env:DICOMXPHITS_BUNDLE_ROOT),'tools','install_offline_verified.ps1'))
@@ -118,6 +123,10 @@ exit $LASTEXITCODE
         throw "Administrator approval is required before runtime construction."
     }
     if ($Process.ExitCode -ne 0) {
+        $Reason = Read-ProtectedRuntimeFailureDiagnostic
+        if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+            throw "Protected runtime construction failed: $Reason"
+        }
         throw "Protected runtime construction failed with exit code $($Process.ExitCode)."
     }
 }
@@ -232,6 +241,26 @@ function New-ProtectedRuntimeDirectory([string]$Path, [string]$Label) {
     Assert-ProtectedRuntimeSecurity $Path $true $Label
 }
 
+function Get-ProtectedRuntimeId([string]$Root, [string]$ManifestSha256) {
+    if ($ManifestSha256 -notmatch "^[0-9a-f]{64}$") {
+        throw "Verified bundle manifest SHA-256 is missing or malformed."
+    }
+    $IdentityText = [string]::Join("`n", @(
+        $RuntimeIdentitySchema,
+        ([System.IO.Path]::GetFullPath($Root)).ToUpperInvariant(),
+        $ManifestSha256.ToLowerInvariant()
+    ))
+    $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return [System.BitConverter]::ToString(
+            $Sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($IdentityText))
+        ).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $Sha256.Dispose()
+    }
+}
+
 function Set-ProtectedRuntimeIdentity {
     $InstallingSidValue = if ([string]::IsNullOrWhiteSpace(
         $env:DICOMXPHITS_INSTALLING_USER_SID
@@ -259,24 +288,86 @@ function Set-ProtectedRuntimeIdentity {
 
     $ProductRoot = Join-Path $CommonData "dicomxphits"
     $RuntimeParent = Join-Path $ProductRoot "offline-runtimes"
-    $Sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $IdentityBytes = [System.Text.Encoding]::UTF8.GetBytes(
-            $BundleRoot.ToUpperInvariant()
-        )
-        $RuntimeId = [System.BitConverter]::ToString(
-            $Sha256.ComputeHash($IdentityBytes)
-        ).Replace("-", "").ToLowerInvariant()
-    }
-    finally {
-        $Sha256.Dispose()
-    }
+    $RuntimeId = Get-ProtectedRuntimeId $BundleRoot $BundleManifestSha256
     $script:ProtectedRuntimeParent = $RuntimeParent
     $script:ProtectedRuntimeId = $RuntimeId
     $script:RuntimeRoot = Join-Path $RuntimeParent $RuntimeId
     $script:ProtectedSourceRoot = Join-Path $script:RuntimeRoot "dicomxphits-source"
     $script:ProtectedRuntimeReceipt = Join-Path $RuntimeParent "$RuntimeId.json"
     $script:RuntimeLog = Join-Path $RuntimeParent "$RuntimeId-msi.log"
+    $script:ProtectedFailureDiagnostic = Join-Path $RuntimeParent "$RuntimeId-failure.json"
+}
+
+function Write-ProtectedRuntimeFailureDiagnostic([string]$Message) {
+    if (-not (Test-IsAdministrator)) { return }
+    if (
+        [string]::IsNullOrWhiteSpace($ProtectedFailureDiagnostic) -or
+        -not [System.IO.Directory]::Exists($ProtectedRuntimeParent)
+    ) { return }
+    Assert-NoReparsePath $ProtectedRuntimeParent "Protected runtime parent"
+    Assert-ProtectedRuntimeSecurity $ProtectedRuntimeParent $true "Protected runtime parent"
+    if (
+        [System.IO.File]::Exists($ProtectedFailureDiagnostic) -or
+        [System.IO.Directory]::Exists($ProtectedFailureDiagnostic)
+    ) {
+        Remove-Item -LiteralPath $ProtectedFailureDiagnostic -Force
+    }
+    $Controlled = ($Message -replace "[\r\n]+", " ").Trim()
+    if ($Controlled.Length -gt 2048) { $Controlled = $Controlled.Substring(0, 2048) }
+    if ([string]::IsNullOrWhiteSpace($Controlled)) {
+        $Controlled = "Protected runtime construction failed."
+    }
+    $Record = [pscustomobject]@{
+        schema_version = 1
+        verified_stage = $env:DICOMXPHITS_VERIFIED_STAGE
+        runtime_id = $ProtectedRuntimeId
+        category = "runtime-construction"
+        message = $Controlled
+    }
+    $Bytes = [System.Text.Encoding]::UTF8.GetBytes(
+        (($Record | ConvertTo-Json -Compress) + [Environment]::NewLine)
+    )
+    $Stream = [System.IO.File]::Open(
+        $ProtectedFailureDiagnostic,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None
+    )
+    try { $Stream.Write($Bytes, 0, $Bytes.Length); $Stream.Flush() }
+    finally { $Stream.Dispose() }
+    [System.IO.File]::SetAccessControl(
+        $ProtectedFailureDiagnostic,
+        (Get-ProtectedRuntimeSecurity $false)
+    )
+    Assert-ProtectedRuntimeSecurity $ProtectedFailureDiagnostic $false "Protected runtime failure diagnostic"
+}
+
+function Read-ProtectedRuntimeFailureDiagnostic {
+    if (
+        [string]::IsNullOrWhiteSpace($ProtectedFailureDiagnostic) -or
+        -not [System.IO.File]::Exists($ProtectedFailureDiagnostic)
+    ) { return $null }
+    try {
+        Assert-NoReparsePath $ProtectedFailureDiagnostic "Protected runtime failure diagnostic"
+        Assert-ProtectedRuntimeSecurity $ProtectedFailureDiagnostic $false "Protected runtime failure diagnostic"
+        $Text = [System.IO.File]::ReadAllText(
+            $ProtectedFailureDiagnostic,
+            [System.Text.Encoding]::UTF8
+        )
+        $Record = $Text | ConvertFrom-Json
+        $Message = [string]$Record.message
+        if (
+            $Record.schema_version -ne 1 -or
+            [string]$Record.verified_stage -ne $env:DICOMXPHITS_VERIFIED_STAGE -or
+            [string]$Record.runtime_id -ne $ProtectedRuntimeId -or
+            [string]$Record.category -ne "runtime-construction" -or
+            [string]::IsNullOrWhiteSpace($Message) -or
+            $Message.Length -gt 2048 -or
+            $Message -match "[\r\n]"
+        ) { return $null }
+        return $Message
+    }
+    catch { return $null }
 }
 
 function Initialize-ProtectedRuntimePath {
@@ -1124,6 +1215,8 @@ function Write-ProtectedRuntimeReceipt {
     )
     $Receipt = [pscustomobject]@{
         schema_version = 1
+        runtime_identity_schema = $RuntimeIdentitySchema
+        bundle_manifest_sha256 = $BundleManifestSha256
         verified_stage = $env:DICOMXPHITS_VERIFIED_STAGE
         bundle_root = $BundleRoot
         runtime_root = $RuntimeRoot
@@ -1182,6 +1275,8 @@ function Import-ProtectedRuntimeReceipt {
         }
         if (
             $Receipt.schema_version -ne 1 -or
+            [string]$Receipt.runtime_identity_schema -ne $RuntimeIdentitySchema -or
+            [string]$Receipt.bundle_manifest_sha256 -ne $BundleManifestSha256 -or
             [string]$Receipt.verified_stage -ne $env:DICOMXPHITS_VERIFIED_STAGE -or
             -not [string]::Equals([string]$Receipt.bundle_root, $BundleRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
             -not [string]::Equals([string]$Receipt.runtime_root, $RuntimeRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -1322,6 +1417,11 @@ try {
             throw "Protected runtime construction lacks verified administrator state."
         }
         Initialize-ProtectedRuntimePath
+        if ([System.IO.File]::Exists($ProtectedFailureDiagnostic)) {
+            Assert-NoReparsePath $ProtectedFailureDiagnostic "Protected runtime failure diagnostic"
+            Assert-ProtectedRuntimeSecurity $ProtectedFailureDiagnostic $false "Protected runtime failure diagnostic"
+            Remove-Item -LiteralPath $ProtectedFailureDiagnostic -Force
+        }
         $null = New-AuthenticatedPythonRuntime
         exit 0
     }
@@ -1361,6 +1461,19 @@ try {
     Write-Host ""
     Write-Host "Installation succeeded. Log: $LogFile"
     exit 0
+}
+catch {
+    $Failure = $_.Exception.Message
+    if ($env:DICOMXPHITS_ELEVATED_ACTION -eq "construct-runtime" -and (Test-IsAdministrator)) {
+        try {
+            if ([string]::IsNullOrWhiteSpace($ProtectedRuntimeParent)) {
+                Set-ProtectedRuntimeIdentity
+            }
+            Write-ProtectedRuntimeFailureDiagnostic $Failure
+        }
+        catch { }
+    }
+    throw
 }
 finally {
     foreach ($Stream in $LockedPythonFiles) { $Stream.Dispose() }

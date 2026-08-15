@@ -48,9 +48,11 @@ OFFLINE_LOCK_PATH = "requirements/offline-win64.txt"
 RUNTIME_CONSTRAINTS_PATH = "requirements/runtime.txt"
 REQUIRED_BUNDLE_SOURCE_PATHS = (
     "install_offline.cmd",
+    "uninstall_offline.cmd",
     "tools/offline_bundle.py",
     "tools/offline_install.py",
     "tools/install_offline_verified.ps1",
+    "tools/uninstall_offline_verified.ps1",
     "tools/lock_bundle_directories.ps1",
     "tools/prepare_offline_bundle.ps1",
     OFFLINE_LOCK_PATH,
