@@ -50,7 +50,7 @@ def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
     assert evidence["water_regression"]["new_result_claimed"] is False
     assert evidence["voxel_regression"]["status"] == "approved_knowledge_based_reuse"
     assert evidence["multi_beam_regression"]["status"] == "approved_knowledge_based_reuse"
-    assert evidence["target_release"] == "v1.0.1"
+    assert evidence["target_release"] == "v1.0.2"
     gpr = evidence["gpr_regression"]
     assert gpr["status"] == "historical_v1.0.0_evidence_only"
     assert gpr["historical_release"] == "v1.0.0"

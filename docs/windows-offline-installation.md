@@ -163,7 +163,7 @@ from a terminal whose current directory is outside that folder. For example:
 
 ```powershell
 Set-Location D:\
-& "D:\path\to\dicomxphits-offline-win64-1.0.1\uninstall_offline.cmd"
+& "D:\path\to\dicomxphits-offline-win64-1.0.2\uninstall_offline.cmd"
 ```
 
 After the local verification succeeds, type the exact confirmation word

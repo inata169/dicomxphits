@@ -1,6 +1,7 @@
 include config/dicomxphits.machine.example.json
 include docs/release_acceptance_evidence.json
 include docs/release-notes-v1.0.1.md
+include docs/release-notes-v1.0.2.md
 include docs/windows-offline-installation.md
 include docs/windows-offline-installation.ja.md
 include install_offline.cmd

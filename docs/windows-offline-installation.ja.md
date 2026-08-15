@@ -148,7 +148,7 @@ current directoryが展開folderの外にあるterminalから、次のように�
 
 ```powershell
 Set-Location D:\
-& "D:\path\to\dicomxphits-offline-win64-1.0.1\uninstall_offline.cmd"
+& "D:\path\to\dicomxphits-offline-win64-1.0.2\uninstall_offline.cmd"
 ```
 
 local検証成功後、確認語`UNINSTALL`を正確に入力し、Windowsの管理者promptを承認します。

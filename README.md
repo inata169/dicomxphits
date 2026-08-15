@@ -17,11 +17,11 @@ tool distributions, and real-tool outputs must remain outside this repository.
 
 ## Status
 
-Version 1.0.1 includes standalone public adapters for strict 3D-CRT workspace
+Version 1.0.2 includes standalone public adapters for strict 3D-CRT workspace
 preparation, PHITS segment execution, Sumtally generation and execution,
 RTDOSE conversion and coordinate correction, and an optional external
-GPR-comparing handoff. See the [v1.0.1 release notes](docs/release-notes-v1.0.1.md)
-for the changes since v1.0.0.
+GPR-comparing handoff. See the [v1.0.2 release notes](docs/release-notes-v1.0.2.md)
+for the changes since v1.0.1.
 
 ## Supported Environment
 

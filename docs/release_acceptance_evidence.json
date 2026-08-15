@@ -1,6 +1,6 @@
 {
   "schema_version": "dicomxphits_v1_release_acceptance_evidence_v1",
-  "target_release": "v1.0.1",
+  "target_release": "v1.0.2",
   "scope": "fixed_field_3dcrt_education_and_research_only",
   "prior_release_physical_rerun_performed": false,
   "prior_physical_evidence": {
