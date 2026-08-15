@@ -1053,8 +1053,6 @@ function Write-ProtectedCleanupFailure([string]$Directory, [string]$Message) {
 
 function Invoke-ElevatedCleanup([string]$TrustedPowerShell) {
     $CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $ParentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$PID"
-    $CallerPid = [int]$ParentProcess.ParentProcessId
     $Nonce = [System.Guid]::NewGuid().ToString("N")
     $State = @{
         ROOT = $BundleRoot
@@ -1062,7 +1060,10 @@ function Invoke-ElevatedCleanup([string]$TrustedPowerShell) {
         SID = $CurrentIdentity.User.Value
         ACTION = "stage"
         NONCE = $Nonce
-        WAIT_PIDS = "$PID,$CallerPid"
+        # This bootstrap PowerShell process owns the verified file and
+        # directory locks. Its caller may be a persistent cmd.exe and does not
+        # own those handles, so waiting for that shell would deadlock cleanup.
+        WAIT_PIDS = "$PID"
         PROTECTED_SOURCE = $ProtectedSourceRoot
     }
     $Command = @'

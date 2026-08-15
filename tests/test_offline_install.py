@@ -1240,7 +1240,7 @@ def test_uninstall_partial_failure_report_lists_only_exact_remaining_targets(tmp
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
-def test_uninstall_waits_for_direct_elevated_stage_without_descendant_wait(tmp_path):
+def test_uninstall_waits_only_for_direct_bootstrap_stage_without_caller_shell(tmp_path):
     helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
     harness = tmp_path / "uninstall-direct-stage-wait-harness.ps1"
     harness.write_text(
@@ -1252,21 +1252,32 @@ def test_uninstall_waits_for_direct_elevated_stage_without_descendant_wait(tmp_p
         "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_SOURCE)\n"
         "$script:FakeWaitCalled=$false\n"
         "$script:StartProcessWaitSwitch=$false\n"
+        "$script:ParentLookupCalled=$false\n"
+        "$script:CapturedArguments=$null\n"
         "$script:FakeProcess=[pscustomobject]@{ExitCode=0}\n"
         "$script:FakeProcess|Add-Member -MemberType ScriptMethod -Name WaitForExit "
         "-Value {$script:FakeWaitCalled=$true}\n"
-        "function Get-CimInstance { [pscustomobject]@{ParentProcessId=4242} }\n"
+        "function Get-CimInstance {$script:ParentLookupCalled=$true;"
+        "[pscustomobject]@{ParentProcessId=4242}}\n"
         "function Start-Process {\n"
         " param([string]$FilePath,[string]$Verb,[switch]$Wait,[switch]$PassThru,"
         "[string]$WindowStyle,[object[]]$ArgumentList)\n"
         " $script:StartProcessWaitSwitch=[bool]$Wait\n"
+        " $script:CapturedArguments=$ArgumentList\n"
         " return $script:FakeProcess\n"
         "}\n"
         "$Cleanup=Invoke-ElevatedCleanup $env:SystemRoot\n"
         "if (-not $script:FakeWaitCalled) {exit 8}\n"
         "if ($script:StartProcessWaitSwitch) {exit 9}\n"
         "if ($Cleanup -notmatch 'offline-cleanup') {exit 10}\n"
-        "Write-Output 'DIRECT_STAGE_WAIT_ONLY'\n",
+        "if ($script:ParentLookupCalled) {exit 11}\n"
+        "$EncodedCommand=[string]$script:CapturedArguments[-1]\n"
+        "$Command=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($EncodedCommand))\n"
+        "$ExpectedPid=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$PID))\n"
+        "$PersistentCaller=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('4242'))\n"
+        "if ($Command -notmatch [regex]::Escape($ExpectedPid)) {exit 12}\n"
+        "if ($Command -match [regex]::Escape($PersistentCaller)) {exit 13}\n"
+        "Write-Output 'DIRECT_BOOTSTRAP_STAGE_WAIT_ONLY'\n",
         encoding="utf-8",
     )
     result = _run_powershell_harness(
@@ -1282,7 +1293,7 @@ def test_uninstall_waits_for_direct_elevated_stage_without_descendant_wait(tmp_p
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "DIRECT_STAGE_WAIT_ONLY" in result.stdout.splitlines()
+    assert "DIRECT_BOOTSTRAP_STAGE_WAIT_ONLY" in result.stdout.splitlines()
 
 
 def test_offline_uninstaller_has_bounded_verified_contract():
