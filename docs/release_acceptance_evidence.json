@@ -67,6 +67,18 @@
     "dicom_recorded": false,
     "claim_boundary": "One bounded external non-patient research workflow; no clinical or general dose-accuracy claim."
   },
+  "target_release_offline_bundle_check": {
+    "status": "human_reported_complete_untracked",
+    "artifact_name": "dicomxphits-offline-win64-1.0.2.zip",
+    "artifact_sha256": "6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217",
+    "manifest_source_head": "efb0dace568fbcb12019f3d320a468dcfb446e34",
+    "installation": "passed",
+    "gui_launch": "passed",
+    "verified_uninstall": "passed",
+    "uninstall_launch_method": "uninstall.cmd from Windows Explorer",
+    "agent_external_tool_execution_performed": false,
+    "absolute_path_recorded": false
+  },
   "beam6_classification": {
     "classification_basis": "RT Plan delivery structure, not BeamNumber",
     "golden8_control": {

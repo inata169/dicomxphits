@@ -21,6 +21,21 @@ local settings, private-repository material, credentials, personal
 information, and facility information are also excluded. The installer never
 starts a PHITS calculation.
 
+## Download the current release bundle
+
+The verified Windows bundle is published with
+[v1.0.2](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2) as
+`dicomxphits-offline-win64-1.0.2.zip`. Before extraction, verify its SHA-256:
+
+```text
+6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217
+```
+
+The release asset was built from manifest source HEAD
+`efb0dace568fbcb12019f3d320a468dcfb446e34`. The following build procedure is
+for producing a reviewed replacement bundle, not for changing the published
+asset in place.
+
 ## Create the USB bundle on an online computer
 
 Use an internet-connected Windows 10/11 x64 computer with:
