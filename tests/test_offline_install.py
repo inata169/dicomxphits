@@ -594,7 +594,8 @@ def test_uninstall_process_guard_refuses_synthetic_installed_gui(tmp_path):
         _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
         + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
         "function Get-CimInstance { [pscustomobject]@{ProcessId=4242;Name='pythonw.exe';"
-        "ExecutablePath=(Join-Path $script:BundleRoot '.venv\\Scripts\\pythonw.exe')} }\n"
+        "ExecutablePath=(Join-Path $script:BundleRoot '.venv\\Scripts\\pythonw.exe');"
+        "CommandLine=$null} }\n"
         "try { Assert-NoAssociatedProcesses @(); exit 8 }\n"
         "catch {\n"
         " if ($_.Exception.Message -notmatch 'Associated process must be closed') {Write-Error $_;exit 9}\n"
@@ -612,6 +613,61 @@ def test_uninstall_process_guard_refuses_synthetic_installed_gui(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ACTIVE_PROCESS_REJECTED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize("associated", [False, True])
+def test_uninstall_process_guard_scopes_external_scientific_process(
+    tmp_path, associated
+):
+    bundle_root = tmp_path / "installed bundle"
+    bundle_root.mkdir()
+    external_tool = tmp_path / "external tools" / "phits.exe"
+    external_tool.parent.mkdir()
+    external_tool.write_bytes(b"synthetic executable placeholder\n")
+    input_path = (
+        bundle_root / "associated input.inp"
+        if associated
+        else tmp_path / "unrelated case" / "input.inp"
+    )
+    input_path.parent.mkdir(exist_ok=True)
+    input_path.write_text("synthetic input\n", encoding="utf-8")
+    command_line = f'"{external_tool}" "{input_path}"'
+    harness = tmp_path / "uninstall-scientific-process-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "function Get-CimInstance { [pscustomobject]@{ProcessId=4343;Name='phits.exe';"
+        "ExecutablePath=$env:DICOMXPHITS_TEST_EXECUTABLE;"
+        "CommandLine=$env:DICOMXPHITS_TEST_COMMAND_LINE} }\n"
+        "$Rejected=$false\n"
+        "try { Assert-NoAssociatedProcesses @() }\n"
+        "catch {\n"
+        " if ($_.Exception.Message -notmatch 'Associated process must be closed') "
+        "{Write-Error $_;exit 9}\n"
+        " $Rejected=$true\n"
+        "}\n"
+        "if ($Rejected) {Write-Output 'SCIENTIFIC_PROCESS_REJECTED'} "
+        "else {Write-Output 'SCIENTIFIC_PROCESS_ALLOWED'}\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "runtime"),
+            "DICOMXPHITS_TEST_EXECUTABLE": str(external_tool),
+            "DICOMXPHITS_TEST_COMMAND_LINE": command_line,
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = (
+        "SCIENTIFIC_PROCESS_REJECTED"
+        if associated
+        else "SCIENTIFIC_PROCESS_ALLOWED"
+    )
+    assert expected in result.stdout.splitlines()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")

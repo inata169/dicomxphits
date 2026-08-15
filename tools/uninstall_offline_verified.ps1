@@ -394,18 +394,24 @@ function Assert-ExactInstallationRoot {
 function Assert-NoAssociatedProcesses([int[]]$ExcludedProcessIds) {
     $Excluded = New-Object 'System.Collections.Generic.HashSet[int]'
     foreach ($Id in $ExcludedProcessIds) { $null = $Excluded.Add($Id) }
-    $ScientificNames = @("phits", "phits335_win_openmp", "sumtally", "phits2dicom", "gpr-comparing")
+    $RuntimePrefix = $RuntimeRoot.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar
+    ) + [System.IO.Path]::DirectorySeparatorChar
     try { $Processes = @(Get-CimInstance Win32_Process -ErrorAction Stop) }
     catch { throw "Cannot verify that associated processes are stopped." }
     foreach ($Process in $Processes) {
         if ($Excluded.Contains([int]$Process.ProcessId)) { continue }
         $Executable = [string]$Process.ExecutablePath
-        $Name = [System.IO.Path]::GetFileNameWithoutExtension([string]$Process.Name).ToLowerInvariant()
+        $CommandLine = [string]$Process.CommandLine
         $InsideInstallation = -not [string]::IsNullOrWhiteSpace($Executable) -and (
             $Executable.StartsWith($BundlePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
-            $Executable.StartsWith(($RuntimeRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)
+            $Executable.StartsWith($RuntimePrefix, [System.StringComparison]::OrdinalIgnoreCase)
         )
-        if ($InsideInstallation -or $ScientificNames -contains $Name) {
+        $CommandUsesInstallation = -not [string]::IsNullOrWhiteSpace($CommandLine) -and (
+            $CommandLine.IndexOf($BundlePrefix, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $CommandLine.IndexOf($RuntimePrefix, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        )
+        if ($InsideInstallation -or $CommandUsesInstallation) {
             throw "Associated process must be closed before uninstallation: $($Process.Name) (PID $($Process.ProcessId))"
         }
     }
