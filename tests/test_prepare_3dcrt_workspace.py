@@ -166,6 +166,27 @@ def no_phits_inputs(workspace):
 
 
 def install_manifest_export(monkeypatch, manifest):
+    manifest.setdefault(
+        "public_beam_model",
+        {
+            "model_id": "elekta_precise_6mv_public_research",
+            "display_name": "Elekta Precise 6 MV public research model",
+            "radiation_type": "PHOTON",
+            "nominal_energy_mv": 6.0,
+            "fixed": True,
+            "validation_status": "passed",
+            "included_treatment_beams": [
+                {
+                    "beam_number": 1,
+                    "beam_name": "Synthetic beam",
+                    "radiation_type": "PHOTON",
+                    "nominal_energy_mv": 6.0,
+                    "control_point_inheritance_used": True,
+                }
+            ],
+        },
+    )
+
     def fake_export_segment_manifest(**kwargs):
         case_root = Path(kwargs["case_root"])
         manifest_path = case_root / "segments" / "segment_manifest.json"
@@ -488,6 +509,8 @@ def test_rectangular_3dcrt_default_needs_no_vendor_or_iaea_runtime_input(
         "omp_directive": "$OMP = 8",
     }
     assert summary["segment_runtime"] == generation["segment_runtime"]
+    assert summary["public_beam_model"]["validation_status"] == "passed"
+    assert summary["public_beam_model"]["nominal_energy_mv"] == 6.0
     assert text.startswith("$OMP = 8\n")
     assert " maxcas = 1000000" in text
     assert " maxbch = 10" in text

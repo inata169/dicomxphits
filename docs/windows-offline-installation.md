@@ -104,6 +104,11 @@ payload through that locked path, and only then requests administrator approval
 for protected runtime construction. The elevated child uses only absolute
 Windows-system executables,
 creates the runtime and protected hash receipt, and exits before Python starts.
+The protected runtime identity is bound to both the normalized absolute
+extraction root and the verified bundle-manifest SHA-256. A later authenticated
+bundle freshly extracted at the same absolute path therefore receives a
+different runtime identity, while an exact repeat of the same bundle still
+fails closed instead of reusing protected content.
 The original non-elevated stage then:
 
 - validates and read-locks the bundled NuGet verifier, CPython package, and
@@ -145,9 +150,55 @@ launchers\run_gui_venv.cmd
 
 The protected runtime and source snapshot remain after success because `.venv`
 records the runtime as its base interpreter and the editable installation
-records the protected source. Removing an abandoned protected installation is
-a separate, explicit administrator action. The installer never deletes or
-repairs one automatically.
+records the protected source. The installer never deletes or repairs one
+automatically. Use the verified uninstaller below when the complete extracted
+installation is no longer needed.
+
+## Uninstall one offline installation
+
+Close its GUI and every Python or PHITS-related process first. Also close every
+terminal, File Explorer window, editor, or other process whose current folder
+is the extracted installation. Start the uninstaller from File Explorer, or
+from a terminal whose current directory is outside that folder. For example:
+
+```powershell
+Set-Location D:\
+& "D:\path\to\dicomxphits-offline-win64-1.0.1\uninstall_offline.cmd"
+```
+
+After the local verification succeeds, type the exact confirmation word
+`UNINSTALL` and approve the Windows administrator prompt. The verified
+uninstaller binds the current normalized extraction path and manifest digest
+to its protected receipt, checks the receipt owner and access rules, and
+refuses to discover or guess another runtime.
+
+Before deleting anything, it verifies that authenticated bundle payloads are
+unchanged, allows only the installer-created `.venv` and installation log, and
+rejects unknown files, unknown directories, reparse points, associated running
+processes, or any exact target that Windows cannot open for deletion while
+sharing deletion with the cleanup process. This last check prevents a terminal
+whose current directory is the extracted folder from causing a partial
+deletion. Move any intentional additional file out of the extracted folder and
+close every process using it before retrying. Do not weaken these checks.
+
+A successful uninstall removes only that extracted bundle, its `.venv`, its
+installation log, its exact protected runtime and source snapshot, its receipt,
+its Windows Installer log, and bounded cleanup staging. It does not remove
+another extracted installation or runtime ID, case folders, DICOM, PHITS or
+other external tools, or per-user GUI settings. The latter remain at
+`%LOCALAPPDATA%\dicomxphits\dicomxphits.gui.local.json`; remove that exact file
+separately only if the user intentionally wants to discard settings shared with
+future installations.
+
+Deletion across the local installation disk and protected `ProgramData`
+storage cannot be transactional. If Windows prevents a target from being
+removed after cleanup begins, uninstallation remains failed and reports the
+exact installation-owned path that remains; it never broadens the deletion
+scope. Because the verified bootstrap must release its read locks before its
+own folder can be removed, the command schedules the final elevated deletion
+and prints the exact protected `failure.json` location. Successful cleanup
+removes that staging path; if it remains, open the reported file for the exact
+failure and remaining-path list.
 
 ## Integrity files
 
@@ -201,10 +252,12 @@ Python into the bundle, or run a partially created runtime.
 
 ### A protected runtime already exists
 
-The installer does not reuse, repair, or remove it. Confirm that the old
-extracted project is abandoned before an administrator removes its matching
-protected runtime, or extract the verified ZIP into a fresh local path so it
-receives a distinct installation-specific runtime.
+The installer does not reuse, repair, or remove an exact-repeat target. If the
+old installation still exists, run its `uninstall_offline.cmd` rather than
+manually identifying a hashed `ProgramData` directory. A newly produced bundle
+with a different verified manifest may be freshly extracted into an empty
+directory at the same absolute path and receives a distinct protected runtime.
+Do not copy new bundle files over a populated installation tree.
 
 ### An unexpected executable or reparse-point error is reported
 
@@ -231,8 +284,10 @@ the successful installation. Start the GUI later with
 
 The editable installation and `.venv` depend on the extracted folder's
 absolute path. Confirm GUI launch from the newer folder before removing an old
-failed or superseded installation. Do not delete, move, or rename the active
-successful folder.
+superseded installation, then run the old folder's `uninstall_offline.cmd`.
+Do not delete, move, or rename the active successful folder. A pre-uninstaller
+or incomplete failed bundle may still require explicit administrator cleanup;
+never delete the shared `offline-runtimes` parent or guess a runtime ID.
 
 ### PowerShell blocks the online preparation script
 

@@ -7,11 +7,13 @@ import re
 import subprocess
 import sys
 import threading
+import webbrowser
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
 
+from dicomxphits import __version__
 from dicomxphits.gui_tool_profile import (
     TOOL_PROFILE_CUSTOM,
     TOOL_PROFILE_MODES,
@@ -24,6 +26,14 @@ from dicomxphits.prepare_3dcrt_workspace import (
     DEFAULT_SEGMENT_MAXBCH,
     DEFAULT_SEGMENT_MAXCAS,
     DEFAULT_SEGMENT_OMP_THREADS,
+)
+from dicomxphits.project_identity import (
+    PROJECT_AUTHOR_DISPLAY,
+    PROJECT_REPOSITORY_URL,
+)
+from dicomxphits.public_spectrum import (
+    PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE,
+    PUBLIC_BEAM_MODEL_GUI_LINE,
 )
 from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
@@ -100,6 +110,22 @@ workflows.
 options:
   -h, --help  show this help message and exit
 """
+
+
+def project_about_text() -> str:
+    return (
+        f"dicomxphits {__version__}\n"
+        f"Author: {PROJECT_AUTHOR_DISPLAY}\n"
+        f"Web site: {PROJECT_REPOSITORY_URL}"
+    )
+
+
+def request_project_website(
+    *,
+    opener: Callable[[str], object] = webbrowser.open,
+) -> None:
+    if opener(PROJECT_REPOSITORY_URL) is False:
+        raise RuntimeError("The default browser did not accept the Web site request")
 
 
 class GuiValidationError(ValueError):
@@ -959,10 +985,31 @@ def _base_default_values() -> dict[str, str]:
     return values
 
 
-def gui_defaults_path() -> Path:
-    env_path = os.environ.get(GUI_DEFAULTS_ENV_VAR)
+def gui_defaults_path(
+    *,
+    platform_name: str | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    environment = os.environ if environment is None else environment
+    env_path = environment.get(GUI_DEFAULTS_ENV_VAR)
     if env_path:
         return Path(env_path).expanduser()
+    effective_platform = os.name if platform_name is None else platform_name
+    if effective_platform == "nt":
+        local_app_data = str(environment.get("LOCALAPPDATA", "")).strip()
+        if local_app_data:
+            return (
+                Path(local_app_data).expanduser()
+                / "dicomxphits"
+                / GUI_DEFAULTS_FILE_NAME
+            )
+        return (
+            Path.home()
+            / "AppData"
+            / "Local"
+            / "dicomxphits"
+            / GUI_DEFAULTS_FILE_NAME
+        )
     return public_root() / "config" / GUI_DEFAULTS_FILE_NAME
 
 
@@ -1392,6 +1439,28 @@ def _build_gui() -> int:
     except tk.TclError:
         pass
 
+    def open_project_website_from_help() -> None:
+        try:
+            request_project_website()
+        except Exception as exc:
+            messagebox.showerror(
+                "Web site",
+                f"The project Web site could not be opened.\n\n{exc}",
+            )
+
+    menu_bar = tk.Menu(root)
+    help_menu = tk.Menu(menu_bar, tearoff=False)
+    help_menu.add_command(
+        label="Web site",
+        command=open_project_website_from_help,
+    )
+    help_menu.add_command(
+        label="About",
+        command=lambda: messagebox.showinfo("About dicomxphits", project_about_text()),
+    )
+    menu_bar.add_cascade(label="Help", menu=help_menu)
+    root.configure(menu=menu_bar)
+
     style = ttk.Style(root)
     style.theme_use("clam")
     style.configure("App.TFrame", background=colors["navy"])
@@ -1730,6 +1799,16 @@ def _build_gui() -> int:
     ttk.Label(header, textvariable=global_status, style="NavStatus.TLabel").grid(
         row=0, column=2, sticky="e"
     )
+    ttk.Label(
+        header,
+        text=PUBLIC_BEAM_MODEL_GUI_LINE,
+        style="NavStatus.TLabel",
+    ).grid(row=1, column=0, columnspan=3, pady=(5, 0), sticky="w")
+    ttk.Label(
+        header,
+        text=PUBLIC_BEAM_MODEL_ENERGY_GUI_LINE,
+        style="NavStatus.TLabel",
+    ).grid(row=2, column=0, columnspan=3, sticky="w")
 
     body = ttk.Frame(app, style="App.TFrame")
     body.grid(row=1, column=0, sticky="nsew")
@@ -1766,10 +1845,43 @@ def _build_gui() -> int:
         row=1, column=0, sticky="w", pady=(4, 0)
     )
 
-    page_container = ttk.Frame(content, style="Content.TFrame")
-    page_container.grid(row=1, column=0, sticky="nsew")
+    page_viewport = ttk.Frame(content, style="Content.TFrame")
+    page_viewport.grid(row=1, column=0, sticky="nsew")
+    page_viewport.columnconfigure(0, weight=1)
+    page_viewport.rowconfigure(0, weight=1)
+    page_canvas = tk.Canvas(
+        page_viewport,
+        background=colors["navy"],
+        borderwidth=0,
+        highlightthickness=0,
+        yscrollincrement=20,
+    )
+    page_canvas.grid(row=0, column=0, sticky="nsew")
+    page_scrollbar = ttk.Scrollbar(
+        page_viewport,
+        orient="vertical",
+        command=page_canvas.yview,
+    )
+    page_scrollbar.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+    page_canvas.configure(yscrollcommand=page_scrollbar.set)
+
+    page_container = ttk.Frame(page_canvas, style="Content.TFrame")
     page_container.columnconfigure(0, weight=1)
-    page_container.rowconfigure(0, weight=1)
+    page_window = page_canvas.create_window(
+        (0, 0),
+        window=page_container,
+        anchor="nw",
+    )
+
+    def refresh_page_scroll_region(*_args: object) -> None:
+        page_canvas.configure(scrollregion=page_canvas.bbox("all"))
+
+    def resize_page_to_viewport(event: tk.Event) -> None:
+        page_canvas.itemconfigure(page_window, width=event.width)
+        refresh_page_scroll_region()
+
+    page_canvas.bind("<Configure>", resize_page_to_viewport)
+    page_container.bind("<Configure>", refresh_page_scroll_region)
 
     activity_frame = ttk.Frame(content, style="Surface.TFrame", padding=(14, 10))
     activity_frame.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
@@ -1779,7 +1891,7 @@ def _build_gui() -> int:
     )
     output = scrolledtext.ScrolledText(
         activity_frame,
-        height=2,
+        height=3,
         background=colors["deep"],
         foreground=colors["text"],
         insertbackground=colors["text"],
@@ -2152,6 +2264,8 @@ def _build_gui() -> int:
         title, subtitle = page_meta[page_key]
         page_title.set(title)
         page_subtitle.set(subtitle)
+        page_canvas.yview_moveto(0.0)
+        root.after_idle(refresh_page_scroll_region)
 
     for index, (key, label) in enumerate(
         (

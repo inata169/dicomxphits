@@ -96,8 +96,12 @@ bootstrapは、保護対象pathのreparse pointと展開root直下の想定外�
 拒否し、全payloadを検証してread-lockし、bundle directory pathをrename不能に保持して
 全payloadを再検証した後だけprotected runtime構築の管理者承認を要求します。昇格childは
 Windows system directoryの絶対pathだけを使用し、runtimeと
-protected hash receiptを作成して、Python起動前に終了します。元の非昇格stageがその後、
-次を行います。
+protected hash receiptを作成して、Python起動前に終了します。
+protected runtime identityは、正規化した展開rootの絶対pathと検証済み
+bundle-manifest SHA-256の両方へ結び付けられます。異なる認証済みbundleを空にした同じ
+絶対pathへ再展開した場合は別runtime identityになり、同一bundleの再実行は既存内容を
+再利用せず従来どおり安全側で停止します。
+元の非昇格stageがその後、次を行います。
 
 - 同梱NuGet verifier、CPython package、Tcl/Tk componentを検証してread-lockする
 - 認証済みsourceだけから、Windows Common Application Data配下の管理者保護領域へ
@@ -132,9 +136,46 @@ launchers\run_gui_venv.cmd
 ```
 
 protected runtimeとsource snapshotは、`.venv`のbase interpreterおよびeditable
-sourceとして記録されるため、導入成功後も保持されます。不要になったprotected
-installationの削除は、別の明示的な管理者操作です。installerは自動削除やrepairを
-行いません。
+sourceとして記録されるため、導入成功後も保持されます。installerは自動削除やrepairを
+行いません。展開済みinstallation全体が不要になった場合は、次の検証済み
+uninstallerを使用します。
+
+## 1つのoffline installationを削除する
+
+対象GUIと、Python・PHITS関連processをすべて終了します。展開folderをcurrent directoryに
+しているterminal、File Explorer、editorなどもすべて閉じます。File Explorerから実行するか、
+current directoryが展開folderの外にあるterminalから、次のように実行します。
+
+```powershell
+Set-Location D:\
+& "D:\path\to\dicomxphits-offline-win64-1.0.1\uninstall_offline.cmd"
+```
+
+local検証成功後、確認語`UNINSTALL`を正確に入力し、Windowsの管理者promptを承認します。
+検証済みuninstallerは、正規化した現在の展開pathとmanifest digestをprotected receiptへ
+結び付け、receiptのownerとaccess ruleを確認します。別runtimeを探索または推測しません。
+
+削除前に、認証済みbundle payloadが変更されていないことを確認し、installerが作成した
+`.venv`とinstallation logだけを追加pathとして許可します。未知file、未知directory、
+reparse point、関連する実行中process、またはWindowsがcleanup processとの削除共有を許可した
+状態で開けないexact targetがあれば、一件も削除せず停止します。この最後のcheckにより、展開
+folderをcurrent directoryにしているterminalが部分削除を起こすことを防ぎます。意図的に追加した
+fileは別folderへ移動し、対象を使用しているprocessをすべて閉じてから再実行してください。
+checkを弱めないでください。
+
+成功時に削除するのは、その展開bundle、`.venv`、installation log、対応する正確な
+protected runtimeとsource snapshot、receipt、Windows Installer log、限定cleanup staging
+だけです。他の展開installation、別runtime ID、case folder、DICOM、PHITSなどの外部tool、
+per-user GUI設定は削除しません。GUI設定は
+`%LOCALAPPDATA%\dicomxphits\dicomxphits.gui.local.json`に残ります。将来のinstallationと共有する
+設定も破棄するとユーザーが明示判断した場合だけ、この正確なfileを別途削除してください。
+
+local diskの展開先とprotected `ProgramData`をまたぐ削除はtransactionにできません。
+削除開始後にWindowsが対象を削除できなかった場合、uninstallは失敗のままとし、残った正確な
+installation-owned pathを報告します。削除範囲を自動的に拡大しません。検証bootstrap自身の
+folderを削除する前にread lockを解放する必要があるため、commandは最後の管理者削除を予約し、
+protected `failure.json`の正確な場所を表示します。成功時はそのstaging pathも消えます。残った
+場合は、表示されたfileで正確な失敗理由と残存path一覧を確認してください。
 
 ## 整合性ファイル
 
@@ -186,9 +227,11 @@ NuGet verifier、Windows Installer、Python、helper、pipを起動する前に�
 
 ### protected runtimeが既に存在する
 
-installerは再利用、repair、削除を行いません。以前の展開projectが不要であることを
-確認してから管理者が対応するprotected runtimeを削除するか、検証済みZIPを新しい
-local pathへ展開し、別のinstallation固有runtimeを使用してください。
+installerは同一bundle再実行時の対象を再利用、repair、削除しません。以前のinstallationが
+残っている場合は、hash名の`ProgramData` directoryを手作業で推測せず、そのfolderの
+`uninstall_offline.cmd`を実行してください。異なるmanifestを持つ新しいproducer作成済み
+bundleは、空にした同じ絶対pathへ再展開しても別のprotected runtimeを使用できます。
+既存installation treeへ新bundleのfileを上書きしないでください。
 
 ### 想定外実行ファイルまたはreparse pointのerror
 
@@ -212,8 +255,10 @@ ZIPを再展開してください。現在のinstallerは、展開rootの実行�
 ### 複数の展開folderがある
 
 editable installと`.venv`は展開folderの絶対pathを使用します。使用する新しいfolderで
-GUI起動を確認してから、古い失敗folderまたは不要になった旧install folderを削除して
-ください。使用中の成功folderは削除、移動、renameしないでください。
+GUI起動を確認してから、不要になった旧folderの`uninstall_offline.cmd`を実行してください。
+使用中の成功folderは削除、移動、renameしないでください。uninstaller導入前または不完全な
+失敗bundleは明示的な管理者cleanupが必要な場合があります。共有`offline-runtimes` parentを
+削除したり、runtime IDを推測したりしないでください。
 
 ### オンライン準備スクリプトがPowerShell policyで拒否される
 

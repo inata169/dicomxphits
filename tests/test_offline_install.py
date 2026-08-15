@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -26,11 +27,51 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _powershell_function_prefix(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    functions, separator, _main = text.partition("\ntry {\n")
+    assert separator
+    return functions
+
+
+def _trusted_windows_powershell() -> Path:
+    return (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+
+
+def _run_powershell_harness(path: Path, environment: dict[str, str]):
+    return subprocess.run(
+        [
+            str(_trusted_windows_powershell()),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, **environment},
+    )
+
+
 def _make_bundle(root: Path) -> dict:
     payloads = {
         "install_offline.cmd": b"@echo off\r\n",
+        "uninstall_offline.cmd": b"@echo off\r\n",
         "tools/offline_install.py": b"# synthetic helper\n",
         "tools/install_offline_verified.ps1": b"# synthetic verified stage\n",
+        "tools/uninstall_offline_verified.ps1": b"# synthetic uninstall stage\n",
         "tools/lock_bundle_directories.ps1": (
             ROOT / "tools" / "lock_bundle_directories.ps1"
         ).read_bytes(),
@@ -78,9 +119,11 @@ def _make_cmd_bootstrap_bundle(root: Path) -> tuple[dict, Path]:
     marker = root / "helper-executed.txt"
     payloads = {
         "install_offline.cmd": (ROOT / "install_offline.cmd").read_bytes(),
+        "uninstall_offline.cmd": b"@echo off\r\n",
         "tools/install_offline_verified.ps1": (
             ROOT / "tools" / "install_offline_verified.ps1"
         ).read_bytes(),
+        "tools/uninstall_offline_verified.ps1": b"# synthetic uninstall stage\n",
         "tools/lock_bundle_directories.ps1": (
             ROOT / "tools" / "lock_bundle_directories.ps1"
         ).read_bytes(),
@@ -125,6 +168,37 @@ def _write_cmd_bootstrap_integrity(root: Path, manifest: dict) -> None:
     (root / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _make_uninstall_cmd_bootstrap_bundle(root: Path) -> Path:
+    marker = root / "uninstall-helper-executed.txt"
+    payloads = {
+        "uninstall_offline.cmd": (ROOT / "uninstall_offline.cmd").read_bytes(),
+        "tools/uninstall_offline_verified.ps1": (
+            "[IO.File]::WriteAllText((Join-Path "
+            "$env:DICOMXPHITS_BUNDLE_ROOT 'uninstall-helper-executed.txt'),'ok')\n"
+            "exit 0\n"
+        ).encode("utf-8"),
+        "tools/lock_bundle_directories.ps1": (
+            ROOT / "tools" / "lock_bundle_directories.ps1"
+        ).read_bytes(),
+        "payload.txt": b"synthetic payload\n",
+    }
+    records = []
+    for relative, content in payloads.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        records.append(
+            {
+                "path": relative,
+                "role": "synthetic",
+                "size": len(content),
+                "sha256": _sha256(path),
+            }
+        )
+    _write_cmd_bootstrap_integrity(root, {"schema_version": 1, "files": records})
+    return marker
+
+
 class FakeRunner:
     def __init__(self, *, venv_minor: int = 12) -> None:
         self.venv_minor = venv_minor
@@ -159,6 +233,1141 @@ class FakeRunner:
             )
             return subprocess.CompletedProcess(command, 0, stdout=output + "\n", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_protected_runtime_identity_binds_root_and_manifest(tmp_path):
+    stage = ROOT / "tools" / "install_offline_verified.ps1"
+    functions = _powershell_function_prefix(stage)
+    harness = tmp_path / "runtime-identity-harness.ps1"
+    harness.write_text(
+        functions
+        + "\n$Same = Get-ProtectedRuntimeId $env:DICOMXPHITS_TEST_ROOT "
+        "$env:DICOMXPHITS_TEST_MANIFEST_A\n"
+        "$CaseOnly = Get-ProtectedRuntimeId "
+        "$env:DICOMXPHITS_TEST_ROOT_CASE $env:DICOMXPHITS_TEST_MANIFEST_A\n"
+        "$Changed = Get-ProtectedRuntimeId $env:DICOMXPHITS_TEST_ROOT "
+        "$env:DICOMXPHITS_TEST_MANIFEST_B\n"
+        "$MalformedRejected = $false\n"
+        "try { $null = Get-ProtectedRuntimeId $env:DICOMXPHITS_TEST_ROOT 'bad' }\n"
+        "catch { $MalformedRejected = $true }\n"
+        "$MissingRejected = $false\n"
+        "try { $null = Get-ProtectedRuntimeId $env:DICOMXPHITS_TEST_ROOT '' }\n"
+        "catch { $MissingRejected = $true }\n"
+        "Write-Output ('SAME=' + $Same)\n"
+        "Write-Output ('CASE=' + $CaseOnly)\n"
+        "Write-Output ('CHANGED=' + $Changed)\n"
+        "Write-Output ('MALFORMED_REJECTED=' + $MalformedRejected)\n"
+        "Write-Output ('MISSING_REJECTED=' + $MissingRejected)\n",
+        encoding="utf-8",
+    )
+    bundle_root = str((tmp_path / "bundle root").resolve())
+    manifest_a = "a" * 64
+    manifest_b = "b" * 64
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    environment = {
+        **os.environ,
+        "DICOMXPHITS_BUNDLE_ROOT": bundle_root,
+        "DICOMXPHITS_BUNDLE_MANIFEST_SHA256": manifest_a,
+        "DICOMXPHITS_VERIFIED_STAGE": "synthetic-stage",
+        "DICOMXPHITS_TEST_ROOT": bundle_root,
+        "DICOMXPHITS_TEST_ROOT_CASE": bundle_root.swapcase(),
+        "DICOMXPHITS_TEST_MANIFEST_A": manifest_a,
+        "DICOMXPHITS_TEST_MANIFEST_B": manifest_b,
+    }
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines())
+    expected = hashlib.sha256(
+        (
+            "bundle-root-manifest-v1\n"
+            + str(Path(bundle_root).resolve()).upper()
+            + "\n"
+            + manifest_a
+        ).encode()
+    ).hexdigest()
+    assert values["SAME"] == expected
+    assert values["CASE"] == expected
+    assert values["CHANGED"] != expected
+    assert values["MALFORMED_REJECTED"] == "True"
+    assert values["MISSING_REJECTED"] == "True"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_exact_runtime_collision_fails_without_mutating_existing_target(tmp_path):
+    stage = ROOT / "tools" / "install_offline_verified.ps1"
+    existing_runtime = tmp_path / "existing-runtime"
+    existing_runtime.mkdir()
+    sentinel = existing_runtime / "sentinel.txt"
+    sentinel.write_bytes(b"preserve exact runtime\n")
+    harness = tmp_path / "runtime-collision-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(stage)
+        + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$script:ProtectedRuntimeReceipt=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RECEIPT)\n"
+        "$script:RuntimeLog=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_LOG)\n"
+        "try { New-AuthenticatedPythonRuntime; exit 8 }\n"
+        "catch {\n"
+        "  if ($_.Exception.Message -notmatch 'already exists') { Write-Error $_; exit 9 }\n"
+        "  Write-Output 'EXACT_COLLISION_REJECTED'\n"
+        "  exit 0\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "DICOMXPHITS_BUNDLE_MANIFEST_SHA256": "a" * 64,
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-stage",
+            "DICOMXPHITS_TEST_RUNTIME": str(existing_runtime),
+            "DICOMXPHITS_TEST_RECEIPT": str(tmp_path / "receipt.json"),
+            "DICOMXPHITS_TEST_LOG": str(tmp_path / "runtime.log"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EXACT_COLLISION_REJECTED" in result.stdout.splitlines()
+    assert sentinel.read_bytes() == b"preserve exact runtime\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize(
+    ("diagnostic", "expected"),
+    [
+        (
+            {
+                "schema_version": 1,
+                "verified_stage": "expected-stage",
+                "runtime_id": "a" * 64,
+                "category": "runtime-construction",
+                "message": "Protected target already exists.",
+            },
+            "Protected target already exists.",
+        ),
+        (
+            {
+                "schema_version": 1,
+                "verified_stage": "wrong-stage",
+                "runtime_id": "a" * 64,
+                "category": "runtime-construction",
+                "message": "must not be trusted",
+            },
+            "NULL",
+        ),
+        ({"malformed": True}, "NULL"),
+        (None, "NULL"),
+    ],
+)
+def test_runtime_failure_diagnostic_is_display_only_and_nonce_bound(
+    tmp_path, diagnostic, expected
+):
+    stage = ROOT / "tools" / "install_offline_verified.ps1"
+    diagnostic_path = tmp_path / "failure.json"
+    if diagnostic is not None:
+        diagnostic_path.write_text(json.dumps(diagnostic), encoding="utf-8")
+    harness = tmp_path / "runtime-diagnostic-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(stage)
+        + "\nfunction Assert-NoReparsePath { param($Path,$Label) }\n"
+        "function Assert-ProtectedRuntimeSecurity { param($Path,$IsDirectory,$Label) }\n"
+        "$script:ProtectedFailureDiagnostic=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_DIAGNOSTIC)\n"
+        "$script:ProtectedRuntimeId='" + ("a" * 64) + "'\n"
+        "$Reason=Read-ProtectedRuntimeFailureDiagnostic\n"
+        "if ([string]::IsNullOrWhiteSpace($Reason)) { Write-Output 'NULL' }\n"
+        "else { Write-Output $Reason }\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "DICOMXPHITS_BUNDLE_MANIFEST_SHA256": "b" * 64,
+            "DICOMXPHITS_VERIFIED_STAGE": "expected-stage",
+            "DICOMXPHITS_TEST_DIAGNOSTIC": str(diagnostic_path),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == expected
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize(
+    "problem",
+    [
+        "valid",
+        "unknown",
+        "venv-unknown",
+        "venv-file",
+        "log-directory",
+        "modified",
+        "reparse",
+    ],
+)
+def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, problem):
+    bundle_root = tmp_path / "installed bundle"
+    protected_root = tmp_path / "protected source"
+    bundle_root.mkdir()
+    protected_root.mkdir()
+    payload = bundle_root / "payload.txt"
+    payload.write_text("payload\n", encoding="utf-8")
+    record = {
+        "path": "payload.txt",
+        "role": "public-source",
+        "size": payload.stat().st_size,
+        "sha256": _sha256(payload),
+    }
+    manifest = {"schema_version": 1, "files": [record]}
+    for root in (bundle_root, protected_root):
+        (root / "payload.txt").write_text("payload\n", encoding="utf-8")
+        (root / "bundle-manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        (root / "SHA256SUMS.txt").write_text(
+            f"{record['sha256']} *payload.txt\n", encoding="utf-8"
+        )
+    (protected_root / "pyproject.toml").write_text(
+        '[project]\nname = "dicomxphits"\nversion = "1.0.1"\n\n'
+        '[project.scripts]\ndicomxphits-gui = "dicomxphits.gui:main"\n',
+        encoding="utf-8",
+    )
+    (bundle_root / ".venv" / "Scripts").mkdir(parents=True)
+    (bundle_root / ".venv" / "Scripts" / "python.exe").write_bytes(b"generated")
+    (bundle_root / "offline-install.log").write_text("generated\n", encoding="utf-8")
+    if problem == "valid":
+        expected = "INVENTORY_OK"
+        expected_code = 0
+    elif problem == "unknown":
+        (bundle_root / "keep-me.txt").write_text("user content\n", encoding="utf-8")
+        expected = "unknown file"
+        expected_code = 17
+    elif problem == "venv-unknown":
+        unknown = bundle_root / ".venv" / "case" / "plan.dcm"
+        unknown.parent.mkdir()
+        unknown.write_bytes(b"synthetic user content\n")
+        expected = ".venv contains an unknown"
+        expected_code = 17
+    elif problem == "venv-file":
+        shutil.rmtree(bundle_root / ".venv")
+        (bundle_root / ".venv").write_bytes(b"synthetic user content\n")
+        expected = ".venv path must be a directory"
+        expected_code = 17
+    elif problem == "log-directory":
+        (bundle_root / "offline-install.log").unlink()
+        (bundle_root / "offline-install.log").mkdir()
+        expected = "offline install log must be a regular file"
+        expected_code = 17
+    elif problem == "modified":
+        payload.write_text("modified\n", encoding="utf-8")
+        expected = "was modified"
+        expected_code = 17
+    else:
+        (tmp_path / "junction target").mkdir()
+        expected = "reparse point"
+        expected_code = 17
+
+    helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
+    harness = tmp_path / "uninstall-inventory-harness.ps1"
+    harness.write_text(
+        "$env:DICOMXPHITS_BUNDLE_ROOT=$env:DICOMXPHITS_TEST_ROOT\n"
+        + _powershell_function_prefix(helper)
+        + "\nfunction Assert-ProtectedSecurity { param($Path,$IsDirectory,$Label) }\n"
+        "$script:BundleRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$script:BundlePrefix=$script:BundleRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar\n"
+        "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_PROTECTED)\n"
+        "$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$script:BundleManifestSha256=$env:DICOMXPHITS_TEST_MANIFEST\n"
+        "if ($env:DICOMXPHITS_TEST_PROBLEM -eq 'reparse') {"
+        "New-Item -ItemType Junction -Path (Join-Path $script:BundleRoot 'linked') "
+        "-Target $env:DICOMXPHITS_TEST_TARGET | Out-Null}\n"
+        "try { Assert-ExactInstallationRoot; Write-Output 'INVENTORY_OK'; exit 0 }\n"
+        "catch { Write-Output ('CONTROLLED=' + $_.Exception.Message); exit 17 }\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_PROTECTED": str(protected_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "protected runtime"),
+            "DICOMXPHITS_TEST_MANIFEST": _sha256(protected_root / "bundle-manifest.json"),
+            "DICOMXPHITS_TEST_PROBLEM": problem,
+            "DICOMXPHITS_TEST_TARGET": str(tmp_path / "junction target"),
+        },
+    )
+
+    assert result.returncode == expected_code, result.stdout + result.stderr
+    assert expected in result.stdout
+    assert bundle_root.is_dir()
+    assert protected_root.is_dir()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize("unknown", [False, True])
+def test_uninstall_venv_inventory_is_derived_from_authenticated_wheel(tmp_path, unknown):
+    venv_root = tmp_path / ".venv"
+    package = venv_root / "Lib" / "site-packages" / "sample" / "__init__.py"
+    package.parent.mkdir(parents=True)
+    package.write_text("VALUE = 1\n", encoding="utf-8")
+    python = venv_root / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"synthetic python")
+    if unknown:
+        injected = package.parent / "case" / "plan.dcm"
+        injected.parent.mkdir()
+        injected.write_bytes(b"synthetic user content\n")
+
+    wheel = tmp_path / "sample-1.0-py3-none-any.whl"
+    record = (
+        "sample/__init__.py,sha256=synthetic,10\n"
+        "sample-1.0.dist-info/entry_points.txt,sha256=synthetic,48\n"
+        "sample-1.0.dist-info/RECORD,,\n"
+    )
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("sample/__init__.py", "VALUE = 1\n")
+        archive.writestr(
+            "sample-1.0.dist-info/entry_points.txt",
+            "[console_scripts]\nsample-tool = sample:main\n",
+        )
+        archive.writestr("sample-1.0.dist-info/RECORD", record)
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "dicomxphits"\nversion = "1.0.1"\n',
+        encoding="utf-8",
+    )
+
+    helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
+    harness = tmp_path / "uninstall-venv-wheel-inventory-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(helper)
+        + "\ntry { Assert-ExactVenvTree $env:DICOMXPHITS_TEST_VENV "
+        "@($env:DICOMXPHITS_TEST_WHEEL) $env:DICOMXPHITS_TEST_PYPROJECT; "
+        "Write-Output 'VENV_INVENTORY_OK'; exit 0 }\n"
+        "catch { Write-Output ('CONTROLLED=' + $_.Exception.Message); exit 17 }\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "DICOMXPHITS_TEST_VENV": str(venv_root),
+            "DICOMXPHITS_TEST_WHEEL": str(wheel),
+            "DICOMXPHITS_TEST_PYPROJECT": str(pyproject),
+        },
+    )
+
+    expected_code = 17 if unknown else 0
+    assert result.returncode == expected_code, result.stdout + result.stderr
+    expected = ".venv contains an unknown" if unknown else "VENV_INVENTORY_OK"
+    assert expected in result.stdout
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "none",
+        "bundle_root",
+        "manifest",
+        "runtime_root",
+        "user_sid",
+        "identity_schema",
+        "malformed",
+    ],
+)
+def test_uninstall_receipt_is_bound_to_exact_installation(tmp_path, mismatch):
+    bundle_root = tmp_path / "installed bundle"
+    runtime_root = tmp_path / "protected runtime"
+    protected_source = runtime_root / "dicomxphits-source"
+    bundle_root.mkdir()
+    protected_source.mkdir(parents=True)
+    receipt = tmp_path / "runtime-receipt.json"
+    sentinel = runtime_root / "sentinel.txt"
+    sentinel.write_bytes(b"protected runtime remains\n")
+    harness = tmp_path / "uninstall-receipt-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\nfunction Assert-ProtectedSecurity { param($Path,$IsDirectory,$Label) }\n"
+        "$script:InstallingUserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User\n"
+        "$script:BundleManifestSha256='" + ("a" * 64) + "'\n"
+        "$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_SOURCE)\n"
+        "$script:ProtectedRuntimeReceipt=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RECEIPT)\n"
+        "$Record=[ordered]@{schema_version=1;runtime_identity_schema='bundle-root-manifest-v1';"
+        "bundle_manifest_sha256=$script:BundleManifestSha256;bundle_root=$script:BundleRoot;"
+        "runtime_root=$script:RuntimeRoot;protected_source_root=$script:ProtectedSourceRoot;"
+        "installing_user_sid=$script:InstallingUserSid.Value}\n"
+        "switch ($env:DICOMXPHITS_TEST_MISMATCH) {\n"
+        " 'bundle_root' {$Record.bundle_root=[IO.Path]::GetFullPath((Join-Path $script:BundleRoot '..\\other'))}\n"
+        " 'manifest' {$Record.bundle_manifest_sha256='" + ("b" * 64) + "'}\n"
+        " 'runtime_root' {$Record.runtime_root=[IO.Path]::GetFullPath((Join-Path $script:RuntimeRoot '..\\other'))}\n"
+        " 'user_sid' {$Record.installing_user_sid='S-1-5-18'}\n"
+        " 'identity_schema' {$Record.runtime_identity_schema='wrong-schema'}\n"
+        "}\n"
+        "if ($env:DICOMXPHITS_TEST_MISMATCH -eq 'malformed') {"
+        "Set-Content -LiteralPath $script:ProtectedRuntimeReceipt -Value '{' -Encoding UTF8}\n"
+        "else {$Record|ConvertTo-Json -Compress|Set-Content -LiteralPath $script:ProtectedRuntimeReceipt -Encoding UTF8}\n"
+        "try { $null=Import-ExactProtectedReceipt; Write-Output 'RECEIPT_OK'; exit 0 }\n"
+        "catch { Write-Output ('CONTROLLED=' + $_.Exception.Message); exit 17 }\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(runtime_root),
+            "DICOMXPHITS_TEST_SOURCE": str(protected_source),
+            "DICOMXPHITS_TEST_RECEIPT": str(receipt),
+            "DICOMXPHITS_TEST_MISMATCH": mismatch,
+        },
+    )
+
+    expected_code = 0 if mismatch == "none" else 17
+    assert result.returncode == expected_code, result.stdout + result.stderr
+    if mismatch == "none":
+        assert "RECEIPT_OK" in result.stdout
+    elif mismatch != "malformed":
+        assert "does not identify this exact installation" in result.stdout
+    else:
+        assert "CONTROLLED=" in result.stdout
+    assert sentinel.read_bytes() == b"protected runtime remains\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_uninstall_process_guard_refuses_synthetic_installed_gui(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    bundle_root.mkdir()
+    harness = tmp_path / "uninstall-process-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "function Get-CimInstance { [pscustomobject]@{ProcessId=4242;Name='pythonw.exe';"
+        "ExecutablePath=(Join-Path $script:BundleRoot '.venv\\Scripts\\pythonw.exe');"
+        "CommandLine=$null} }\n"
+        "try { Assert-NoAssociatedProcesses @(); exit 8 }\n"
+        "catch {\n"
+        " if ($_.Exception.Message -notmatch 'Associated process must be closed') {Write-Error $_;exit 9}\n"
+        " Write-Output 'ACTIVE_PROCESS_REJECTED'; exit 0\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "runtime"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ACTIVE_PROCESS_REJECTED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize("associated", [False, True])
+def test_uninstall_process_guard_scopes_external_scientific_process(
+    tmp_path, associated
+):
+    bundle_root = tmp_path / "installed bundle"
+    bundle_root.mkdir()
+    external_tool = tmp_path / "external tools" / "phits.exe"
+    external_tool.parent.mkdir()
+    external_tool.write_bytes(b"synthetic executable placeholder\n")
+    input_path = (
+        bundle_root / "associated input.inp"
+        if associated
+        else tmp_path / "unrelated case" / "input.inp"
+    )
+    input_path.parent.mkdir(exist_ok=True)
+    input_path.write_text("synthetic input\n", encoding="utf-8")
+    command_line = f'"{external_tool}" "{input_path}"'
+    harness = tmp_path / "uninstall-scientific-process-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "function Get-CimInstance { [pscustomobject]@{ProcessId=4343;Name='phits.exe';"
+        "ExecutablePath=$env:DICOMXPHITS_TEST_EXECUTABLE;"
+        "CommandLine=$env:DICOMXPHITS_TEST_COMMAND_LINE} }\n"
+        "$Rejected=$false\n"
+        "try { Assert-NoAssociatedProcesses @() }\n"
+        "catch {\n"
+        " if ($_.Exception.Message -notmatch 'Associated process must be closed') "
+        "{Write-Error $_;exit 9}\n"
+        " $Rejected=$true\n"
+        "}\n"
+        "if ($Rejected) {Write-Output 'SCIENTIFIC_PROCESS_REJECTED'} "
+        "else {Write-Output 'SCIENTIFIC_PROCESS_ALLOWED'}\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "runtime"),
+            "DICOMXPHITS_TEST_EXECUTABLE": str(external_tool),
+            "DICOMXPHITS_TEST_COMMAND_LINE": command_line,
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected = (
+        "SCIENTIFIC_PROCESS_REJECTED"
+        if associated
+        else "SCIENTIFIC_PROCESS_ALLOWED"
+    )
+    assert expected in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_refuses_locked_root_before_any_exact_target_deletion(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    runtime_root = tmp_path / "protected runtime"
+    cleanup = tmp_path / "cleanup staging"
+    for directory in (bundle_root, runtime_root, cleanup):
+        directory.mkdir()
+        (directory / "sentinel.txt").write_bytes(b"must remain\n")
+    receipt = tmp_path / "runtime-receipt.json"
+    runtime_log = tmp_path / "runtime-msi.log"
+    for path in (receipt, runtime_log):
+        path.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-delete-share-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n"
+        + (ROOT / "tools" / "lock_bundle_directories.ps1").read_text(
+            encoding="utf-8"
+        )
+        + "\n$Targets=@($env:DICOMXPHITS_TEST_ROOT,$env:DICOMXPHITS_TEST_RUNTIME,"
+        "$env:DICOMXPHITS_TEST_RECEIPT,$env:DICOMXPHITS_TEST_LOG,"
+        "$env:DICOMXPHITS_TEST_CLEANUP)\n"
+        "$Lock=Open-LockedBundleDirectory $env:DICOMXPHITS_TEST_ROOT\n"
+        "try {\n"
+        " try {$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets;"
+        "Open-ExactUninstallDeleteHandles $DeletePlan;"
+        "Close-ExactUninstallPlan $DeletePlan;exit 8}\n"
+        " catch {\n"
+        "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
+        "  foreach($Target in $Targets){if(-not([IO.File]::Exists($Target)-or"
+        "[IO.Directory]::Exists($Target))){exit 10}}\n"
+        "  Write-Output 'LOCKED_TARGETS_PRESERVED'\n"
+        " }\n"
+        "}\n"
+        "finally {$Lock.Dispose()}\n"
+        "$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets\n"
+        "Open-ExactUninstallDeleteHandles $DeletePlan\n"
+        "Close-ExactUninstallPlan $DeletePlan\n"
+        "Write-Output 'UNLOCKED_PREFLIGHT_OK'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(runtime_root),
+            "DICOMXPHITS_TEST_RECEIPT": str(receipt),
+            "DICOMXPHITS_TEST_LOG": str(runtime_log),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "LOCKED_TARGETS_PRESERVED" in result.stdout.splitlines()
+    assert "UNLOCKED_PREFLIGHT_OK" in result.stdout.splitlines()
+    for directory in (bundle_root, runtime_root, cleanup):
+        assert (directory / "sentinel.txt").read_bytes() == b"must remain\n"
+    assert receipt.read_bytes() == b"must remain\n"
+    assert runtime_log.read_bytes() == b"must remain\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_refuses_locked_descendant_before_any_exact_target_deletion(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    runtime_root = tmp_path / "protected runtime"
+    cleanup = tmp_path / "cleanup staging"
+    locked_file = bundle_root / "nested" / "locked.txt"
+    preserved_files = (
+        bundle_root / "unlocked.txt",
+        locked_file,
+        runtime_root / "sentinel.txt",
+        cleanup / "sentinel.txt",
+    )
+    for path in preserved_files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"must remain\n")
+    receipt = tmp_path / "runtime-receipt.json"
+    runtime_log = tmp_path / "runtime-msi.log"
+    for path in (receipt, runtime_log):
+        path.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-descendant-lock-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Targets=@($env:DICOMXPHITS_TEST_ROOT,$env:DICOMXPHITS_TEST_RUNTIME,"
+        "$env:DICOMXPHITS_TEST_RECEIPT,$env:DICOMXPHITS_TEST_LOG,"
+        "$env:DICOMXPHITS_TEST_CLEANUP)\n"
+        "$Lock=[IO.File]::Open($env:DICOMXPHITS_TEST_LOCKED,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Read,[IO.FileShare]::Read)\n"
+        "try {\n"
+        " try {$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets;"
+        "Open-ExactUninstallDeleteHandles $DeletePlan;"
+        "Close-ExactUninstallPlan $DeletePlan;exit 8}\n"
+        " catch {\n"
+        "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
+        "  foreach($Target in $Targets){if(-not([IO.File]::Exists($Target)-or"
+        "[IO.Directory]::Exists($Target))){exit 10}}\n"
+        "  Write-Output 'LOCKED_DESCENDANT_PRESERVED'\n"
+        " }\n"
+        "}\n"
+        "finally {$Lock.Dispose()}\n"
+        "$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets\n"
+        "Open-ExactUninstallDeleteHandles $DeletePlan\n"
+        "Close-ExactUninstallPlan $DeletePlan\n"
+        "Write-Output 'UNLOCKED_DESCENDANT_PREFLIGHT_OK'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(runtime_root),
+            "DICOMXPHITS_TEST_RECEIPT": str(receipt),
+            "DICOMXPHITS_TEST_LOG": str(runtime_log),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+            "DICOMXPHITS_TEST_LOCKED": str(locked_file),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "LOCKED_DESCENDANT_PRESERVED" in result.stdout.splitlines()
+    assert "UNLOCKED_DESCENDANT_PREFLIGHT_OK" in result.stdout.splitlines()
+    for path in (*preserved_files, receipt, runtime_log):
+        assert path.read_bytes() == b"must remain\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_final_child_preserves_complete_staging_when_reader_blocks_delete(
+    tmp_path,
+):
+    bundle_root = tmp_path / "installed bundle"
+    cleanup = tmp_path / "cleanup staging"
+    cleanup.mkdir()
+    staged_files = (
+        cleanup / "uninstall_offline_verified.ps1",
+        cleanup / "cleanup-plan.json",
+        cleanup / "failure.json",
+    )
+    for path in staged_files:
+        path.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-final-staging-lock-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Cleanup=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_CLEANUP)\n"
+        "$Locked=Join-Path $Cleanup 'cleanup-plan.json'\n"
+        "$Lock=[IO.File]::Open($Locked,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Read,[IO.FileShare]::Read)\n"
+        "try {\n"
+        " $Plan=$null\n"
+        " try {$Plan=Open-ExactUninstallWriteGuardPlan @($Cleanup);"
+        "Open-ExactUninstallDeleteHandles $Plan;"
+        "Remove-ExactCleanupStaging $Plan $Cleanup;exit 8}\n"
+        " catch {\n"
+        "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
+        "  foreach($Name in @('uninstall_offline_verified.ps1','cleanup-plan.json',"
+        "'failure.json')){if(-not[IO.File]::Exists((Join-Path $Cleanup $Name))){exit 10}}\n"
+        "  Write-Output 'LOCKED_STAGING_AND_REPORT_PRESERVED'\n"
+        " }\n"
+        " finally {if($null-ne$Plan){Close-ExactUninstallPlan $Plan}}\n"
+        "}\n"
+        "finally {$Lock.Dispose()}\n"
+        "$Plan=Open-ExactUninstallWriteGuardPlan @($Cleanup)\n"
+        "try {Open-ExactUninstallDeleteHandles $Plan;"
+        "Remove-ExactCleanupStaging $Plan $Cleanup}\n"
+        "finally {Close-ExactUninstallPlan $Plan}\n"
+        "if([IO.Directory]::Exists($Cleanup)-or[IO.File]::Exists($Cleanup)){exit 11}\n"
+        "Write-Output 'UNLOCKED_STAGING_REMOVED'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "LOCKED_STAGING_AND_REPORT_PRESERVED" in result.stdout.splitlines()
+    assert "UNLOCKED_STAGING_REMOVED" in result.stdout.splitlines()
+    assert not cleanup.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_write_guards_freeze_existing_tree_until_cleanup(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    existing = bundle_root / "nested" / "existing.txt"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-write-freeze-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Root=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$Existing=Join-Path $Root 'nested\\existing.txt'\n"
+        "$Late=Join-Path $Root 'late.txt'\n"
+        "$Plan=Open-ExactUninstallWriteGuardPlan @($Root)\n"
+        "try {\n"
+        " $WriteBlocked=$false\n"
+        " try {$Stream=[IO.File]::Open($Existing,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete);"
+        "$Stream.Dispose()} catch {$WriteBlocked=$true}\n"
+        " if (-not $WriteBlocked) {Write-Output 'WRITE_NOT_BLOCKED';exit 8}\n"
+        " Open-ExactUninstallDeleteHandles $Plan\n"
+        " [IO.File]::WriteAllText($Late,'late')\n"
+        " $ChangedRejected=$false\n"
+        " try {Remove-ExactInstallationTargets $Plan} catch {$ChangedRejected=$true}\n"
+        " if (-not $ChangedRejected) {exit 9}\n"
+        " if (-not [IO.File]::Exists($Existing) -or -not [IO.File]::Exists($Late)) {exit 10}\n"
+        " Write-Output 'TREE_CHANGE_REJECTED'\n"
+        "}\n"
+        "finally {Close-ExactUninstallPlan $Plan}\n"
+        "$Stream=[IO.File]::Open($Existing,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)\n"
+        "$Stream.Dispose()\n"
+        "Write-Output 'TREE_WRITE_RELEASED'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "TREE_CHANGE_REJECTED" in result.stdout.splitlines()
+    assert "TREE_WRITE_RELEASED" in result.stdout.splitlines()
+    assert (bundle_root / "late.txt").read_text(encoding="utf-8") == "late"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_frozen_handle_does_not_delete_late_path_replacement(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    existing = bundle_root / "nested" / "existing.txt"
+    moved = tmp_path / "moved-installer-file.txt"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"installer generated\n")
+
+    harness = tmp_path / "uninstall-path-replacement-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Root=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$Existing=Join-Path $Root 'nested\\existing.txt'\n"
+        "$Moved=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_MOVED)\n"
+        "$Plan=Open-ExactUninstallWriteGuardPlan @($Root)\n"
+        "try {\n"
+        " Open-ExactUninstallDeleteHandles $Plan\n"
+        " [IO.File]::Move($Existing,$Moved)\n"
+        " [IO.File]::WriteAllText($Existing,'late replacement')\n"
+        " $ChangedRejected=$false\n"
+        " try {Remove-ExactInstallationTargets $Plan} catch {$ChangedRejected=$true}\n"
+        " if (-not $ChangedRejected) {exit 8}\n"
+        " if (-not [IO.File]::Exists($Existing)) {exit 9}\n"
+        " if ([IO.File]::Exists($Moved)) {exit 10}\n"
+        " Write-Output 'PATH_REPLACEMENT_PRESERVED'\n"
+        "}\n"
+        "finally {Close-ExactUninstallPlan $Plan}\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_MOVED": str(moved),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PATH_REPLACEMENT_PRESERVED" in result.stdout.splitlines()
+    assert existing.read_text(encoding="utf-8") == "late replacement"
+    assert not moved.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize(
+    "problem", ["valid", "final_phase", "unknown", "modified_helper"]
+)
+def test_uninstall_cleanup_staging_is_closed_and_authenticated(tmp_path, problem):
+    bundle_root = tmp_path / "installed bundle"
+    protected_source = tmp_path / "protected source"
+    cleanup = tmp_path / "cleanup staging"
+    (protected_source / "tools").mkdir(parents=True)
+    cleanup.mkdir()
+    helper_bytes = b"# authenticated cleanup helper\n"
+    (protected_source / "tools" / "uninstall_offline_verified.ps1").write_bytes(
+        helper_bytes
+    )
+    (cleanup / "uninstall_offline_verified.ps1").write_bytes(helper_bytes)
+    (cleanup / "cleanup-plan.json").write_text("{}\n", encoding="utf-8")
+    if problem == "final_phase":
+        (cleanup / "failure.json").write_text("{}\n", encoding="utf-8")
+        (protected_source / "tools" / "uninstall_offline_verified.ps1").unlink()
+    elif problem == "unknown":
+        (cleanup / "unknown.txt").write_text("unknown\n", encoding="utf-8")
+    elif problem == "modified_helper":
+        (cleanup / "uninstall_offline_verified.ps1").write_text(
+            "# modified\n", encoding="utf-8"
+        )
+    harness = tmp_path / "uninstall-staging-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\nfunction Assert-ProtectedSecurity { param($Path,$IsDirectory,$Label) }\n"
+        "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_SOURCE)\n"
+        "$FinalPhase=[bool]::Parse($env:DICOMXPHITS_TEST_FINAL_PHASE)\n"
+        "try { Assert-ExactCleanupStaging $env:DICOMXPHITS_TEST_CLEANUP $FinalPhase;"
+        "Write-Output 'STAGING_OK';exit 0 }\n"
+        "catch { Write-Output ('CONTROLLED=' + $_.Exception.Message);exit 17 }\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_SOURCE": str(protected_source),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+            "DICOMXPHITS_TEST_FINAL_PHASE": str(problem == "final_phase"),
+        },
+    )
+
+    expected_code = 0 if problem in {"valid", "final_phase"} else 17
+    assert result.returncode == expected_code, result.stdout + result.stderr
+    if problem in {"valid", "final_phase"}:
+        assert "STAGING_OK" in result.stdout
+    else:
+        assert "CONTROLLED=" in result.stdout
+    assert cleanup.is_dir()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_uninstall_exact_cleanup_preserves_siblings(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    runtime_parent = tmp_path / "offline-runtimes"
+    runtime_root = runtime_parent / ("a" * 64)
+    sibling_runtime = runtime_parent / ("b" * 64)
+    sibling_install = tmp_path / "other installation"
+    case_folder = tmp_path / "dicomxphits-cases" / "synthetic-case"
+    external_tool = tmp_path / "external-tools" / "phits"
+    user_settings = tmp_path / "LocalAppData" / "dicomxphits"
+    preserved = (
+        sibling_runtime,
+        sibling_install,
+        case_folder,
+        external_tool,
+        user_settings,
+    )
+    for directory in (bundle_root, runtime_root, *preserved):
+        directory.mkdir(parents=True)
+        (directory / "sentinel.txt").write_bytes(b"keep or remove\n")
+    receipt = runtime_parent / (("a" * 64) + ".json")
+    runtime_log = runtime_parent / (("a" * 64) + "-msi.log")
+    failure = runtime_parent / (("a" * 64) + "-failure.json")
+    for path in (receipt, runtime_log, failure):
+        path.write_text("target\n", encoding="utf-8")
+
+    helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
+    harness = tmp_path / "uninstall-cleanup-harness.ps1"
+    harness.write_text(
+        "$env:DICOMXPHITS_BUNDLE_ROOT=$env:DICOMXPHITS_TEST_ROOT\n"
+        + _powershell_function_prefix(helper)
+        + "\n$script:BundleRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$script:ProtectedRuntimeReceipt=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RECEIPT)\n"
+        "$script:RuntimeLog=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_LOG)\n"
+        "$script:FailureDiagnostic=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_FAILURE)\n"
+        "$DeletePlan=Open-ExactUninstallWriteGuardPlan @($script:BundleRoot,"
+        "$script:RuntimeRoot,$script:ProtectedRuntimeReceipt,$script:RuntimeLog,"
+        "$script:FailureDiagnostic)\n"
+        "try {Open-ExactUninstallDeleteHandles $DeletePlan;"
+        "Remove-ExactInstallationTargets $DeletePlan}\n"
+        "finally {Close-ExactUninstallPlan $DeletePlan}\n"
+        "Write-Output 'EXACT_CLEANUP_OK'\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(runtime_root),
+            "DICOMXPHITS_TEST_RECEIPT": str(receipt),
+            "DICOMXPHITS_TEST_LOG": str(runtime_log),
+            "DICOMXPHITS_TEST_FAILURE": str(failure),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EXACT_CLEANUP_OK" in result.stdout.splitlines()
+    assert not bundle_root.exists()
+    assert not runtime_root.exists()
+    assert not receipt.exists()
+    assert not runtime_log.exists()
+    assert not failure.exists()
+    for directory in preserved:
+        assert (directory / "sentinel.txt").read_bytes() == b"keep or remove\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_uninstall_partial_failure_report_lists_only_exact_remaining_targets(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    runtime_root = tmp_path / "runtime"
+    cleanup = tmp_path / "cleanup"
+    sibling = tmp_path / "sibling-must-not-be-reported"
+    for directory in (bundle_root, runtime_root, cleanup, sibling):
+        directory.mkdir()
+    acl_template = cleanup / "acl-template.txt"
+    acl_template.write_text("template\n", encoding="utf-8")
+    harness = tmp_path / "uninstall-failure-report-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\nfunction Assert-ProtectedSecurity { param($Path,$IsDirectory,$Label) }\n"
+        "function Get-ProtectedRuntimeSecurity { param($IsDirectory) "
+        "return [IO.File]::GetAccessControl($env:DICOMXPHITS_TEST_ACL_TEMPLATE) }\n"
+        "$script:InstallingUserSid=[Security.Principal.WindowsIdentity]::GetCurrent().User\n"
+        "$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$script:ProtectedRuntimeReceipt=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RECEIPT)\n"
+        "$script:RuntimeLog=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_LOG)\n"
+        "$script:FailureDiagnostic=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_DIAGNOSTIC)\n"
+        "$script:ProtectedRuntimeId='" + ("a" * 64) + "'\n"
+        "Write-ProtectedCleanupFailure $env:DICOMXPHITS_TEST_CLEANUP 'synthetic partial failure'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_UNINSTALL_NONCE": "b" * 32,
+            "DICOMXPHITS_TEST_RUNTIME": str(runtime_root),
+            "DICOMXPHITS_TEST_RECEIPT": str(tmp_path / "missing-receipt.json"),
+            "DICOMXPHITS_TEST_LOG": str(tmp_path / "missing-log.txt"),
+            "DICOMXPHITS_TEST_DIAGNOSTIC": str(tmp_path / "missing-diagnostic.json"),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+            "DICOMXPHITS_TEST_ACL_TEMPLATE": str(acl_template),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((cleanup / "failure.json").read_text(encoding="utf-8-sig"))
+    assert report["message"] == "synthetic partial failure"
+    assert {Path(path) for path in report["remaining_paths"]} == {
+        bundle_root.resolve(),
+        runtime_root.resolve(),
+        cleanup.resolve(),
+    }
+    assert sibling.resolve() not in {Path(path) for path in report["remaining_paths"]}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_uninstall_waits_only_for_direct_bootstrap_stage_without_caller_shell(tmp_path):
+    helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
+    harness = tmp_path / "uninstall-direct-stage-wait-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(helper)
+        + "\n$script:BundleRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$script:BundleManifestSha256='" + ("a" * 64) + "'\n"
+        "$script:ProtectedRuntimeParent=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME_PARENT)\n"
+        "$script:ProtectedRuntimeId='" + ("b" * 64) + "'\n"
+        "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_SOURCE)\n"
+        "$script:FakeWaitCalled=$false\n"
+        "$script:StartProcessWaitSwitch=$false\n"
+        "$script:ParentLookupCalled=$false\n"
+        "$script:CapturedArguments=$null\n"
+        "$script:FakeProcess=[pscustomobject]@{ExitCode=0}\n"
+        "$script:FakeProcess|Add-Member -MemberType ScriptMethod -Name WaitForExit "
+        "-Value {$script:FakeWaitCalled=$true}\n"
+        "function Get-CimInstance {$script:ParentLookupCalled=$true;"
+        "[pscustomobject]@{ParentProcessId=4242}}\n"
+        "function Start-Process {\n"
+        " param([string]$FilePath,[string]$Verb,[switch]$Wait,[switch]$PassThru,"
+        "[string]$WindowStyle,[object[]]$ArgumentList)\n"
+        " $script:StartProcessWaitSwitch=[bool]$Wait\n"
+        " $script:CapturedArguments=$ArgumentList\n"
+        " return $script:FakeProcess\n"
+        "}\n"
+        "$Cleanup=Invoke-ElevatedCleanup $env:SystemRoot\n"
+        "if (-not $script:FakeWaitCalled) {exit 8}\n"
+        "if ($script:StartProcessWaitSwitch) {exit 9}\n"
+        "if ($Cleanup -notmatch 'offline-cleanup') {exit 10}\n"
+        "if ($script:ParentLookupCalled) {exit 11}\n"
+        "$EncodedCommand=[string]$script:CapturedArguments[-1]\n"
+        "$Command=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($EncodedCommand))\n"
+        "$ExpectedPid=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$PID))\n"
+        "$PersistentCaller=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('4242'))\n"
+        "if ($Command -notmatch [regex]::Escape($ExpectedPid)) {exit 12}\n"
+        "if ($Command -match [regex]::Escape($PersistentCaller)) {exit 13}\n"
+        "Write-Output 'DIRECT_BOOTSTRAP_STAGE_WAIT_ONLY'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "DICOMXPHITS_TEST_ROOT": str(tmp_path / "bundle"),
+            "DICOMXPHITS_TEST_RUNTIME_PARENT": str(
+                tmp_path / "ProgramData" / "dicomxphits" / "offline-runtimes"
+            ),
+            "DICOMXPHITS_TEST_SOURCE": str(tmp_path / "protected-source"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DIRECT_BOOTSTRAP_STAGE_WAIT_ONLY" in result.stdout.splitlines()
+
+
+def test_offline_uninstaller_has_bounded_verified_contract():
+    cmd = (ROOT / "uninstall_offline.cmd").read_text(encoding="utf-8")
+    helper = (ROOT / "tools" / "uninstall_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    install_cmd = (ROOT / "install_offline.cmd").read_text(encoding="utf-8")
+    install_stage = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "%__APPDIR__%WindowsPowerShell\\v1.0\\powershell.exe" in cmd
+    assert "Type UNINSTALL" in helper
+    assert "Import-ExactProtectedReceipt" in helper
+    assert "Assert-ExactInstallationRoot" in helper
+    assert "Assert-NoAssociatedProcesses" in helper
+    assert "Writable uninstall helper does not match" in helper
+    assert "Write-ProtectedCleanupPlan" in helper
+    assert "Assert-ProtectedCleanupPlan" in helper
+    assert "Assert-ExactCleanupStaging" in helper
+    assert "cleanup_helper_sha256" in helper
+    assert "failure.json" in helper
+    assert "Remove-ExactInstallationTargets" in helper
+    assert "Remove-ExactCleanupStaging" in helper
+    assert "Invoke-CleanupStagingRemoval" in helper
+    assert 'DICOMXPHITS_UNINSTALL_ACTION=\'cleanup-staging\'' in helper
+    assert "Open-ExactUninstallWriteGuardPlan" in helper
+    assert "Open-ExactUninstallDeleteHandles" in helper
+    assert "Assert-ExactUninstallPlanSnapshot" in helper
+    assert "Cannot safely begin uninstallation because a target is in use" in helper
+    assert "Cleanup staging remains after cleanup" in helper
+    assert "Remove-Item -LiteralPath `$p -Recurse -Force" not in helper
+    assert "-Verb RunAs -Wait" not in helper
+    assert "$Process.WaitForExit()" in helper
+    assert "$BundleRoot, $RuntimeRoot, $ProtectedRuntimeReceipt" in helper
+    assert "LocalAppData" not in helper
+    assert "Get-ChildItem" not in helper
+    assert "DICOMXPHITS_BUNDLE_MANIFEST_SHA256" in install_cmd
+    assert "runtime_identity_schema = $RuntimeIdentitySchema" in install_stage
+    assert "bundle_manifest_sha256 = $BundleManifestSha256" in install_stage
+    assert "Write-ProtectedRuntimeFailureDiagnostic" in install_stage
+    assert "Read-ProtectedRuntimeFailureDiagnostic" in install_stage
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
+@pytest.mark.parametrize("tamper_helper", [False, True])
+def test_uninstall_cmd_verifies_and_locks_payloads_before_helper(tmp_path, tamper_helper):
+    root = tmp_path / "offline uninstall bootstrap"
+    root.mkdir()
+    marker = _make_uninstall_cmd_bootstrap_bundle(root)
+    if tamper_helper:
+        (root / "tools" / "uninstall_offline_verified.ps1").write_text(
+            "raise changed\n", encoding="utf-8"
+        )
+
+    result = subprocess.run(
+        ["cmd.exe", "/d", "/c", str(root / "uninstall_offline.cmd")],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONUTF8": "1"},
+    )
+
+    if tamper_helper:
+        assert result.returncode != 0
+        assert "SHA-256 mismatch" in result.stdout + result.stderr
+        assert not marker.exists()
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert marker.read_text(encoding="utf-8") == "ok"
 
 
 def test_sha256_mismatch_is_rejected_before_installation(tmp_path):

@@ -253,8 +253,10 @@ def verify_bundle(bundle_root: Path) -> dict[str, object]:
 
     required_source = {
         "install_offline.cmd",
+        "uninstall_offline.cmd",
         "tools/offline_install.py",
         "tools/install_offline_verified.ps1",
+        "tools/uninstall_offline_verified.ps1",
         "tools/lock_bundle_directories.ps1",
         "launchers/run_gui_venv.cmd",
         "pyproject.toml",
