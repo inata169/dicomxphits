@@ -22,49 +22,41 @@ review and pull request #30 closeout, see the
 For the current aggregate account of the bounded non-patient demonstrations,
 comparison conditions, and interpretation limits, see the
 [`Public Feasibility Demonstration`](public-feasibility-demonstration.md).
+For the final v1.0.2 integration, verified offline lifecycle, human Windows
+acceptance, pull-request sequence, and published release state, see the
+[`2026-08-15 v1.0.2 release closeout`](development-handoff-2026-08-15-v1.0.2.md).
 
 ## Current baseline
 
-- Public release: [`v1.0.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.1)
-- Previous public release: `v1.0.0`
+- Public release: [`v1.0.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
+- Previous public release: `v1.0.1`
 - Public workflow scope: documented fixed-field 3D-CRT
-- Release tag and commit: `v1.0.1` at
-  `7db473b12d570026600c03947690d0f6c1fb60f5`
-  (2026-08-05)
-- Latest completed runtime work: fail-closed RTDOSE isocenter translation and
-  final coordinate-placement validation
-- Runtime completion pull request:
-  [#19](https://github.com/inata169/dicomxphits/pull/19)
-- Latest completed repository update before the current handoff: public
-  feasibility documentation and durable evidence-boundary clarification
-- Release preparation pull request:
-  [#24](https://github.com/inata169/dicomxphits/pull/24)
-- Release merge commit: `7db473b12d570026600c03947690d0f6c1fb60f5`
-- Release CI: pull-request run #181, main push run #182, and tag push run #183
-  completed successfully
-- Release closeout pull request:
-  [#25](https://github.com/inata169/dicomxphits/pull/25)
-- Latest repository update pull request:
-  [#30](https://github.com/inata169/dicomxphits/pull/30)
-- Closing baseline before the current handoff: merge commit
-  `a7339c19d9b7e274f8e4827d82a97eb2c077774a`
-- Pull request #30 exact-head Codex review reported no major issues; local full
-  validation and the 138-file public-tree audit passed before merge
-- Dev Container baseline validated through pull request
-  [#9](https://github.com/inata169/dicomxphits/pull/9), squash commit
-  `ebcd53529e7ff37e4edc66f4500a73ed8edf7e09`
-- Status last reviewed: 2026-08-07
+- Release tag and commit: `v1.0.2` at
+  `efb0dace568fbcb12019f3d320a468dcfb446e34` (2026-08-15)
+- Published custom asset: `dicomxphits-offline-win64-1.0.2.zip`
+- Release asset SHA-256:
+  `6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217`
+- Release asset size: `36,937,317 bytes`
+- Manifest source HEAD: `efb0dace568fbcb12019f3d320a468dcfb446e34`
+- Release integration pull requests:
+  [#38](https://github.com/inata169/dicomxphits/pull/38),
+  [#39](https://github.com/inata169/dicomxphits/pull/39),
+  [#40](https://github.com/inata169/dicomxphits/pull/40),
+  [#41](https://github.com/inata169/dicomxphits/pull/41), and
+  [#42](https://github.com/inata169/dicomxphits/pull/42)
+- Final merge commit: `efb0dace568fbcb12019f3d320a468dcfb446e34`
+- Human acceptance: offline installation, GUI startup, bounded external
+  workflow, and final verified uninstall reported complete
+- OpenSpec state: accepted v1.0.2 changes promoted and archived; no active
+  change remains
+- Status last reviewed: 2026-08-15
 
-The GitHub Release publishes the source distribution and wheel built from the
-`v1.0.1` tag. Their SHA-256 digests are
-`1afbbf75d7d8baaf9914c0263ce15a3073581fc7df0681b83e1ac5eff7e3cc3e`
-for `dicomxphits-1.0.1.tar.gz` and
-`da46087c3d4dc0944fc3561055b4b6fcc312b156bfdb376892bc209b6e2bb55a`
-for `dicomxphits-1.0.1-py3-none-any.whl`. A fresh public download reproduced
-both digests, passed `twine check`, installed into an isolated Python 3.12
-environment with matching package and runtime version `1.0.1`, and returned
-success for `--help` on all eleven console entry points without executing
-external tools. The release is not published to PyPI.
+The GitHub Release publishes the verified Windows offline ZIP built from the
+exact `v1.0.2` manifest source commit. GitHub reported the asset as uploaded
+with the same SHA-256 and size as the independently validated local artifact.
+The ZIP passed duplicate-name, CRC, complete inventory, per-file size and
+SHA-256, manifest membership, and `SHA256SUMS.txt` binding checks. The release
+is not published to PyPI.
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,
@@ -127,7 +119,11 @@ RTDOSE GUI work described above. These later changes do not extend the dated
 Dev Container evidence beyond pull request #9. At pull request #30, the
 public-tree audit passes 138 tracked files.
 
-## Validation baseline
+## Historical validation baseline
+
+The following chronology is retained as historical evidence. Its references to
+then-current specification counts and active changes are superseded by the
+v1.0.2 current baseline and release closeout above.
 
 The completion state for pull request #8 was validated locally on Windows
 with:
@@ -267,7 +263,12 @@ public-tree audit, and a passing Git diff check. Pull request #30 was
 squash-merged as `a7339c1`, and its remote and local feature branches were
 deleted.
 
-## Current development plan
+## Historical development record through v1.0.1
+
+The following development record describes earlier accepted work and evidence
+boundaries. The previously active portable-workspace recovery change was later
+accepted and archived; no active OpenSpec change remains at the v1.0.2
+closeout.
 
 The approved `fix-rtdose-isocenter-translation` change is complete and
 merged through pull request #19. The implementation derives RTDOSE placement
@@ -320,23 +321,18 @@ the [dated Windows GUI launcher validation
 record](windows-gui-launcher-validation-2026-08-06.md). This report does not
 validate or authorize portable-workspace recovery.
 
-The separate `support-portable-workspace-recovery` work was recorded through
-pull request #21 and remains active at 1/21 tasks. Task 1.1, explicit human
-approval before runtime work, is unchecked. The change therefore remains
-proposal-only, unapproved for implementation, and unimplemented. No portable
-workspace recovery implementation is part of the current baseline.
+At that historical checkpoint, the separate
+`support-portable-workspace-recovery` work recorded through pull request #21
+remained active at 1/21 tasks and was not approved for implementation. It was
+later accepted, implemented, promoted, and archived before v1.0.2. This
+paragraph records the earlier boundary rather than the current OpenSpec state.
 
 ## Human-decision queue
 
-The following facts may inform a future human decision, but they are not
-approved work:
-
-- any change to the public fixed-field 3D-CRT scope, physics, geometry, dose,
-  MU, machine model, or clinical claims requires a separate human-approved
-  decision; and
-- no known merge-blocking defect or approved follow-up implementation remains
-  from the completed implementation and documentation pull requests through
-  #30.
+No known merge-blocking defect, required v1.0.2 release action, approved
+follow-up implementation, or active OpenSpec change remains. Any new
+capability, public-scope change, physics, geometry, dose, MU, machine-model,
+DICOM, or clinical claim requires a separate human-approved task.
 
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
@@ -346,18 +342,19 @@ data, credentials, or real-tool output to this document.
 At the start of a future development session:
 
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
-2. Confirm the repository root, `main`, clean status, remote, recent history,
-   and tags.
-3. Confirm that `main` contains documentation merge commit `a7339c19d9b7` or a
-   later descendant, and that the `v1.0.1` tag still resolves to release commit
-   `7db473b12d5`.
+2. Confirm the repository root, branch, clean status, remote, recent history,
+   and tags before making changes.
+3. Confirm that `main` contains release commit
+   `efb0dace568fbcb12019f3d320a468dcfb446e34` or a later reviewed descendant,
+   and that annotated tag `v1.0.2` still dereferences to that exact commit.
 4. Read this document, the
-   [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md), and the
+   [v1.0.2 release closeout](development-handoff-2026-08-15-v1.0.2.md), and the
    [workflow stage guide](workflow_stages.md), and verify that their baseline
    still matches `main`.
-5. Keep the archived coordinate implementation and the active portable-workspace
-   recovery proposal separate; do not implement the latter without approval.
-6. For each observed failure, preserve the GUI log and record exact
-   reproduction steps before proposing a code change.
+5. Confirm current OpenSpec specifications and active-change state before
+   proposing any new behavior. Do not recreate an unapproved proposal by
+   inference.
+6. For each observed failure, preserve the relevant public-safe GUI log and
+   record exact reproduction steps before proposing a code change.
 7. When a human decision is required, ask a direct yes/no question.
 8. Stop after the approved acceptance criteria and required checks pass.

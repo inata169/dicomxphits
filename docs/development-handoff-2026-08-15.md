@@ -4,6 +4,11 @@ This handoff records the completed fixed-6-MV GUI integration, Windows offline
 bundle upgrade and uninstall work, human Windows acceptance, OpenSpec cleanup,
 and the stopping boundary at the end of 2026-08-15.
 
+> **Historical checkpoint:** this file records the state before the same-day
+> pull-request and release work was completed. The final v1.0.2 state is in
+> [`development-handoff-2026-08-15-v1.0.2.md`](development-handoff-2026-08-15-v1.0.2.md),
+> which supersedes the future-work and release instructions below.
+
 `dicomxphits` remains education and research software for the documented
 fixed-field 3D-CRT workflow. This work does not establish clinical dose
 accuracy, commissioning, patient QA, or vendor certification. Real DICOM,

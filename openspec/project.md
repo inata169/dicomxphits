@@ -7,6 +7,16 @@ fixed-field 3D-CRT workflow from DICOM inputs through explicit PHITS-related
 handoff stages. It is not clinical commissioning, patient QA, or vendor
 certification software.
 
+## Current Public Release
+
+- The current public release is `v1.0.2`, tagged at commit
+  `efb0dace568fbcb12019f3d320a468dcfb446e34`.
+- The published Windows offline asset is bound to that exact manifest source
+  commit and is documented in `docs/release-notes-v1.0.2.md`.
+- Release publication does not expand the normative public scope below. The
+  accepted contracts remain under `openspec/specs/`, and no active OpenSpec
+  change remains after the v1.0.2 closeout.
+
 ## Technology
 
 - Python 3.12 only for the v1 supported environment; Python 3.11 and earlier

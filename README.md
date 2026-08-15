@@ -23,6 +23,11 @@ RTDOSE conversion and coordinate correction, and an optional external
 GPR-comparing handoff. See the [v1.0.2 release notes](docs/release-notes-v1.0.2.md)
 for the changes since v1.0.1.
 
+The current public release is
+[`v1.0.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2). Its
+verified Windows offline ZIP and SHA-256 are recorded in the
+[release notes](docs/release-notes-v1.0.2.md).
+
 ## Supported Environment
 
 The supported use depends on the host environment. Installing the Python

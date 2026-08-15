@@ -19,6 +19,22 @@ GPR-comparingは、利用者が正規に取得して別途導入する外部ツ�
 ローカル設定、privateリポジトリ由来ファイル、認証情報、個人情報、施設情報も
 含めません。インストーラーからPHITS計算を開始することはありません。
 
+## 現在のrelease bundleを取得する
+
+検証済みWindows bundleは
+[v1.0.2](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)に
+`dicomxphits-offline-win64-1.0.2.zip`として公開されています。展開前に
+SHA-256を確認してください。
+
+```text
+6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217
+```
+
+release assetのmanifest source HEADは
+`efb0dace568fbcb12019f3d320a468dcfb446e34`です。以下の作成手順は、
+レビュー済みの置換bundleを生成するためのものであり、公開済みassetを
+その場で変更する手順ではありません。
+
 ## オンラインPCでUSB用ZIPを作成する
 
 インターネット接続済みWindows 10/11 64-bit PCで、次を準備します。
