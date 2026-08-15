@@ -614,6 +614,67 @@ def test_uninstall_process_guard_refuses_synthetic_installed_gui(tmp_path):
     assert "ACTIVE_PROCESS_REJECTED" in result.stdout.splitlines()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_refuses_locked_root_before_any_exact_target_deletion(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    runtime_root = tmp_path / "protected runtime"
+    cleanup = tmp_path / "cleanup staging"
+    for directory in (bundle_root, runtime_root, cleanup):
+        directory.mkdir()
+        (directory / "sentinel.txt").write_bytes(b"must remain\n")
+    receipt = tmp_path / "runtime-receipt.json"
+    runtime_log = tmp_path / "runtime-msi.log"
+    for path in (receipt, runtime_log):
+        path.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-delete-share-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n"
+        + (ROOT / "tools" / "lock_bundle_directories.ps1").read_text(
+            encoding="utf-8"
+        )
+        + "\n$Targets=@($env:DICOMXPHITS_TEST_ROOT,$env:DICOMXPHITS_TEST_RUNTIME,"
+        "$env:DICOMXPHITS_TEST_RECEIPT,$env:DICOMXPHITS_TEST_LOG,"
+        "$env:DICOMXPHITS_TEST_CLEANUP)\n"
+        "$Lock=Open-LockedBundleDirectory $env:DICOMXPHITS_TEST_ROOT\n"
+        "try {\n"
+        " try {$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets;"
+        "foreach($Handle in $DeleteHandles){$Handle.Dispose()};exit 8}\n"
+        " catch {\n"
+        "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
+        "  foreach($Target in $Targets){if(-not([IO.File]::Exists($Target)-or"
+        "[IO.Directory]::Exists($Target))){exit 10}}\n"
+        "  Write-Output 'LOCKED_TARGETS_PRESERVED'\n"
+        " }\n"
+        "}\n"
+        "finally {$Lock.Dispose()}\n"
+        "$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets\n"
+        "foreach($Handle in $DeleteHandles){$Handle.Dispose()}\n"
+        "Write-Output 'UNLOCKED_PREFLIGHT_OK'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(runtime_root),
+            "DICOMXPHITS_TEST_RECEIPT": str(receipt),
+            "DICOMXPHITS_TEST_LOG": str(runtime_log),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "LOCKED_TARGETS_PRESERVED" in result.stdout.splitlines()
+    assert "UNLOCKED_PREFLIGHT_OK" in result.stdout.splitlines()
+    for directory in (bundle_root, runtime_root, cleanup):
+        assert (directory / "sentinel.txt").read_bytes() == b"must remain\n"
+    assert receipt.read_bytes() == b"must remain\n"
+    assert runtime_log.read_bytes() == b"must remain\n"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
 @pytest.mark.parametrize("problem", ["valid", "unknown", "modified_helper"])
 def test_uninstall_cleanup_staging_is_closed_and_authenticated(tmp_path, problem):
@@ -698,7 +759,11 @@ def test_uninstall_exact_cleanup_preserves_siblings(tmp_path):
         "$script:ProtectedRuntimeReceipt=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RECEIPT)\n"
         "$script:RuntimeLog=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_LOG)\n"
         "$script:FailureDiagnostic=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_FAILURE)\n"
-        "Remove-ExactInstallationTargets\n"
+        "$DeleteHandles=Open-ExactUninstallDeleteHandles @($script:BundleRoot,"
+        "$script:RuntimeRoot,$script:ProtectedRuntimeReceipt,$script:RuntimeLog,"
+        "$script:FailureDiagnostic)\n"
+        "try {Remove-ExactInstallationTargets}\n"
+        "finally {foreach($Handle in $DeleteHandles){$Handle.Dispose()}}\n"
         "Write-Output 'EXACT_CLEANUP_OK'\n",
         encoding="utf-8",
     )
@@ -864,6 +929,8 @@ def test_offline_uninstaller_has_bounded_verified_contract():
     assert "cleanup_helper_sha256" in helper
     assert "failure.json" in helper
     assert "Remove-ExactInstallationTargets" in helper
+    assert "Open-ExactUninstallDeleteHandles" in helper
+    assert "Cannot safely begin uninstallation because a target is in use" in helper
     assert "Cleanup staging remains after cleanup" in helper
     assert "-Verb RunAs -Wait" not in helper
     assert "$Process.WaitForExit()" in helper

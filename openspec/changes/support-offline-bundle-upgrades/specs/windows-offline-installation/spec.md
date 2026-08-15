@@ -161,6 +161,13 @@ explicitly documented installer-generated path. The generated-path allowlist
 MUST be closed and MUST NOT include arbitrary globs, case folders, DICOM,
 scientific results, external tools, or user-selected paths.
 
+Immediately before mutation, the elevated finalizer MUST open every existing
+exact deletion target with Windows `DELETE` access and read/write/delete
+sharing and retain those handles through exact target removal. If any target
+cannot be opened, including an extraction root retained as a terminal's current
+directory, uninstallation MUST stop before deleting any target and identify
+that the installation remains in use.
+
 After every pre-deletion check succeeds, the elevated cleanup SHALL remove only
 the exact extraction root and its installer-generated `.venv`, launchers and
 logs, the exact protected runtime and source snapshot, its matching receipt and
@@ -217,6 +224,13 @@ repairing the target set.
   active
 - **THEN** uninstallation stops before every deletion and identifies that the
   process must be closed
+
+#### Scenario: Exact target is held without delete sharing
+
+- **WHEN** a terminal, File Explorer window, editor, or other process retains
+  an exact uninstall target without allowing Windows delete sharing
+- **THEN** uninstallation stops before every deletion, preserves all exact
+  targets, and instructs the user to close processes using the installation
 
 #### Scenario: Protected receipt does not identify this installation
 

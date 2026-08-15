@@ -28,6 +28,30 @@ $SystemSid = New-Object System.Security.Principal.SecurityIdentifier(
 )
 $OwnerRightsSid = New-Object System.Security.Principal.SecurityIdentifier("S-1-3-4")
 
+if ($null -eq ("Dicomxphits.OfflineUninstallNative" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace Dicomxphits {
+    public static class OfflineUninstallNative {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern SafeFileHandle CreateFile(
+            string fileName,
+            uint desiredAccess,
+            FileShare shareMode,
+            IntPtr securityAttributes,
+            FileMode creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile
+        );
+    }
+}
+'@
+}
+
 function Test-IsAdministrator {
     $Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $Principal = New-Object System.Security.Principal.WindowsPrincipal -ArgumentList $Identity
@@ -387,6 +411,56 @@ function Assert-NoAssociatedProcesses([int[]]$ExcludedProcessIds) {
     }
 }
 
+function Open-ExactUninstallDeleteHandle([string]$Path) {
+    $Flags = 0x00200000
+    if ([System.IO.Directory]::Exists($Path)) { $Flags = $Flags -bor 0x02000000 }
+    $Handle = [Dicomxphits.OfflineUninstallNative]::CreateFile(
+        $Path,
+        0x00010000,
+        [System.IO.FileShare]::Read -bor
+            [System.IO.FileShare]::Write -bor
+            [System.IO.FileShare]::Delete,
+        [System.IntPtr]::Zero,
+        [System.IO.FileMode]::Open,
+        $Flags,
+        [System.IntPtr]::Zero
+    )
+    if ($Handle.IsInvalid) {
+        $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $Handle.Dispose()
+        $Message = if ($ErrorCode -in @(32, 33)) {
+            "Cannot safely begin uninstallation because a target is in use. " +
+                "Close every terminal, File Explorer window, editor, or other " +
+                "process using this offline installation, then retry: $Path " +
+                "(Windows error $ErrorCode)"
+        }
+        else {
+            "Cannot prove that an exact uninstall target is deletable before " +
+                "cleanup: $Path (Windows error $ErrorCode)"
+        }
+        throw (New-Object System.ComponentModel.Win32Exception($ErrorCode, $Message))
+    }
+    return $Handle
+}
+
+function Open-ExactUninstallDeleteHandles([string[]]$Targets) {
+    $Handles = New-Object 'System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]'
+    try {
+        foreach ($Target in $Targets) {
+            if (-not ([System.IO.File]::Exists($Target) -or [System.IO.Directory]::Exists($Target))) {
+                continue
+            }
+            Assert-NoReparsePath $Target "Exact uninstall target"
+            $Handles.Add((Open-ExactUninstallDeleteHandle $Target))
+        }
+        return $Handles
+    }
+    catch {
+        foreach ($Handle in $Handles) { $Handle.Dispose() }
+        throw
+    }
+}
+
 function New-ProtectedCleanupDirectory([string]$Path) {
     if ([System.IO.File]::Exists($Path) -or [System.IO.Directory]::Exists($Path)) {
         throw "Cleanup staging already exists: $Path"
@@ -664,7 +738,16 @@ function Invoke-FinalCleanup([string]$CleanupDirectory, [int[]]$WaitProcessIds) 
     Assert-ProtectedCleanupPlan $CleanupDirectory ([string]$env:DICOMXPHITS_UNINSTALL_NONCE)
     Assert-NoAssociatedProcesses @($PID)
     Assert-ExactInstallationRoot
-    Remove-ExactInstallationTargets
+    $DeleteHandles = Open-ExactUninstallDeleteHandles @(
+        $BundleRoot,
+        $RuntimeRoot,
+        $ProtectedRuntimeReceipt,
+        $RuntimeLog,
+        $FailureDiagnostic,
+        $CleanupDirectory
+    )
+    try { Remove-ExactInstallationTargets }
+    finally { foreach ($Handle in $DeleteHandles) { $Handle.Dispose() } }
     $CleanupParent = [System.IO.Path]::GetDirectoryName($CleanupDirectory)
     if (-not [string]::Equals(
         $CleanupParent,

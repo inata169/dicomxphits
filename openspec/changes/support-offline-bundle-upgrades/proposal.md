@@ -33,8 +33,9 @@ with a fresh extraction.
   runtime through the authenticated receipt and removes only installation-owned
   content after explicit user confirmation and UAC approval.
 - Make uninstallation fail before deletion when a related process is active,
-  an expected path is linked or redirected, the installation identity is not
-  exact, or the extracted root contains unknown or modified user content.
+  an exact target is held without Windows delete sharing, an expected path is
+  linked or redirected, the installation identity is not exact, or the
+  extracted root contains unknown or modified user content.
 - Remove the exact protected runtime, receipt, Windows Installer log, local
   `.venv`, generated launchers and logs, authenticated extracted bundle, and
   bounded cleanup staging on successful uninstallation without touching case
@@ -75,6 +76,6 @@ with a fresh extraction.
 
 ## Approval Status
 
-The primary user approved creation and strict validation of this proposal on
-2026-08-15. Runtime implementation remains pending explicit approval of this
-completed proposal and its delta specification.
+The primary user approved this proposal, delta specification, runtime
+implementation, and the bounded delete-sharing correction on 2026-08-15.
+Final Windows installation and uninstallation acceptance remains pending.

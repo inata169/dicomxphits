@@ -156,11 +156,14 @@ installation is no longer needed.
 
 ## Uninstall one offline installation
 
-Close its GUI and every Python or PHITS-related process first. From the exact
-extracted installation folder, run:
+Close its GUI and every Python or PHITS-related process first. Also close every
+terminal, File Explorer window, editor, or other process whose current folder
+is the extracted installation. Start the uninstaller from File Explorer, or
+from a terminal whose current directory is outside that folder. For example:
 
 ```powershell
-.\uninstall_offline.cmd
+Set-Location D:\
+& "D:\path\to\dicomxphits-offline-win64-1.0.1\uninstall_offline.cmd"
 ```
 
 After the local verification succeeds, type the exact confirmation word
@@ -171,9 +174,12 @@ refuses to discover or guess another runtime.
 
 Before deleting anything, it verifies that authenticated bundle payloads are
 unchanged, allows only the installer-created `.venv` and installation log, and
-rejects unknown files, unknown directories, reparse points, or associated
-running processes. Move any intentional additional file out of the extracted
-folder before retrying. Do not weaken these checks.
+rejects unknown files, unknown directories, reparse points, associated running
+processes, or any exact target that Windows cannot open for deletion while
+sharing deletion with the cleanup process. This last check prevents a terminal
+whose current directory is the extracted folder from causing a partial
+deletion. Move any intentional additional file out of the extracted folder and
+close every process using it before retrying. Do not weaken these checks.
 
 A successful uninstall removes only that extracted bundle, its `.venv`, its
 installation log, its exact protected runtime and source snapshot, its receipt,

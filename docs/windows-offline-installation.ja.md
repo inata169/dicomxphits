@@ -142,11 +142,13 @@ uninstallerを使用します。
 
 ## 1つのoffline installationを削除する
 
-対象GUIと、Python・PHITS関連processをすべて終了します。対象の正確な展開folderで
-次を実行します。
+対象GUIと、Python・PHITS関連processをすべて終了します。展開folderをcurrent directoryに
+しているterminal、File Explorer、editorなどもすべて閉じます。File Explorerから実行するか、
+current directoryが展開folderの外にあるterminalから、次のように実行します。
 
 ```powershell
-.\uninstall_offline.cmd
+Set-Location D:\
+& "D:\path\to\dicomxphits-offline-win64-1.0.1\uninstall_offline.cmd"
 ```
 
 local検証成功後、確認語`UNINSTALL`を正確に入力し、Windowsの管理者promptを承認します。
@@ -155,8 +157,11 @@ local検証成功後、確認語`UNINSTALL`を正確に入力し、Windowsの管
 
 削除前に、認証済みbundle payloadが変更されていないことを確認し、installerが作成した
 `.venv`とinstallation logだけを追加pathとして許可します。未知file、未知directory、
-reparse point、関連する実行中processがあれば、一件も削除せず停止します。意図的に追加した
-fileは別folderへ移動してから再実行し、checkを弱めないでください。
+reparse point、関連する実行中process、またはWindowsがcleanup processとの削除共有を許可した
+状態で開けないexact targetがあれば、一件も削除せず停止します。この最後のcheckにより、展開
+folderをcurrent directoryにしているterminalが部分削除を起こすことを防ぎます。意図的に追加した
+fileは別folderへ移動し、対象を使用しているprocessをすべて閉じてから再実行してください。
+checkを弱めないでください。
 
 成功時に削除するのは、その展開bundle、`.venv`、installation log、対応する正確な
 protected runtimeとsource snapshot、receipt、Windows Installer log、限定cleanup staging

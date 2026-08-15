@@ -68,6 +68,8 @@
   per-user GUI settings.
 - [x] 5.8 Wait for only the direct elevated staging process so its detached
   finalizer cannot deadlock against the verified bootstrap's read locks.
+- [x] 5.9 Acquire and retain delete-sharing preflight handles for every existing
+  exact target before mutation, refusing all deletion if any target is held.
 
 ## 6. Add Synthetic Uninstall Regression Coverage
 
@@ -82,6 +84,8 @@
   guesses the cleanup target set.
 - [x] 6.5 Reproduce the descendant-wait regression synthetically and prove the
   parent uses direct-process `WaitForExit()` without `Start-Process -Wait`.
+- [x] 6.6 Reproduce a Windows directory delete-sharing conflict and prove that
+  every exact target remains until the conflicting handle closes.
 
 ## 7. Update Offline Documentation
 
@@ -92,6 +96,8 @@
 - [x] 7.3 Document verified uninstallation, its refusal conditions, the exact
   installation-owned cleanup boundary, partial-failure reporting, and the
   separately optional retained per-user settings path.
+- [x] 7.4 Document that uninstall must start outside the extraction folder and
+  that an in-use exact target is rejected before deletion.
 
 ## 8. Validate and Accept
 
@@ -105,7 +111,7 @@
 - [x] 8.7 Confirm no protected data, external-tool output, personal absolute
   path, physics behavior, DICOM meaning, version metadata, or tag change
   entered the diff.
-- [x] 8.8 Build and verify a new exact-HEAD offline ZIP only after all required
+- [ ] 8.8 Build and verify a new exact-HEAD offline ZIP only after all required
   repository checks pass.
 - [ ] 8.9 Obtain human Windows 11 installation, uninstallation, and GUI
   acceptance without

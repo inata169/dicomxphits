@@ -102,6 +102,9 @@ the exact target set and reject:
 
 - a GUI, `.venv` Python, protected runtime Python, installer, or scientific
   process associated with the selected installation that is still running;
+- any exact deletion target that cannot first be opened with `DELETE` access
+  and read/write/delete sharing, including an extraction root retained as a
+  terminal's current directory;
 - any symbolic link, junction, mount point, or other reparse point in a target
   or its bounded path ancestry;
 - a missing, mismatched, malformed, incorrectly protected, or ambiguous
@@ -156,6 +159,17 @@ same verified elevated stage with `-PassThru` and calls the returned process's
 finalizer can then outlive the stage, observe the parent exit, and perform the
 already specified revalidation and exact cleanup.
 
+A subsequent Windows 11 uninstall exposed a separate sharing boundary: a
+long-lived Windows Terminal opened with the extraction root as its working
+directory could retain that directory without appearing as an executable from
+the installation. The first recursive removal deleted the root's contents and
+then failed to remove the held root. The finalizer now opens every existing
+exact deletion target with `DELETE` access while allowing read, write, and
+delete sharing before any mutation. A conflicting handle therefore refuses the
+entire cleanup before deletion. The successful preflight handles remain open
+through exact target removal, preventing a new incompatible handle from being
+introduced between the check and mutation.
+
 Per-user GUI settings below `LOCALAPPDATA` are intentionally retained because
 they may be shared by a later installation and are user preferences rather
 than installation-owned runtime content. Documentation will identify their
@@ -179,6 +193,8 @@ Synthetic Windows tests will prove that:
 - uninstall identity is bound to the exact normalized root and manifest;
 - unknown, modified, linked, redirected, ambiguous, or active installation
   state prevents every deletion;
+- a synthetic delete-sharing conflict on the extraction root refuses cleanup
+  before every exact target and succeeds after the conflicting handle closes;
 - a synthetic successful uninstall removes only its exact extraction root,
   protected runtime, receipt, MSI log, and cleanup staging;
 - other runtime IDs, sibling directories, cases, external tools, and per-user
