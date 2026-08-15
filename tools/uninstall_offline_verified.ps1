@@ -670,7 +670,11 @@ function Assert-ExactInstallationRoot {
     }
 }
 
-function Assert-NoAssociatedProcesses([int[]]$ExcludedProcessIds) {
+function Assert-NoAssociatedProcesses {
+    param(
+        [int[]]$ExcludedProcessIds,
+        [int]$BootstrapCallerProcessId = 0
+    )
     $Excluded = New-Object 'System.Collections.Generic.HashSet[int]'
     foreach ($Id in $ExcludedProcessIds) { $null = $Excluded.Add($Id) }
     $RuntimePrefix = $RuntimeRoot.TrimEnd(
@@ -680,6 +684,35 @@ function Assert-NoAssociatedProcesses([int[]]$ExcludedProcessIds) {
     catch { throw "Cannot verify that associated processes are stopped." }
     foreach ($Process in $Processes) {
         if ($Excluded.Contains([int]$Process.ProcessId)) { continue }
+        if (
+            $BootstrapCallerProcessId -gt 0 -and
+            [int]$Process.ProcessId -eq $BootstrapCallerProcessId
+        ) {
+            $TrustedCmd = [System.IO.Path]::Combine(
+                [System.Environment]::SystemDirectory,
+                "cmd.exe"
+            )
+            $Uninstaller = Join-Path $BundleRoot "uninstall_offline.cmd"
+            $UninstallerPattern = '(?:^|[\s"])' +
+                [System.Text.RegularExpressions.Regex]::Escape($Uninstaller) +
+                '(?=$|[\s"])'
+            $CallerExecutable = [string]$Process.ExecutablePath
+            $CallerCommandLine = [string]$Process.CommandLine
+            if (
+                -not [string]::IsNullOrWhiteSpace($CallerExecutable) -and
+                [string]::Equals(
+                    [System.IO.Path]::GetFullPath($CallerExecutable),
+                    [System.IO.Path]::GetFullPath($TrustedCmd),
+                    [System.StringComparison]::OrdinalIgnoreCase
+                ) -and
+                -not [string]::IsNullOrWhiteSpace($CallerCommandLine) -and
+                [System.Text.RegularExpressions.Regex]::IsMatch(
+                    $CallerCommandLine,
+                    $UninstallerPattern,
+                    [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+                )
+            ) { continue }
+        }
         $Executable = [string]$Process.ExecutablePath
         $CommandLine = [string]$Process.CommandLine
         $InsideInstallation = -not [string]::IsNullOrWhiteSpace($Executable) -and (
@@ -694,6 +727,23 @@ function Assert-NoAssociatedProcesses([int[]]$ExcludedProcessIds) {
             throw "Associated process must be closed before uninstallation: $($Process.Name) (PID $($Process.ProcessId))"
         }
     }
+}
+
+function Get-BootstrapCallerProcessId {
+    try {
+        $CurrentProcesses = @(
+            Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+        )
+    }
+    catch { throw "Cannot verify the uninstall bootstrap caller." }
+    if ($CurrentProcesses.Count -ne 1) {
+        throw "Cannot identify the uninstall bootstrap caller."
+    }
+    $ParentProcessId = [string]$CurrentProcesses[0].ParentProcessId
+    if ($ParentProcessId -notmatch '^\d+$' -or [int]$ParentProcessId -le 0) {
+        throw "Uninstall bootstrap caller process ID is invalid."
+    }
+    return [int]$ParentProcessId
 }
 
 function Open-ExactUninstallDeleteHandle([string]$Path) {
@@ -1051,7 +1101,10 @@ function Write-ProtectedCleanupFailure([string]$Directory, [string]$Message) {
     catch { }
 }
 
-function Invoke-ElevatedCleanup([string]$TrustedPowerShell) {
+function Invoke-ElevatedCleanup(
+    [string]$TrustedPowerShell,
+    [int]$BootstrapCallerProcessId
+) {
     $CurrentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $Nonce = [System.Guid]::NewGuid().ToString("N")
     $State = @{
@@ -1064,6 +1117,7 @@ function Invoke-ElevatedCleanup([string]$TrustedPowerShell) {
         # directory locks. Its caller may be a persistent cmd.exe and does not
         # own those handles, so waiting for that shell would deadlock cleanup.
         WAIT_PIDS = "$PID"
+        CALLER_PID = "$BootstrapCallerProcessId"
         PROTECTED_SOURCE = $ProtectedSourceRoot
     }
     $Command = @'
@@ -1076,6 +1130,7 @@ $env:DICOMXPHITS_UNINSTALLING_USER_SID=& $decode '{SID}'
 $env:DICOMXPHITS_UNINSTALL_ACTION=& $decode '{ACTION}'
 $env:DICOMXPHITS_UNINSTALL_NONCE=& $decode '{NONCE}'
 $env:DICOMXPHITS_UNINSTALL_WAIT_PIDS=& $decode '{WAIT_PIDS}'
+$env:DICOMXPHITS_UNINSTALL_BOOTSTRAP_CALLER_PID=& $decode '{CALLER_PID}'
 $env:DICOMXPHITS_PROTECTED_SOURCE_ROOT=& $decode '{PROTECTED_SOURCE}'
 & ([IO.Path]::Combine([IO.Path]::GetFullPath($env:DICOMXPHITS_PROTECTED_SOURCE_ROOT),'tools','uninstall_offline_verified.ps1'))
 exit $LASTEXITCODE
@@ -1109,7 +1164,8 @@ function Start-DetachedFinalizer([string]$TrustedPowerShell, [string]$CleanupDir
         "DICOMXPHITS_BUNDLE_MANIFEST_SHA256",
         "DICOMXPHITS_UNINSTALLING_USER_SID",
         "DICOMXPHITS_UNINSTALL_NONCE",
-        "DICOMXPHITS_UNINSTALL_WAIT_PIDS"
+        "DICOMXPHITS_UNINSTALL_WAIT_PIDS",
+        "DICOMXPHITS_UNINSTALL_BOOTSTRAP_CALLER_PID"
     )
     $Command = "`$env:PSModulePath=[IO.Path]::Combine(`$PSHOME,'Modules');`$ErrorActionPreference='Stop';`$env:DICOMXPHITS_UNINSTALL_ACTION='finalize';"
     foreach ($Name in $StateNames) {
@@ -1202,7 +1258,11 @@ function Invoke-CleanupStagingRemoval([string]$CleanupDirectory, [int]$WaitProce
     finally { Close-ExactUninstallPlan $CleanupPlan }
 }
 
-function Invoke-FinalCleanup([string]$CleanupDirectory, [int[]]$WaitProcessIds) {
+function Invoke-FinalCleanup(
+    [string]$CleanupDirectory,
+    [int[]]$WaitProcessIds,
+    [int]$BootstrapCallerProcessId
+) {
     foreach ($WaitPid in $WaitProcessIds) {
         if ($WaitPid -le 0 -or $WaitPid -eq $PID) { continue }
         $Deadline = [System.DateTime]::UtcNow.AddSeconds(60)
@@ -1218,7 +1278,7 @@ function Invoke-FinalCleanup([string]$CleanupDirectory, [int[]]$WaitProcessIds) 
     }
     Assert-ExactCleanupStaging $CleanupDirectory
     Assert-ProtectedCleanupPlan $CleanupDirectory ([string]$env:DICOMXPHITS_UNINSTALL_NONCE)
-    Assert-NoAssociatedProcesses @($PID)
+    Assert-NoAssociatedProcesses @($PID) $BootstrapCallerProcessId
     Assert-ExactInstallationRoot
     $DeletePlan = Open-ExactUninstallWriteGuardPlan @(
         $BundleRoot,
@@ -1281,7 +1341,8 @@ try {
         Set-ProtectedRuntimeIdentity $CurrentIdentity.User.Value
         $null = Import-ExactProtectedReceipt
         Assert-ExactInstallationRoot
-        Assert-NoAssociatedProcesses @($PID)
+        $BootstrapCallerProcessId = Get-BootstrapCallerProcessId
+        Assert-NoAssociatedProcesses @($PID) $BootstrapCallerProcessId
         $ProtectedHelper = Join-Path $ProtectedSourceRoot "tools\uninstall_offline_verified.ps1"
         if ((Get-FileSha256 $PSCommandPath) -ne (Get-FileSha256 $ProtectedHelper)) {
             throw "Writable uninstall helper does not match the authenticated protected helper."
@@ -1291,7 +1352,9 @@ try {
             Write-Host "Uninstallation cancelled. No files were changed."
             exit 0
         }
-        $PendingCleanup = Invoke-ElevatedCleanup $TrustedPowerShell
+        $PendingCleanup = Invoke-ElevatedCleanup `
+            $TrustedPowerShell `
+            $BootstrapCallerProcessId
         Write-Host "Verified cleanup was scheduled. This window may now close."
         Write-Host "On success, cleanup staging disappears. On failure, review: $PendingCleanup\failure.json"
         exit 0
@@ -1330,7 +1393,15 @@ try {
             Where-Object { $_ -match '^\d+$' } |
             ForEach-Object { [int]$_ }
     )
-    Assert-NoAssociatedProcesses @($WaitPids + $PID)
+    $BootstrapCallerProcessIdText = [string]$env:DICOMXPHITS_UNINSTALL_BOOTSTRAP_CALLER_PID
+    if (
+        $BootstrapCallerProcessIdText -notmatch '^\d+$' -or
+        [int]$BootstrapCallerProcessIdText -le 0
+    ) { throw "Uninstall bootstrap caller process ID is invalid." }
+    $BootstrapCallerProcessId = [int]$BootstrapCallerProcessIdText
+    Assert-NoAssociatedProcesses `
+        @($WaitPids + $PID) `
+        $BootstrapCallerProcessId
     if ($Action -eq "stage") {
         New-ProtectedCleanupDirectory $CleanupDirectory
         Copy-ProtectedCleanupFile $PSCommandPath (Join-Path $CleanupDirectory "uninstall_offline_verified.ps1")
@@ -1349,7 +1420,10 @@ try {
         Assert-ProtectedSecurity $PSCommandPath $false "Final uninstall helper"
         Assert-ExactCleanupStaging $CleanupDirectory
         Assert-ProtectedCleanupPlan $CleanupDirectory $Nonce
-        Invoke-FinalCleanup $CleanupDirectory $WaitPids
+        Invoke-FinalCleanup `
+            $CleanupDirectory `
+            $WaitPids `
+            $BootstrapCallerProcessId
         exit 0
     }
     throw "Unsupported verified uninstall action."
