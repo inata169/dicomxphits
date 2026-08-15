@@ -50,7 +50,7 @@ function Test-IsAdministrator {
 
 function Assert-TrustedPowerShellProcess {
     $TrustedPowerShell = Join-Path (
-        Join-Path [System.Environment]::SystemDirectory "WindowsPowerShell\v1.0"
+        Join-Path ([System.Environment]::SystemDirectory) "WindowsPowerShell\v1.0"
     ) "powershell.exe"
     $CurrentExecutable = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
     if (-not [string]::Equals(

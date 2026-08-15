@@ -252,13 +252,26 @@ def test_cmd_rejects_incomplete_or_manifest_inconsistent_inventory_before_python
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows bootstrap behavior")
-def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
+@pytest.mark.parametrize("launcher", ["cmd", "powershell-parent"])
+def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path, launcher):
     root = tmp_path / "日本語 user" / "valid offline bootstrap"
     root.mkdir(parents=True)
     manifest, marker = _make_cmd_bootstrap_bundle(root)
     stage = root / "tools" / "install_offline_verified.ps1"
     stage.write_text(
         "$ErrorActionPreference = 'Stop'\n"
+        "$Root = $env:DICOMXPHITS_BUNDLE_ROOT\n"
+        "$MovedRoot = $Root + '-moved'\n"
+        "$RootMoved = $false\n"
+        "try { [IO.Directory]::Move($Root, $MovedRoot); $RootMoved = $true }\n"
+        "catch { [IO.File]::WriteAllText((Join-Path "
+        "$Root 'root-directory-rename-blocked.txt'),'blocked') }\n"
+        "if ($RootMoved) { [IO.Directory]::Move($MovedRoot, $Root); "
+        "throw 'bundle root rename was not blocked' }\n"
+        "$Checksum = Join-Path $Root 'SHA256SUMS.txt'\n"
+        "try { [IO.File]::Move($Checksum, ($Checksum + '.moved')); exit 97 }\n"
+        "catch { [IO.File]::WriteAllText((Join-Path "
+        "$Root 'checksum-rename-blocked.txt'),'blocked') }\n"
         "$Tools = Join-Path $env:DICOMXPHITS_BUNDLE_ROOT 'tools'\n"
         "try { [IO.Directory]::Move($Tools, ($Tools + '-moved')); exit 98 }\n"
         "catch { [IO.File]::WriteAllText((Join-Path "
@@ -304,8 +317,29 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
         {"PYTHONUTF8": "1", "DICOMXPHITS_TEST_PYTHON": sys.executable}
     )
 
+    if launcher == "powershell-parent":
+        trusted_powershell = (
+            Path(os.environ["SystemRoot"])
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+        command = [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "& '.\\install_offline.cmd'; exit $LASTEXITCODE",
+        ]
+    else:
+        command = ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")]
+
     result = subprocess.run(
-        ["cmd.exe", "/d", "/c", str(root / "install_offline.cmd")],
+        command,
         cwd=root,
         check=False,
         capture_output=True,
@@ -317,6 +351,8 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Initial SHA-256 verification passed." in result.stdout
+    assert (root / "root-directory-rename-blocked.txt").read_text() == "blocked"
+    assert (root / "checksum-rename-blocked.txt").read_text() == "blocked"
     assert (root / "directory-rename-blocked.txt").read_text() == "blocked"
     assert (root / "replacement-blocked.txt").read_text(encoding="utf-8") == "blocked"
     assert marker.read_text(encoding="utf-8") == "executed"
@@ -629,6 +665,9 @@ def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     assert "$DirectoryPath,\n        0x10080," in lock_helper
     assert "if ($ErrorCode -eq 5)" not in lock_helper
     assert "if ($null -eq $Handle) { continue }" not in lock_helper
+    assert text.count(
+        "[IO.FileShare]::Read -bor [IO.FileShare]::Delete"
+    ) == 1
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")
@@ -649,7 +688,7 @@ def test_bundle_directory_locks_block_rename(tmp_path):
         "$Payload = [IO.Path]::Combine($Tools, 'install_offline_verified.ps1')\n"
         "$Handles = @(Lock-BundleDirectoryPaths $Root @($Payload))\n"
         "try {\n"
-        "  if ($Handles.Count -ne 2) { exit 7 }\n"
+        "  if ($Handles.Count -ne 1) { exit 7 }\n"
         "  $Blocked = $false\n"
         "  try { [IO.Directory]::Move($Tools, $Moved) } catch { $Blocked = $true }\n"
         "  if (-not $Blocked -or -not [IO.Directory]::Exists($Tools) -or "
@@ -692,6 +731,141 @@ def test_bundle_directory_locks_block_rename(tmp_path):
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "DIRECTORY_RENAME_DENIED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_verified_stage_resolves_the_running_system_powershell(tmp_path):
+    stage_text = (ROOT / "tools" / "install_offline_verified.ps1").read_text(
+        encoding="utf-8"
+    )
+    function_text, separator, _main = stage_text.partition(
+        '\ntry {\n    Assert-NoReparsePath $BundleRoot "Bundle root"'
+    )
+    assert separator
+    harness = tmp_path / "trusted-powershell-harness.ps1"
+    harness.write_text(
+        function_text
+        + "\n$Trusted = Assert-TrustedPowerShellProcess\n"
+        "Write-Output ('TRUSTED_POWERSHELL=' + $Trusted)\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_VERIFIED_STAGE": "synthetic-test-stage",
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"TRUSTED_POWERSHELL={trusted_powershell}".casefold() in {
+        line.casefold() for line in result.stdout.splitlines()
+    }
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")
+def test_bundle_directory_lock_follows_shared_delete_verification(tmp_path):
+    root = tmp_path / "bundle"
+    tools = root / "tools"
+    tools.mkdir(parents=True)
+    payload = tools / "payload.txt"
+    payload.write_text("payload\n", encoding="utf-8")
+    harness = tmp_path / "bundle-directory-bootstrap-order-harness.ps1"
+    harness.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        + ". "
+        + repr(str(ROOT / "tools" / "lock_bundle_directories.ps1"))
+        + "\n$Root = [IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_BUNDLE_ROOT)\n"
+        "$Tools = [IO.Path]::Combine($Root, 'tools')\n"
+        "$Moved = [IO.Path]::Combine($Root, 'tools-moved')\n"
+        "$Payload = [IO.Path]::Combine($Tools, 'payload.txt')\n"
+        "$Initial = [IO.File]::Open(\n"
+        "  $Payload,\n"
+        "  [IO.FileMode]::Open,\n"
+        "  [IO.FileAccess]::Read,\n"
+        "  [IO.FileShare]::Read -bor [IO.FileShare]::Delete\n"
+        ")\n"
+        "$Handles = @()\n"
+        "$Strict = $null\n"
+        "try {\n"
+        "  $Handles = @(Lock-BundleDirectoryPaths $Root @($Payload))\n"
+        "  if ($Handles.Count -ne 1) { exit 11 }\n"
+        "  $Strict = [IO.File]::Open(\n"
+        "    $Payload,\n"
+        "    [IO.FileMode]::Open,\n"
+        "    [IO.FileAccess]::Read,\n"
+        "    [IO.FileShare]::Read\n"
+        "  )\n"
+        "  $Blocked = $false\n"
+        "  try { [IO.Directory]::Move($Tools, $Moved) } catch { $Blocked = $true }\n"
+        "  if (-not $Blocked -or -not [IO.Directory]::Exists($Tools)) { exit 12 }\n"
+        "  Write-Output 'SHARED_DELETE_VERIFY_THEN_STRICT_LOCK_SUCCEEDED'\n"
+        "}\n"
+        "finally {\n"
+        "  if ($null -ne $Strict) { $Strict.Dispose() }\n"
+        "  foreach ($Handle in $Handles) { $Handle.Dispose() }\n"
+        "  $Initial.Dispose()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    trusted_powershell = (
+        Path(os.environ["SystemRoot"])
+        / "System32"
+        / "WindowsPowerShell"
+        / "v1.0"
+        / "powershell.exe"
+    )
+    result = subprocess.run(
+        [
+            str(trusted_powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(harness),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={
+            **os.environ,
+            "DICOMXPHITS_TEST_BUNDLE_ROOT": str(root),
+            "PSModulePath": str(trusted_powershell.parent / "Modules"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "SHARED_DELETE_VERIFY_THEN_STRICT_LOCK_SUCCEEDED"
+        in result.stdout.splitlines()
+    )
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows reparse handles")
@@ -1104,6 +1278,7 @@ def test_verified_stage_never_starts_host_python_with_malicious_standard_library
     environment.update(
         {
             "LocalAppData": str(local_app_data),
+            "DICOMXPHITS_ELEVATED_ACTION": "construct-runtime",
             "PYTHONUTF8": "1",
         }
     )
@@ -1543,6 +1718,7 @@ def test_cmd_pins_powershell_modules_before_authenticode_lookup(tmp_path):
     environment.update(
         {
             "LocalAppData": str(local_app_data),
+            "DICOMXPHITS_ELEVATED_ACTION": "construct-runtime",
             "PSModulePath": os.pathsep.join(
                 [str(malicious_modules), str(system_modules)]
             ),
