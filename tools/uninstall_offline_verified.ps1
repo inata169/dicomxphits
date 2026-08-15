@@ -452,12 +452,31 @@ function Open-ExactUninstallDeleteHandle([string]$Path) {
 function Open-ExactUninstallDeleteHandles([string[]]$Targets) {
     $Handles = New-Object 'System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]'
     try {
-        foreach ($Target in $Targets) {
-            if (-not ([System.IO.File]::Exists($Target) -or [System.IO.Directory]::Exists($Target))) {
-                continue
+        function Open-TargetTree([string]$Target, [bool]$Required) {
+            $IsDirectory = [System.IO.Directory]::Exists($Target)
+            $IsFile = [System.IO.File]::Exists($Target)
+            if (-not ($IsFile -or $IsDirectory)) {
+                if ($Required) {
+                    throw "Exact uninstall target disappeared during deletion preflight: $Target"
+                }
+                return
             }
             Assert-NoReparsePath $Target "Exact uninstall target"
             $Handles.Add((Open-ExactUninstallDeleteHandle $Target))
+            if ($IsDirectory) {
+                try {
+                    $Children = @([System.IO.Directory]::GetFileSystemEntries($Target))
+                }
+                catch {
+                    throw "Cannot enumerate exact uninstall target before cleanup: $Target"
+                }
+                foreach ($Child in $Children) {
+                    Open-TargetTree $Child $true
+                }
+            }
+        }
+        foreach ($Target in $Targets) {
+            Open-TargetTree $Target $false
         }
         return $Handles
     }

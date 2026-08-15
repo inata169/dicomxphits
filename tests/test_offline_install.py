@@ -731,6 +731,70 @@ def test_uninstall_refuses_locked_root_before_any_exact_target_deletion(tmp_path
     assert runtime_log.read_bytes() == b"must remain\n"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_refuses_locked_descendant_before_any_exact_target_deletion(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    runtime_root = tmp_path / "protected runtime"
+    cleanup = tmp_path / "cleanup staging"
+    locked_file = bundle_root / "nested" / "locked.txt"
+    preserved_files = (
+        bundle_root / "unlocked.txt",
+        locked_file,
+        runtime_root / "sentinel.txt",
+        cleanup / "sentinel.txt",
+    )
+    for path in preserved_files:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"must remain\n")
+    receipt = tmp_path / "runtime-receipt.json"
+    runtime_log = tmp_path / "runtime-msi.log"
+    for path in (receipt, runtime_log):
+        path.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-descendant-lock-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Targets=@($env:DICOMXPHITS_TEST_ROOT,$env:DICOMXPHITS_TEST_RUNTIME,"
+        "$env:DICOMXPHITS_TEST_RECEIPT,$env:DICOMXPHITS_TEST_LOG,"
+        "$env:DICOMXPHITS_TEST_CLEANUP)\n"
+        "$Lock=[IO.File]::Open($env:DICOMXPHITS_TEST_LOCKED,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Read,[IO.FileShare]::Read)\n"
+        "try {\n"
+        " try {$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets;"
+        "foreach($Handle in $DeleteHandles){$Handle.Dispose()};exit 8}\n"
+        " catch {\n"
+        "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
+        "  foreach($Target in $Targets){if(-not([IO.File]::Exists($Target)-or"
+        "[IO.Directory]::Exists($Target))){exit 10}}\n"
+        "  Write-Output 'LOCKED_DESCENDANT_PRESERVED'\n"
+        " }\n"
+        "}\n"
+        "finally {$Lock.Dispose()}\n"
+        "$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets\n"
+        "foreach($Handle in $DeleteHandles){$Handle.Dispose()}\n"
+        "Write-Output 'UNLOCKED_DESCENDANT_PREFLIGHT_OK'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(runtime_root),
+            "DICOMXPHITS_TEST_RECEIPT": str(receipt),
+            "DICOMXPHITS_TEST_LOG": str(runtime_log),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+            "DICOMXPHITS_TEST_LOCKED": str(locked_file),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "LOCKED_DESCENDANT_PRESERVED" in result.stdout.splitlines()
+    assert "UNLOCKED_DESCENDANT_PREFLIGHT_OK" in result.stdout.splitlines()
+    for path in (*preserved_files, receipt, runtime_log):
+        assert path.read_bytes() == b"must remain\n"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
 @pytest.mark.parametrize("problem", ["valid", "unknown", "modified_helper"])
 def test_uninstall_cleanup_staging_is_closed_and_authenticated(tmp_path, problem):
