@@ -175,7 +175,28 @@ local diskの展開先とprotected `ProgramData`をまたぐ削除はtransaction
 installation-owned pathを報告します。削除範囲を自動的に拡大しません。検証bootstrap自身の
 folderを削除する前にread lockを解放する必要があるため、commandは最後の管理者削除を予約し、
 protected `failure.json`の正確な場所を表示します。成功時はそのstaging pathも消えます。残った
-場合は、表示されたfileで正確な失敗理由と残存path一覧を確認してください。
+場合は、表示されたfileで、次に説明する正確なpending sentinel、別のterminal error、または
+indeterminate evidenceのどれであるかを確認してください。
+
+`Verified cleanup was scheduled`という表示と呼出元promptへの復帰は、認証済みparentから
+detached elevated finalizerへ処理を引き渡したことを意味します。削除完了も失敗も意味しません。
+parentが終了してbundleのread lockを解放し、finalizerが限定checkと削除を完了するまで、展開
+folderが短時間残ることがあります。この間はuninstallerを再実行せず、対象を手動削除しないで
+ください。
+
+観察可能なoutcomeまで待ってください。finalizerはinstallation targetが存在しないことを確認した後、
+childがcleanup stagingを削除する前に、protected `failure.json`へ正確なmessage
+`Final cleanup staging removal is pending.`を書き込みます。この正確なmessageは処理中を示すsentinelで、
+失敗ではありません。待機を続け、uninstallerの再実行や手動削除を行わないでください。
+
+成功が完了したと判断するのは、展開folderと表示されたcleanup-staging directoryが両方消えた後だけ
+です。finalizerはstaging directoryを削除する前に、すべての正確なinstallation-owned targetが
+存在しないことを確認します。terminal cleanup failureではstaging directoryが残り、pending sentinelが
+別のerror messageに置き換わり、`remaining_paths`に正確な残存path一覧が記録されます。reportがない、
+読めない、malformed、またはpending sentinelのままどちらのoutcomeにも到達しない場合は、成功・失敗
+ではなくindeterminateです。evidenceを保持して調査し、uninstall再実行や対象の手動削除を行わないで
+ください。uninstallerは固定の完了期限を提示しません。prompt復帰直後に展開folderが見えることだけ
+ではuninstall失敗ではなく、処理中の観察結果です。
 
 ## 整合性ファイル
 

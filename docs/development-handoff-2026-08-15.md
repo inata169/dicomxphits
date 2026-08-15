@@ -135,6 +135,50 @@ terminal may not release the parent terminal host's directory handle. Start a
 new PowerShell outside the installation directory before running its absolute
 `uninstall_offline.cmd` path.
 
+### v1.0.2 follow-up: scheduled cleanup is not completion
+
+Later v1.0.2 acceptance exposed two states with a similar initial symptom. The
+pre-fix artifact had a real bootstrap caller-guard defect: its transient
+`cmd.exe` bootstrap was classified as an active associated process, so deletion
+was not scheduled. Commit `2b9b579` corrected that exact caller boundary and
+was merged through PR #41 as merge commit `1480066`.
+
+With the replacement artifact, installation and GUI startup succeeded. The
+verified uninstaller then printed `Verified cleanup was scheduled`, returned
+to the calling prompt, and initially left the extracted folder visible. That
+was first reported as a recurrence of the earlier defect, but it was the
+expected intermediate state: the authenticated parent had to exit and release
+its bundle read locks before the detached elevated finalizer could remove the
+bundle itself. A subsequent read-only check confirmed that the exact extracted
+bundle, matching protected runtime, receipt, Windows Installer log, cleanup
+staging, and `failure.json` were all absent. This uninstall succeeded.
+
+Future acceptance must distinguish these states:
+
+- a refusal before `Verified cleanup was scheduled` is a real pre-scheduling
+  failure and does not authorize manual cleanup;
+- the scheduled message and prompt return mean detached cleanup is in progress,
+  not success or failure, and the uninstaller must not be rerun during it;
+- retained cleanup staging whose protected `failure.json` message is exactly
+  `Final cleanup staging removal is pending.` is also an intermediate state,
+  after installation-target removal and before staging self-removal;
+- success is final only after every exact installation-owned target and the
+  cleanup staging are absent; and
+- terminal failure retains the reported cleanup staging after replacing that
+  pending sentinel with a different error message and exact remaining-path
+  evidence. A missing, unreadable, malformed, or non-progressing pending report
+  is indeterminate and must be preserved for investigation without retry or
+  manual deletion.
+
+Do not diagnose failure solely because the extracted folder is still visible
+immediately after prompt return.
+
+The replacement v1.0.2 ZIP was built from source HEAD `1480066` before this
+indexed documentation and specification clarification. This change does not
+modify that ignored local ZIP. After this work is merged, do not use the
+pre-change ZIP as the release artifact: regenerate and independently revalidate
+the ZIP from the merged exact HEAD before making any tag or release decision.
+
 ## Final validated offline artifact
 
 The ignored local artifact produced from accepted HEAD `915a677` is:

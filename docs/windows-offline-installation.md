@@ -197,8 +197,36 @@ exact installation-owned path that remains; it never broadens the deletion
 scope. Because the verified bootstrap must release its read locks before its
 own folder can be removed, the command schedules the final elevated deletion
 and prints the exact protected `failure.json` location. Successful cleanup
-removes that staging path; if it remains, open the reported file for the exact
-failure and remaining-path list.
+removes that staging path; while it remains, open the reported file to
+distinguish the exact pending sentinel described below from a different
+terminal error or indeterminate evidence.
+
+The `Verified cleanup was scheduled` message and return to the calling prompt
+mean that the authenticated parent handed work to the detached elevated
+finalizer. They do not mean that removal has already finished, and they do not
+mean that it failed. The extracted folder can remain briefly while the parent
+exits, releases its bundle read locks, and the finalizer completes its bounded
+checks and deletion. During this interval, do not run the uninstaller again or
+manually delete any target.
+
+Wait for an observable outcome. The finalizer writes a protected
+`failure.json` with the exact message `Final cleanup staging removal is
+pending.` after the installation targets are absent but before its child
+removes cleanup staging. That exact message is a pending sentinel, not a
+failure; continue to wait and do not rerun or delete anything.
+
+Success is complete only after the extracted folder and the reported
+cleanup-staging directory have disappeared; before removing that staging
+directory, the finalizer verifies that every exact installation-owned target
+is absent. A terminal cleanup failure retains the staging directory and
+replaces the pending sentinel with a different error message whose
+`remaining_paths` list identifies the exact remnants. If the report is missing,
+unreadable, malformed, or remains at the pending sentinel without reaching
+either outcome, the state is indeterminate rather than success or failure.
+Preserve the evidence and investigate; do not rerun uninstall or manually
+delete targets. The uninstaller does not publish a fixed completion deadline.
+Seeing the extracted folder immediately after prompt return is only an
+in-progress observation and is not, by itself, an uninstall failure.
 
 ## Integrity files
 
