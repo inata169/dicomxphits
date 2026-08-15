@@ -66,6 +66,8 @@
   on a partial failure.
 - [x] 5.7 Preserve other runtime IDs, sibling paths, cases, external tools, and
   per-user GUI settings.
+- [x] 5.8 Wait for only the direct elevated staging process so its detached
+  finalizer cannot deadlock against the verified bootstrap's read locks.
 
 ## 6. Add Synthetic Uninstall Regression Coverage
 
@@ -78,6 +80,8 @@
   settings remain byte-for-byte unchanged.
 - [x] 6.4 Test bounded partial-failure reporting and confirm it never widens or
   guesses the cleanup target set.
+- [x] 6.5 Reproduce the descendant-wait regression synthetically and prove the
+  parent uses direct-process `WaitForExit()` without `Start-Process -Wait`.
 
 ## 7. Update Offline Documentation
 
@@ -101,7 +105,7 @@
 - [x] 8.7 Confirm no protected data, external-tool output, personal absolute
   path, physics behavior, DICOM meaning, version metadata, or tag change
   entered the diff.
-- [x] 8.8 Build and verify a new exact-HEAD offline ZIP only after all required
+- [ ] 8.8 Build and verify a new exact-HEAD offline ZIP only after all required
   repository checks pass.
 - [ ] 8.9 Obtain human Windows 11 installation, uninstallation, and GUI
   acceptance without

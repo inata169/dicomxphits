@@ -593,9 +593,13 @@ exit $LASTEXITCODE
     }
     $EncodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Command))
     try {
-        $Process = Start-Process -FilePath $TrustedPowerShell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList @(
+        $Process = Start-Process -FilePath $TrustedPowerShell -Verb RunAs -PassThru -WindowStyle Hidden -ArgumentList @(
             "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $EncodedCommand
         )
+        # Process.WaitForExit waits for this elevated stage only. Start-Process
+        # -Wait also waits for descendants on Windows, which deadlocks because
+        # the detached finalizer must wait for this non-elevated parent to exit.
+        $Process.WaitForExit()
     }
     catch { throw "Administrator approval is required for verified uninstallation." }
     if ($Process.ExitCode -ne 0) {

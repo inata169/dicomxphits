@@ -146,6 +146,16 @@ remaining installation-owned path on partial failure, and never broaden the
 target set during recovery. A successful result requires a final elevated
 absence check for every installation-owned target and cleanup staging path.
 
+Windows 11 acceptance exposed one process-lifetime defect in the first
+implementation: `Start-Process -Wait` waited for the elevated stage's detached
+finalizer as well as the direct stage process, while that finalizer correctly
+waited for the verified parent to release its bundle locks. The resulting
+circular wait timed out before any deletion. The parent therefore starts the
+same verified elevated stage with `-PassThru` and calls the returned process's
+`.WaitForExit()` method, which waits for only that direct process. The detached
+finalizer can then outlive the stage, observe the parent exit, and perform the
+already specified revalidation and exact cleanup.
+
 Per-user GUI settings below `LOCALAPPDATA` are intentionally retained because
 they may be shared by a later installation and are user preferences rather
 than installation-owned runtime content. Documentation will identify their

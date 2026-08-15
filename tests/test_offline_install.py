@@ -796,6 +796,52 @@ def test_uninstall_partial_failure_report_lists_only_exact_remaining_targets(tmp
     assert sibling.resolve() not in {Path(path) for path in report["remaining_paths"]}
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_uninstall_waits_for_direct_elevated_stage_without_descendant_wait(tmp_path):
+    helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
+    harness = tmp_path / "uninstall-direct-stage-wait-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(helper)
+        + "\n$script:BundleRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$script:BundleManifestSha256='" + ("a" * 64) + "'\n"
+        "$script:ProtectedRuntimeParent=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME_PARENT)\n"
+        "$script:ProtectedRuntimeId='" + ("b" * 64) + "'\n"
+        "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_SOURCE)\n"
+        "$script:FakeWaitCalled=$false\n"
+        "$script:StartProcessWaitSwitch=$false\n"
+        "$script:FakeProcess=[pscustomobject]@{ExitCode=0}\n"
+        "$script:FakeProcess|Add-Member -MemberType ScriptMethod -Name WaitForExit "
+        "-Value {$script:FakeWaitCalled=$true}\n"
+        "function Get-CimInstance { [pscustomobject]@{ParentProcessId=4242} }\n"
+        "function Start-Process {\n"
+        " param([string]$FilePath,[string]$Verb,[switch]$Wait,[switch]$PassThru,"
+        "[string]$WindowStyle,[object[]]$ArgumentList)\n"
+        " $script:StartProcessWaitSwitch=[bool]$Wait\n"
+        " return $script:FakeProcess\n"
+        "}\n"
+        "$Cleanup=Invoke-ElevatedCleanup $env:SystemRoot\n"
+        "if (-not $script:FakeWaitCalled) {exit 8}\n"
+        "if ($script:StartProcessWaitSwitch) {exit 9}\n"
+        "if ($Cleanup -notmatch 'offline-cleanup') {exit 10}\n"
+        "Write-Output 'DIRECT_STAGE_WAIT_ONLY'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "DICOMXPHITS_TEST_ROOT": str(tmp_path / "bundle"),
+            "DICOMXPHITS_TEST_RUNTIME_PARENT": str(
+                tmp_path / "ProgramData" / "dicomxphits" / "offline-runtimes"
+            ),
+            "DICOMXPHITS_TEST_SOURCE": str(tmp_path / "protected-source"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DIRECT_STAGE_WAIT_ONLY" in result.stdout.splitlines()
+
+
 def test_offline_uninstaller_has_bounded_verified_contract():
     cmd = (ROOT / "uninstall_offline.cmd").read_text(encoding="utf-8")
     helper = (ROOT / "tools" / "uninstall_offline_verified.ps1").read_text(
@@ -819,6 +865,8 @@ def test_offline_uninstaller_has_bounded_verified_contract():
     assert "failure.json" in helper
     assert "Remove-ExactInstallationTargets" in helper
     assert "Cleanup staging remains after cleanup" in helper
+    assert "-Verb RunAs -Wait" not in helper
+    assert "$Process.WaitForExit()" in helper
     assert "$BundleRoot, $RuntimeRoot, $ProtectedRuntimeReceipt" in helper
     assert "LocalAppData" not in helper
     assert "Get-ChildItem" not in helper
