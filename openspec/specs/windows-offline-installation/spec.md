@@ -139,8 +139,14 @@ applicable inventory and signature checks and has been read-locked.
 Before starting Windows PowerShell, the bootstrap MUST clear inherited CLR
 profiling, startup-hook, and AppDomain-manager environment variables that can
 load caller-selected managed or native code before the verification command.
-Failure to acquire a no-delete-sharing handle for any required bundle directory
-MUST stop installation; an access-denied directory MUST NOT be skipped.
+The bootstrap MUST authenticate and rehash the manifest-listed
+`install_offline.cmd`, retain a strict read handle without delete sharing on
+that file to protect the bundle root from rename, and retain that protection
+through the verified stage. The bootstrap MUST acquire a no-delete-sharing
+handle for every required child directory below the bundle root in each
+inventoried payload parent chain. Failure to acquire or retain the root-file
+protection or any required child-directory handle MUST stop installation before
+elevation; an access-denied child directory MUST NOT be skipped.
 The bootstrap MUST reject any unmanifested file in the extracted source tree.
 Before helper or pip execution, the elevated stage SHALL copy only inventoried
 payloads into protected storage, and the non-elevated stage MUST use that exact
@@ -186,9 +192,25 @@ source installation.
 - **THEN** bootstrap clears them before its first PowerShell process and no
   caller-selected CLR startup code runs
 
+#### Scenario: Bundle root is the caller current directory
+
+- **WHEN** the calling PowerShell retains the extracted bundle root as its
+  current directory
+- **THEN** bootstrap protects the root through the authenticated, rehashed,
+  strict `install_offline.cmd` read handle, protects every required child
+  directory with a no-delete-sharing handle, and blocks root and child-directory
+  rename through the verified stage
+
+#### Scenario: Bundle root protection cannot be acquired
+
+- **WHEN** the manifest-listed `install_offline.cmd` cannot be authenticated,
+  rehashed, or held with the required strict read handle
+- **THEN** bootstrap fails before elevation and does not execute a bundle
+  verifier, Windows Installer, Python, helper, or pip
+
 #### Scenario: Bundle directory lock is denied
 
-- **WHEN** a required bundle directory can be inspected but its protective
+- **WHEN** a required child directory can be inspected but its protective
   no-delete-sharing handle cannot be acquired
 - **THEN** bootstrap fails before elevation and does not skip that directory
 
