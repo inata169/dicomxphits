@@ -268,6 +268,10 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path, launcher):
         "$Root 'root-directory-rename-blocked.txt'),'blocked') }\n"
         "if ($RootMoved) { [IO.Directory]::Move($MovedRoot, $Root); "
         "throw 'bundle root rename was not blocked' }\n"
+        "$Checksum = Join-Path $Root 'SHA256SUMS.txt'\n"
+        "try { [IO.File]::Move($Checksum, ($Checksum + '.moved')); exit 97 }\n"
+        "catch { [IO.File]::WriteAllText((Join-Path "
+        "$Root 'checksum-rename-blocked.txt'),'blocked') }\n"
         "$Tools = Join-Path $env:DICOMXPHITS_BUNDLE_ROOT 'tools'\n"
         "try { [IO.Directory]::Move($Tools, ($Tools + '-moved')); exit 98 }\n"
         "catch { [IO.File]::WriteAllText((Join-Path "
@@ -348,6 +352,7 @@ def test_cmd_accepts_complete_manifest_consistent_inventory(tmp_path, launcher):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Initial SHA-256 verification passed." in result.stdout
     assert (root / "root-directory-rename-blocked.txt").read_text() == "blocked"
+    assert (root / "checksum-rename-blocked.txt").read_text() == "blocked"
     assert (root / "directory-rename-blocked.txt").read_text() == "blocked"
     assert (root / "replacement-blocked.txt").read_text(encoding="utf-8") == "blocked"
     assert marker.read_text(encoding="utf-8") == "executed"
@@ -662,7 +667,7 @@ def test_cmd_bootstrap_verifies_before_authenticated_runtime_stage():
     assert "if ($null -eq $Handle) { continue }" not in lock_helper
     assert text.count(
         "[IO.FileShare]::Read -bor [IO.FileShare]::Delete"
-    ) == 2
+    ) == 1
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows directory handles")
