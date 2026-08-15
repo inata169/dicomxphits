@@ -7,7 +7,7 @@ import dicomxphits
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET_VERSION = "1.0.1"
+TARGET_VERSION = "1.0.2"
 
 
 def test_release_version_metadata_is_consistent() -> None:
@@ -18,4 +18,4 @@ def test_release_version_metadata_is_consistent() -> None:
     assert f"Version {TARGET_VERSION}" in (ROOT / "README.md").read_text(
         encoding="utf-8-sig"
     )
-    assert (ROOT / "docs" / "release-notes-v1.0.1.md").is_file()
+    assert (ROOT / "docs" / f"release-notes-v{TARGET_VERSION}.md").is_file()
