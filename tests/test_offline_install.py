@@ -895,6 +895,64 @@ def test_uninstall_refuses_locked_descendant_before_any_exact_target_deletion(tm
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_final_child_preserves_complete_staging_when_reader_blocks_delete(
+    tmp_path,
+):
+    bundle_root = tmp_path / "installed bundle"
+    cleanup = tmp_path / "cleanup staging"
+    cleanup.mkdir()
+    staged_files = (
+        cleanup / "uninstall_offline_verified.ps1",
+        cleanup / "cleanup-plan.json",
+        cleanup / "failure.json",
+    )
+    for path in staged_files:
+        path.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-final-staging-lock-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Cleanup=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_CLEANUP)\n"
+        "$Locked=Join-Path $Cleanup 'cleanup-plan.json'\n"
+        "$Lock=[IO.File]::Open($Locked,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Read,[IO.FileShare]::Read)\n"
+        "try {\n"
+        " $Plan=$null\n"
+        " try {$Plan=Open-ExactUninstallWriteGuardPlan @($Cleanup);"
+        "Open-ExactUninstallDeleteHandles $Plan;"
+        "Remove-ExactCleanupStaging $Plan $Cleanup;exit 8}\n"
+        " catch {\n"
+        "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
+        "  foreach($Name in @('uninstall_offline_verified.ps1','cleanup-plan.json',"
+        "'failure.json')){if(-not[IO.File]::Exists((Join-Path $Cleanup $Name))){exit 10}}\n"
+        "  Write-Output 'LOCKED_STAGING_AND_REPORT_PRESERVED'\n"
+        " }\n"
+        " finally {if($null-ne$Plan){Close-ExactUninstallPlan $Plan}}\n"
+        "}\n"
+        "finally {$Lock.Dispose()}\n"
+        "$Plan=Open-ExactUninstallWriteGuardPlan @($Cleanup)\n"
+        "try {Open-ExactUninstallDeleteHandles $Plan;"
+        "Remove-ExactCleanupStaging $Plan $Cleanup}\n"
+        "finally {Close-ExactUninstallPlan $Plan}\n"
+        "if([IO.Directory]::Exists($Cleanup)-or[IO.File]::Exists($Cleanup)){exit 11}\n"
+        "Write-Output 'UNLOCKED_STAGING_REMOVED'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "LOCKED_STAGING_AND_REPORT_PRESERVED" in result.stdout.splitlines()
+    assert "UNLOCKED_STAGING_REMOVED" in result.stdout.splitlines()
+    assert not cleanup.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
 def test_uninstall_write_guards_freeze_existing_tree_until_cleanup(tmp_path):
     bundle_root = tmp_path / "installed bundle"
     existing = bundle_root / "nested" / "existing.txt"
@@ -988,7 +1046,9 @@ def test_uninstall_frozen_handle_does_not_delete_late_path_replacement(tmp_path)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
-@pytest.mark.parametrize("problem", ["valid", "unknown", "modified_helper"])
+@pytest.mark.parametrize(
+    "problem", ["valid", "final_phase", "unknown", "modified_helper"]
+)
 def test_uninstall_cleanup_staging_is_closed_and_authenticated(tmp_path, problem):
     bundle_root = tmp_path / "installed bundle"
     protected_source = tmp_path / "protected source"
@@ -1001,7 +1061,10 @@ def test_uninstall_cleanup_staging_is_closed_and_authenticated(tmp_path, problem
     )
     (cleanup / "uninstall_offline_verified.ps1").write_bytes(helper_bytes)
     (cleanup / "cleanup-plan.json").write_text("{}\n", encoding="utf-8")
-    if problem == "unknown":
+    if problem == "final_phase":
+        (cleanup / "failure.json").write_text("{}\n", encoding="utf-8")
+        (protected_source / "tools" / "uninstall_offline_verified.ps1").unlink()
+    elif problem == "unknown":
         (cleanup / "unknown.txt").write_text("unknown\n", encoding="utf-8")
     elif problem == "modified_helper":
         (cleanup / "uninstall_offline_verified.ps1").write_text(
@@ -1012,7 +1075,8 @@ def test_uninstall_cleanup_staging_is_closed_and_authenticated(tmp_path, problem
         _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
         + "\nfunction Assert-ProtectedSecurity { param($Path,$IsDirectory,$Label) }\n"
         "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_SOURCE)\n"
-        "try { Assert-ExactCleanupStaging $env:DICOMXPHITS_TEST_CLEANUP;"
+        "$FinalPhase=[bool]::Parse($env:DICOMXPHITS_TEST_FINAL_PHASE)\n"
+        "try { Assert-ExactCleanupStaging $env:DICOMXPHITS_TEST_CLEANUP $FinalPhase;"
         "Write-Output 'STAGING_OK';exit 0 }\n"
         "catch { Write-Output ('CONTROLLED=' + $_.Exception.Message);exit 17 }\n",
         encoding="utf-8",
@@ -1023,12 +1087,13 @@ def test_uninstall_cleanup_staging_is_closed_and_authenticated(tmp_path, problem
             "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
             "DICOMXPHITS_TEST_SOURCE": str(protected_source),
             "DICOMXPHITS_TEST_CLEANUP": str(cleanup),
+            "DICOMXPHITS_TEST_FINAL_PHASE": str(problem == "final_phase"),
         },
     )
 
-    expected_code = 0 if problem == "valid" else 17
+    expected_code = 0 if problem in {"valid", "final_phase"} else 17
     assert result.returncode == expected_code, result.stdout + result.stderr
-    if problem == "valid":
+    if problem in {"valid", "final_phase"}:
         assert "STAGING_OK" in result.stdout
     else:
         assert "CONTROLLED=" in result.stdout
@@ -1242,11 +1307,15 @@ def test_offline_uninstaller_has_bounded_verified_contract():
     assert "cleanup_helper_sha256" in helper
     assert "failure.json" in helper
     assert "Remove-ExactInstallationTargets" in helper
+    assert "Remove-ExactCleanupStaging" in helper
+    assert "Invoke-CleanupStagingRemoval" in helper
+    assert 'DICOMXPHITS_UNINSTALL_ACTION=\'cleanup-staging\'' in helper
     assert "Open-ExactUninstallWriteGuardPlan" in helper
     assert "Open-ExactUninstallDeleteHandles" in helper
     assert "Assert-ExactUninstallPlanSnapshot" in helper
     assert "Cannot safely begin uninstallation because a target is in use" in helper
     assert "Cleanup staging remains after cleanup" in helper
+    assert "Remove-Item -LiteralPath `$p -Recurse -Force" not in helper
     assert "-Verb RunAs -Wait" not in helper
     assert "$Process.WaitForExit()" in helper
     assert "$BundleRoot, $RuntimeRoot, $ProtectedRuntimeReceipt" in helper

@@ -926,7 +926,11 @@ function Write-ProtectedCleanupPlan([string]$CleanupDirectory, [string]$Nonce) {
     Assert-ProtectedSecurity $PlanPath $false "Cleanup plan"
 }
 
-function Assert-ProtectedCleanupPlan([string]$CleanupDirectory, [string]$Nonce) {
+function Assert-ProtectedCleanupPlan(
+    [string]$CleanupDirectory,
+    [string]$Nonce,
+    [bool]$RequireProtectedHelper = $true
+) {
     $PlanPath = Join-Path $CleanupDirectory "cleanup-plan.json"
     $CleanupHelper = Join-Path $CleanupDirectory "uninstall_offline_verified.ps1"
     $ProtectedHelper = Join-Path $ProtectedSourceRoot "tools\uninstall_offline_verified.ps1"
@@ -954,20 +958,28 @@ function Assert-ProtectedCleanupPlan([string]$CleanupDirectory, [string]$Nonce) 
         [string]$Plan.installing_user_sid -ne $InstallingUserSid.Value -or
         [string]$Plan.cleanup_helper_sha256 -notmatch "^[0-9a-f]{64}$" -or
         [string]$Plan.cleanup_helper_sha256 -ne (Get-FileSha256 $CleanupHelper) -or
-        [string]$Plan.cleanup_helper_sha256 -ne (Get-FileSha256 $ProtectedHelper)
+        ($RequireProtectedHelper -and (
+            -not [System.IO.File]::Exists($ProtectedHelper) -or
+            [string]$Plan.cleanup_helper_sha256 -ne (Get-FileSha256 $ProtectedHelper)
+        ))
     ) {
         throw "Cleanup plan does not identify the exact verified installation."
     }
 }
 
-function Assert-ExactCleanupStaging([string]$Directory) {
+function Assert-ExactCleanupStaging(
+    [string]$Directory,
+    [bool]$RequireFailureReport = $false
+) {
     if (-not [System.IO.Directory]::Exists($Directory)) {
         throw "Cleanup staging is missing: $Directory"
     }
     Assert-NoReparsePath $Directory "Cleanup staging"
     Assert-ProtectedSecurity $Directory $true "Cleanup staging"
     $Expected = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($Name in @("uninstall_offline_verified.ps1", "cleanup-plan.json")) {
+    $ExpectedNames = @("uninstall_offline_verified.ps1", "cleanup-plan.json")
+    if ($RequireFailureReport) { $ExpectedNames += "failure.json" }
+    foreach ($Name in $ExpectedNames) {
         $Path = [System.IO.Path]::GetFullPath((Join-Path $Directory $Name))
         if (-not [System.IO.File]::Exists($Path)) {
             throw "Cleanup staging payload is missing: $Path"
@@ -996,7 +1008,10 @@ function Assert-ExactCleanupStaging([string]$Directory) {
     }
     $CleanupHelper = Join-Path $Directory "uninstall_offline_verified.ps1"
     $ProtectedHelper = Join-Path $ProtectedSourceRoot "tools\uninstall_offline_verified.ps1"
-    if ((Get-FileSha256 $CleanupHelper) -ne (Get-FileSha256 $ProtectedHelper)) {
+    if (
+        -not $RequireFailureReport -and
+        (Get-FileSha256 $CleanupHelper) -ne (Get-FileSha256 $ProtectedHelper)
+    ) {
         throw "Cleanup staging helper does not match the authenticated protected helper."
     }
 }
@@ -1138,6 +1153,54 @@ function Remove-ExactInstallationTargets([object]$Plan) {
     }
 }
 
+function Remove-ExactCleanupStaging([object]$Plan, [string]$CleanupDirectory) {
+    Assert-ExactUninstallPlanSnapshot $Plan
+    $Entries = @($Plan.entries | Sort-Object { ([string]$_.path).Length } -Descending)
+    foreach ($Entry in $Entries) {
+        $Path = [string]$Entry.path
+        Assert-NoReparsePath $Path "Exact cleanup staging target"
+        if ($null -eq $Entry.delete_handle) {
+            throw "Exact cleanup staging target has no retained deletion handle: $Path"
+        }
+        if (-not [Dicomxphits.OfflineUninstallNative]::MarkDeletePending(
+            $Entry.delete_handle
+        )) {
+            $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw (New-Object System.ComponentModel.Win32Exception(
+                $ErrorCode,
+                "Exact cleanup staging target could not be removed from the frozen inventory: " +
+                    "$Path (Windows error $ErrorCode)"
+            ))
+        }
+        $Entry.delete_handle.Dispose()
+        $Entry.guard_handle.Dispose()
+    }
+    if (
+        [System.IO.Directory]::Exists($CleanupDirectory) -or
+        [System.IO.File]::Exists($CleanupDirectory)
+    ) { throw "Cleanup staging remains after cleanup: $CleanupDirectory" }
+}
+
+function Invoke-CleanupStagingRemoval([string]$CleanupDirectory, [int]$WaitProcessId) {
+    if ($WaitProcessId -le 0 -or $WaitProcessId -eq $PID) {
+        throw "Cleanup staging parent process ID is invalid."
+    }
+    Wait-Process -Id $WaitProcessId -ErrorAction SilentlyContinue
+    Assert-ExactCleanupStaging $CleanupDirectory $true
+    Assert-ProtectedCleanupPlan `
+        $CleanupDirectory `
+        ([string]$env:DICOMXPHITS_UNINSTALL_NONCE) `
+        $false
+    $CleanupPlan = Open-ExactUninstallWriteGuardPlan @($CleanupDirectory)
+    try {
+        Assert-ExactCleanupStaging $CleanupDirectory $true
+        Assert-ExactUninstallPlanSnapshot $CleanupPlan
+        Open-ExactUninstallDeleteHandles $CleanupPlan
+        Remove-ExactCleanupStaging $CleanupPlan $CleanupDirectory
+    }
+    finally { Close-ExactUninstallPlan $CleanupPlan }
+}
+
 function Invoke-FinalCleanup([string]$CleanupDirectory, [int[]]$WaitProcessIds) {
     foreach ($WaitPid in $WaitProcessIds) {
         if ($WaitPid -le 0 -or $WaitPid -eq $PID) { continue }
@@ -1187,9 +1250,15 @@ function Invoke-FinalCleanup([string]$CleanupDirectory, [int[]]$WaitProcessIds) 
         [System.StringComparison]::OrdinalIgnoreCase
     )) { throw "Cleanup staging parent is unexpected." }
     Write-ProtectedCleanupFailure $CleanupDirectory "Final cleanup staging removal is pending."
+    Assert-ExactCleanupStaging $CleanupDirectory $true
+    Assert-ProtectedCleanupPlan `
+        $CleanupDirectory `
+        ([string]$env:DICOMXPHITS_UNINSTALL_NONCE) `
+        $false
     $TrustedPowerShell = Assert-TrustedPowerShellProcess
-    $EncodedStage = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($CleanupDirectory))
-    $FinalCommand = "`$ErrorActionPreference='Stop';Wait-Process -Id $PID -ErrorAction SilentlyContinue;`$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$EncodedStage'));if([IO.Directory]::Exists(`$p)){Remove-Item -LiteralPath `$p -Recurse -Force};if([IO.Directory]::Exists(`$p)-or[IO.File]::Exists(`$p)){throw ('Cleanup staging remains after cleanup: '+`$p)}"
+    $StagedHelper = Join-Path $CleanupDirectory "uninstall_offline_verified.ps1"
+    $EncodedHelper = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($StagedHelper))
+    $FinalCommand = "`$env:PSModulePath=[IO.Path]::Combine(`$PSHOME,'Modules');`$ErrorActionPreference='Stop';`$env:DICOMXPHITS_UNINSTALL_ACTION='cleanup-staging';`$env:DICOMXPHITS_UNINSTALL_FINALIZER_PID='$PID';& ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$EncodedHelper')));exit `$LASTEXITCODE"
     $EncodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($FinalCommand))
     Start-Process -FilePath $TrustedPowerShell -WindowStyle Hidden -ArgumentList @(
         "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $EncodedCommand
@@ -1230,14 +1299,6 @@ try {
     $script:BundleManifestSha256 = [string]$env:DICOMXPHITS_BUNDLE_MANIFEST_SHA256
     Set-ProtectedRuntimeIdentity ([string]$env:DICOMXPHITS_UNINSTALLING_USER_SID)
     if (-not (Test-IsAdministrator)) { throw "Verified uninstall action requires administrator authority." }
-    $null = Import-ExactProtectedReceipt
-    Assert-ExactInstallationRoot
-    $WaitPids = @(
-        ([string]$env:DICOMXPHITS_UNINSTALL_WAIT_PIDS).Split(',') |
-            Where-Object { $_ -match '^\d+$' } |
-            ForEach-Object { [int]$_ }
-    )
-    Assert-NoAssociatedProcesses @($WaitPids + $PID)
     $Nonce = [string]$env:DICOMXPHITS_UNINSTALL_NONCE
     if ($Nonce -notmatch "^[0-9a-f]{32}$") { throw "Uninstall nonce is invalid." }
     $CleanupParent = Join-Path ([System.IO.Path]::GetDirectoryName($ProtectedRuntimeParent)) "offline-cleanup"
@@ -1247,6 +1308,28 @@ try {
     Assert-NoReparsePath $CleanupParent "Cleanup parent"
     Assert-ProtectedSecurity $CleanupParent $true "Cleanup parent"
     $CleanupDirectory = Join-Path $CleanupParent "$ProtectedRuntimeId-$Nonce"
+    if ($Action -eq "cleanup-staging") {
+        if (-not [string]::Equals(
+            [System.IO.Path]::GetDirectoryName($PSCommandPath),
+            $CleanupDirectory,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) { throw "Cleanup removal helper is outside its exact cleanup staging directory." }
+        Assert-ProtectedSecurity $PSCommandPath $false "Cleanup removal helper"
+        $FinalizerPidText = [string]$env:DICOMXPHITS_UNINSTALL_FINALIZER_PID
+        if ($FinalizerPidText -notmatch '^\d+$') {
+            throw "Cleanup staging parent process ID is invalid."
+        }
+        Invoke-CleanupStagingRemoval $CleanupDirectory ([int]$FinalizerPidText)
+        exit 0
+    }
+    $null = Import-ExactProtectedReceipt
+    Assert-ExactInstallationRoot
+    $WaitPids = @(
+        ([string]$env:DICOMXPHITS_UNINSTALL_WAIT_PIDS).Split(',') |
+            Where-Object { $_ -match '^\d+$' } |
+            ForEach-Object { [int]$_ }
+    )
+    Assert-NoAssociatedProcesses @($WaitPids + $PID)
     if ($Action -eq "stage") {
         New-ProtectedCleanupDirectory $CleanupDirectory
         Copy-ProtectedCleanupFile $PSCommandPath (Join-Path $CleanupDirectory "uninstall_offline_verified.ps1")
@@ -1272,7 +1355,7 @@ try {
 }
 catch {
     if (
-        $env:DICOMXPHITS_UNINSTALL_ACTION -in @("stage", "finalize") -and
+        $env:DICOMXPHITS_UNINSTALL_ACTION -in @("stage", "finalize", "cleanup-staging") -and
         -not [string]::IsNullOrWhiteSpace($CleanupDirectory)
     ) {
         Write-ProtectedCleanupFailure $CleanupDirectory $_.Exception.Message
