@@ -96,16 +96,9 @@ designated anonymized non-patient phantom case based on
   phits2dicom completed.
 - The plan contains 16 fractions and a 42.56 Gy course prescription. The final
   PLAN RTDOSE applied the factor 16 exactly once.
-- An automated Numba 3D global comparison used 3%/3 mm, 10% reference cutoff,
-  interpolation fraction 1, and no shift optimization. It evaluated 53,051
-  reference points and reported 8.079% GPR.
-- The primary user separately compared Monaco TPS reference dose against PHITS
-  evaluation dose in GPR-comparing. A 20%/3 mm, 10% cutoff run reported 47.75%
-  overall GPR.
-- The user confirmed that the spatial distribution and gradient direction now
-  agree and found no remaining geometric defect. The remaining poor GPR was
-  attributed to the deliberately low-statistics dose uncertainty and sparse
-  high-uncertainty outliers.
+- The primary user reported no abnormal dose-distribution or absolute-dose
+  behavior in the external GPR comparison.
+- The agent did not run or inspect GPR, real DICOM, or calculation outputs.
 
 This is provisional acceptance of the corrected left/right geometry and PLAN
 course-dose semantics only. It is not clinical dose-accuracy acceptance. A
