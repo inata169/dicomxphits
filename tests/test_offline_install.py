@@ -711,6 +711,115 @@ def test_uninstall_process_guard_refuses_synthetic_installed_gui(tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_uninstall_process_guard_allows_verified_bootstrap_cmd_caller(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    bundle_root.mkdir()
+    harness = tmp_path / "uninstall-bootstrap-caller-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$CallerPid=4242\n"
+        "function Get-CimInstance { [pscustomobject]@{ProcessId=$CallerPid;Name='cmd.exe';"
+        "ExecutablePath=[IO.Path]::Combine([Environment]::SystemDirectory,'cmd.exe');"
+        "CommandLine=('cmd.exe /d /s /c \"\"' + "
+        "(Join-Path $script:BundleRoot 'uninstall_offline.cmd') + '\"\"')} }\n"
+        "Assert-NoAssociatedProcesses @() $CallerPid\n"
+        "Write-Output 'VERIFIED_BOOTSTRAP_CALLER_ALLOWED'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "runtime"),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "VERIFIED_BOOTSTRAP_CALLER_ALLOWED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize("command_suffix", ["README.md", "uninstall_offline.cmd.evil"])
+def test_uninstall_process_guard_rejects_other_cmd_with_caller_pid(
+    tmp_path, command_suffix
+):
+    bundle_root = tmp_path / "installed bundle"
+    bundle_root.mkdir()
+    harness = tmp_path / "uninstall-other-cmd-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$CallerPid=4242\n"
+        "function Get-CimInstance { [pscustomobject]@{ProcessId=$CallerPid;Name='cmd.exe';"
+        "ExecutablePath=[IO.Path]::Combine([Environment]::SystemDirectory,'cmd.exe');"
+        "CommandLine=('cmd.exe /d /s /c type \"' + "
+        "(Join-Path $script:BundleRoot $env:DICOMXPHITS_TEST_COMMAND_SUFFIX) + '\"')} }\n"
+        "try { Assert-NoAssociatedProcesses @() $CallerPid; exit 8 }\n"
+        "catch {\n"
+        " if ($_.Exception.Message -notmatch 'Associated process must be closed') "
+        "{Write-Error $_;exit 9}\n"
+        " Write-Output 'OTHER_CALLER_PROCESS_REJECTED'; exit 0\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "runtime"),
+            "DICOMXPHITS_TEST_COMMAND_SUFFIX": command_suffix,
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "OTHER_CALLER_PROCESS_REJECTED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+def test_powershell_cmd_bootstrap_is_not_rejected_as_associated_process(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    bundle_root.mkdir()
+    helper = tmp_path / "bootstrap-caller-helper.ps1"
+    helper.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
+        "$CallerPid=Get-BootstrapCallerProcessId\n"
+        "Assert-NoAssociatedProcesses @($PID) $CallerPid\n"
+        "Write-Output 'POWERSHELL_CMD_BOOTSTRAP_ALLOWED'\n",
+        encoding="utf-8",
+    )
+    uninstaller = bundle_root / "uninstall_offline.cmd"
+    uninstaller.write_text(
+        "@echo off\n"
+        "setlocal\n"
+        "cd /d \"%SystemRoot%\\System32\"\n"
+        "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" "
+        "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass "
+        "-File \"%DICOMXPHITS_TEST_HELPER%\"\n"
+        "exit /b %ERRORLEVEL%\n",
+        encoding="utf-8",
+    )
+    harness = tmp_path / "invoke-uninstall-cmd.ps1"
+    harness.write_text(
+        "& (Join-Path $env:DICOMXPHITS_BUNDLE_ROOT 'uninstall_offline.cmd')\n"
+        "exit $LASTEXITCODE\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "runtime"),
+            "DICOMXPHITS_TEST_HELPER": str(helper),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "POWERSHELL_CMD_BOOTSTRAP_ALLOWED" in result.stdout.splitlines()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
 @pytest.mark.parametrize("associated", [False, True])
 def test_uninstall_process_guard_scopes_external_scientific_process(
     tmp_path, associated
@@ -1240,7 +1349,7 @@ def test_uninstall_partial_failure_report_lists_only_exact_remaining_targets(tmp
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
-def test_uninstall_waits_only_for_direct_bootstrap_stage_without_caller_shell(tmp_path):
+def test_uninstall_waits_only_for_direct_stage_and_excludes_caller_shell(tmp_path):
     helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
     harness = tmp_path / "uninstall-direct-stage-wait-harness.ps1"
     harness.write_text(
@@ -1266,7 +1375,7 @@ def test_uninstall_waits_only_for_direct_bootstrap_stage_without_caller_shell(tm
         " $script:CapturedArguments=$ArgumentList\n"
         " return $script:FakeProcess\n"
         "}\n"
-        "$Cleanup=Invoke-ElevatedCleanup $env:SystemRoot\n"
+        "$Cleanup=Invoke-ElevatedCleanup $env:SystemRoot 4242\n"
         "if (-not $script:FakeWaitCalled) {exit 8}\n"
         "if ($script:StartProcessWaitSwitch) {exit 9}\n"
         "if ($Cleanup -notmatch 'offline-cleanup') {exit 10}\n"
@@ -1275,9 +1384,13 @@ def test_uninstall_waits_only_for_direct_bootstrap_stage_without_caller_shell(tm
         "$Command=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($EncodedCommand))\n"
         "$ExpectedPid=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$PID))\n"
         "$PersistentCaller=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('4242'))\n"
-        "if ($Command -notmatch [regex]::Escape($ExpectedPid)) {exit 12}\n"
-        "if ($Command -match [regex]::Escape($PersistentCaller)) {exit 13}\n"
-        "Write-Output 'DIRECT_BOOTSTRAP_STAGE_WAIT_ONLY'\n",
+        "$Lines=@($Command -split '\\r?\\n')\n"
+        "$WaitLine=[string]($Lines|Where-Object{$_ -match 'UNINSTALL_WAIT_PIDS'})\n"
+        "$CallerLine=[string]($Lines|Where-Object{$_ -match 'BOOTSTRAP_CALLER_PID'})\n"
+        "if ($WaitLine -notmatch [regex]::Escape($ExpectedPid)) {exit 12}\n"
+        "if ($WaitLine -match [regex]::Escape($PersistentCaller)) {exit 13}\n"
+        "if ($CallerLine -notmatch [regex]::Escape($PersistentCaller)) {exit 14}\n"
+        "Write-Output 'DIRECT_STAGE_WAIT_AND_CALLER_EXCLUSION'\n",
         encoding="utf-8",
     )
     result = _run_powershell_harness(
@@ -1293,7 +1406,7 @@ def test_uninstall_waits_only_for_direct_bootstrap_stage_without_caller_shell(tm
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "DIRECT_BOOTSTRAP_STAGE_WAIT_ONLY" in result.stdout.splitlines()
+    assert "DIRECT_STAGE_WAIT_AND_CALLER_EXCLUSION" in result.stdout.splitlines()
 
 
 def test_offline_uninstaller_has_bounded_verified_contract():
@@ -1311,6 +1424,8 @@ def test_offline_uninstaller_has_bounded_verified_contract():
     assert "Import-ExactProtectedReceipt" in helper
     assert "Assert-ExactInstallationRoot" in helper
     assert "Assert-NoAssociatedProcesses" in helper
+    assert "Get-BootstrapCallerProcessId" in helper
+    assert "DICOMXPHITS_UNINSTALL_BOOTSTRAP_CALLER_PID" in helper
     assert "Writable uninstall helper does not match" in helper
     assert "Write-ProtectedCleanupPlan" in helper
     assert "Assert-ProtectedCleanupPlan" in helper
