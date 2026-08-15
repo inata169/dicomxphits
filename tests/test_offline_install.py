@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -416,7 +417,9 @@ def test_runtime_failure_diagnostic_is_display_only_and_nonce_bound(
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
-@pytest.mark.parametrize("problem", ["valid", "unknown", "modified", "reparse"])
+@pytest.mark.parametrize(
+    "problem", ["valid", "unknown", "venv-unknown", "modified", "reparse"]
+)
 def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, problem):
     bundle_root = tmp_path / "installed bundle"
     protected_root = tmp_path / "protected source"
@@ -439,6 +442,11 @@ def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, probl
         (root / "SHA256SUMS.txt").write_text(
             f"{record['sha256']} *payload.txt\n", encoding="utf-8"
         )
+    (protected_root / "pyproject.toml").write_text(
+        '[project]\nname = "dicomxphits"\nversion = "1.0.1"\n\n'
+        '[project.scripts]\ndicomxphits-gui = "dicomxphits.gui:main"\n',
+        encoding="utf-8",
+    )
     (bundle_root / ".venv" / "Scripts").mkdir(parents=True)
     (bundle_root / ".venv" / "Scripts" / "python.exe").write_bytes(b"generated")
     (bundle_root / "offline-install.log").write_text("generated\n", encoding="utf-8")
@@ -448,6 +456,12 @@ def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, probl
     elif problem == "unknown":
         (bundle_root / "keep-me.txt").write_text("user content\n", encoding="utf-8")
         expected = "unknown file"
+        expected_code = 17
+    elif problem == "venv-unknown":
+        unknown = bundle_root / ".venv" / "case" / "plan.dcm"
+        unknown.parent.mkdir()
+        unknown.write_bytes(b"synthetic user content\n")
+        expected = ".venv contains an unknown"
         expected_code = 17
     elif problem == "modified":
         payload.write_text("modified\n", encoding="utf-8")
@@ -467,6 +481,7 @@ def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, probl
         "$script:BundleRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
         "$script:BundlePrefix=$script:BundleRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar\n"
         "$script:ProtectedSourceRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_PROTECTED)\n"
+        "$script:RuntimeRoot=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RUNTIME)\n"
         "$script:BundleManifestSha256=$env:DICOMXPHITS_TEST_MANIFEST\n"
         "if ($env:DICOMXPHITS_TEST_PROBLEM -eq 'reparse') {"
         "New-Item -ItemType Junction -Path (Join-Path $script:BundleRoot 'linked') "
@@ -502,6 +517,7 @@ def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, probl
             **os.environ,
             "DICOMXPHITS_TEST_ROOT": str(bundle_root),
             "DICOMXPHITS_TEST_PROTECTED": str(protected_root),
+            "DICOMXPHITS_TEST_RUNTIME": str(tmp_path / "protected runtime"),
             "DICOMXPHITS_TEST_MANIFEST": _sha256(protected_root / "bundle-manifest.json"),
             "DICOMXPHITS_TEST_PROBLEM": problem,
             "DICOMXPHITS_TEST_TARGET": str(tmp_path / "junction target"),
@@ -512,6 +528,66 @@ def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, probl
     assert expected in result.stdout
     assert bundle_root.is_dir()
     assert protected_root.is_dir()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
+@pytest.mark.parametrize("unknown", [False, True])
+def test_uninstall_venv_inventory_is_derived_from_authenticated_wheel(tmp_path, unknown):
+    venv_root = tmp_path / ".venv"
+    package = venv_root / "Lib" / "site-packages" / "sample" / "__init__.py"
+    package.parent.mkdir(parents=True)
+    package.write_text("VALUE = 1\n", encoding="utf-8")
+    python = venv_root / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"synthetic python")
+    if unknown:
+        injected = package.parent / "case" / "plan.dcm"
+        injected.parent.mkdir()
+        injected.write_bytes(b"synthetic user content\n")
+
+    wheel = tmp_path / "sample-1.0-py3-none-any.whl"
+    record = (
+        "sample/__init__.py,sha256=synthetic,10\n"
+        "sample-1.0.dist-info/entry_points.txt,sha256=synthetic,48\n"
+        "sample-1.0.dist-info/RECORD,,\n"
+    )
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("sample/__init__.py", "VALUE = 1\n")
+        archive.writestr(
+            "sample-1.0.dist-info/entry_points.txt",
+            "[console_scripts]\nsample-tool = sample:main\n",
+        )
+        archive.writestr("sample-1.0.dist-info/RECORD", record)
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "dicomxphits"\nversion = "1.0.1"\n',
+        encoding="utf-8",
+    )
+
+    helper = ROOT / "tools" / "uninstall_offline_verified.ps1"
+    harness = tmp_path / "uninstall-venv-wheel-inventory-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(helper)
+        + "\ntry { Assert-ExactVenvTree $env:DICOMXPHITS_TEST_VENV "
+        "@($env:DICOMXPHITS_TEST_WHEEL) $env:DICOMXPHITS_TEST_PYPROJECT; "
+        "Write-Output 'VENV_INVENTORY_OK'; exit 0 }\n"
+        "catch { Write-Output ('CONTROLLED=' + $_.Exception.Message); exit 17 }\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(tmp_path),
+            "DICOMXPHITS_TEST_VENV": str(venv_root),
+            "DICOMXPHITS_TEST_WHEEL": str(wheel),
+            "DICOMXPHITS_TEST_PYPROJECT": str(pyproject),
+        },
+    )
+
+    expected_code = 17 if unknown else 0
+    assert result.returncode == expected_code, result.stdout + result.stderr
+    expected = ".venv contains an unknown" if unknown else "VENV_INVENTORY_OK"
+    assert expected in result.stdout
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")

@@ -51,6 +51,7 @@ namespace Dicomxphits {
 }
 '@
 }
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 function Test-IsAdministrator {
     $Identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -310,6 +311,227 @@ function Get-ManifestRecords([string]$ProtectedManifestPath) {
     return @($Manifest.files)
 }
 
+function Add-ExpectedVenvDirectory(
+    [string]$Path,
+    [string]$VenvRoot,
+    [System.Collections.Generic.HashSet[string]]$ExpectedDirectories
+) {
+    $Full = [System.IO.Path]::GetFullPath($Path)
+    $Prefix = $VenvRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) +
+        [System.IO.Path]::DirectorySeparatorChar
+    if (
+        -not [string]::Equals($Full, $VenvRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not $Full.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)
+    ) { throw "Generated virtual-environment path escaped .venv: $Full" }
+    $null = $ExpectedDirectories.Add($Full)
+}
+
+function Add-ExpectedVenvFile(
+    [string]$Path,
+    [string]$VenvRoot,
+    [System.Collections.Generic.HashSet[string]]$ExpectedFiles,
+    [System.Collections.Generic.HashSet[string]]$ExpectedDirectories
+) {
+    $Full = [System.IO.Path]::GetFullPath($Path)
+    $Prefix = $VenvRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar) +
+        [System.IO.Path]::DirectorySeparatorChar
+    if (-not $Full.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Generated virtual-environment file escaped .venv: $Full"
+    }
+    $null = $ExpectedFiles.Add($Full)
+    $Cursor = [System.IO.Path]::GetDirectoryName($Full)
+    while (
+        [string]::Equals($Cursor, $VenvRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $Cursor.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        $null = $ExpectedDirectories.Add($Cursor)
+        if ([string]::Equals($Cursor, $VenvRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $Cursor = [System.IO.Path]::GetDirectoryName($Cursor)
+    }
+}
+
+function Read-ZipEntryText([System.IO.Compression.ZipArchiveEntry]$Entry) {
+    $Stream = $Entry.Open()
+    $Reader = New-Object System.IO.StreamReader(
+        $Stream,
+        [System.Text.Encoding]::UTF8,
+        $true,
+        4096,
+        $false
+    )
+    try { return $Reader.ReadToEnd() }
+    finally { $Reader.Dispose() }
+}
+
+function Add-TrustedWheelVenvPaths(
+    [string]$WheelPath,
+    [string]$VenvRoot,
+    [System.Collections.Generic.HashSet[string]]$ExpectedFiles,
+    [System.Collections.Generic.HashSet[string]]$ExpectedDirectories
+) {
+    Assert-NoReparsePath $WheelPath "Authenticated virtual-environment wheel"
+    $Archive = [System.IO.Compression.ZipFile]::OpenRead($WheelPath)
+    try {
+        $RecordEntries = @($Archive.Entries | Where-Object {
+            $_.FullName -match '^[^/]+\.dist-info/RECORD$'
+        })
+        if ($RecordEntries.Count -ne 1) {
+            throw "Authenticated wheel has no unique RECORD inventory: $WheelPath"
+        }
+        $Rows = @(Read-ZipEntryText $RecordEntries[0] | ConvertFrom-Csv -Header Path,Hash,Size)
+        foreach ($Row in $Rows) {
+            $Relative = [string]$Row.Path
+            if (
+                [string]::IsNullOrWhiteSpace($Relative) -or
+                [System.IO.Path]::IsPathRooted($Relative) -or
+                $Relative.Contains(":") -or
+                $Relative.Split('/') -contains ".."
+            ) { throw "Authenticated wheel contains an unsafe RECORD path: $Relative" }
+            $DestinationRelative = $Relative
+            if ($Relative -match '^[^/]+\.data/(purelib|platlib)/(.+)$') {
+                $DestinationRelative = $Matches[2]
+            }
+            elseif ($Relative -match '^[^/]+\.data/scripts/(.+)$') {
+                $Destination = Join-Path (Join-Path $VenvRoot "Scripts") $Matches[1].Replace(
+                    "/",
+                    [System.IO.Path]::DirectorySeparatorChar
+                )
+                Add-ExpectedVenvFile $Destination $VenvRoot $ExpectedFiles $ExpectedDirectories
+                continue
+            }
+            elseif ($Relative -match '^[^/]+\.data/') {
+                throw "Authenticated wheel uses an unsupported installation path: $Relative"
+            }
+            $Destination = Join-Path (Join-Path $VenvRoot "Lib\site-packages") (
+                $DestinationRelative.Replace("/", [System.IO.Path]::DirectorySeparatorChar)
+            )
+            Add-ExpectedVenvFile $Destination $VenvRoot $ExpectedFiles $ExpectedDirectories
+            if ([System.IO.Path]::GetExtension($Destination) -ieq ".py") {
+                $Cache = Join-Path ([System.IO.Path]::GetDirectoryName($Destination)) "__pycache__"
+                $Compiled = Join-Path $Cache (
+                    [System.IO.Path]::GetFileNameWithoutExtension($Destination) + ".cpython-312.pyc"
+                )
+                Add-ExpectedVenvFile $Compiled $VenvRoot $ExpectedFiles $ExpectedDirectories
+            }
+        }
+        foreach ($EntryPoint in @($Archive.Entries | Where-Object {
+            $_.FullName -match '^[^/]+\.dist-info/entry_points\.txt$'
+        })) {
+            $InConsoleScripts = $false
+            foreach ($Line in (Read-ZipEntryText $EntryPoint) -split "`r?`n") {
+                $Trimmed = $Line.Trim()
+                if ($Trimmed -match '^\[(.+)\]$') {
+                    $InConsoleScripts = $Matches[1] -ieq "console_scripts"
+                    continue
+                }
+                if ($InConsoleScripts -and $Trimmed -match '^([A-Za-z0-9_.-]+)\s*=') {
+                    Add-ExpectedVenvFile `
+                        (Join-Path (Join-Path $VenvRoot "Scripts") ($Matches[1] + ".exe")) `
+                        $VenvRoot $ExpectedFiles $ExpectedDirectories
+                }
+            }
+        }
+        $DistInfo = [System.IO.Path]::GetDirectoryName(
+            $RecordEntries[0].FullName.Replace("/", [System.IO.Path]::DirectorySeparatorChar)
+        )
+        if ([System.IO.Path]::GetFileName($DistInfo) -match '^pip-[^-]+\.dist-info$') {
+            Add-ExpectedVenvFile `
+                (Join-Path (Join-Path $VenvRoot "Scripts") "pip3.12.exe") `
+                $VenvRoot $ExpectedFiles $ExpectedDirectories
+        }
+        foreach ($Name in @("INSTALLER", "REQUESTED")) {
+            Add-ExpectedVenvFile `
+                (Join-Path (Join-Path $VenvRoot "Lib\site-packages") (Join-Path $DistInfo $Name)) `
+                $VenvRoot $ExpectedFiles $ExpectedDirectories
+        }
+    }
+    finally { $Archive.Dispose() }
+}
+
+function Assert-ExactVenvTree([string]$VenvRoot, [object[]]$TrustedWheels, [string]$PyprojectPath) {
+    if (-not [System.IO.Directory]::Exists($VenvRoot)) { return }
+    $ExpectedFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $ExpectedDirectories = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($Directory in @("", "Include", "Lib", "Lib\site-packages", "Scripts")) {
+        Add-ExpectedVenvDirectory (Join-Path $VenvRoot $Directory) $VenvRoot $ExpectedDirectories
+    }
+    foreach ($Relative in @(
+        "pyvenv.cfg",
+        "Scripts\activate",
+        "Scripts\activate.bat",
+        "Scripts\Activate.ps1",
+        "Scripts\deactivate.bat",
+        "Scripts\python.exe",
+        "Scripts\pythonw.exe"
+    )) {
+        Add-ExpectedVenvFile (Join-Path $VenvRoot $Relative) $VenvRoot $ExpectedFiles $ExpectedDirectories
+    }
+    foreach ($Wheel in $TrustedWheels) {
+        Add-TrustedWheelVenvPaths $Wheel $VenvRoot $ExpectedFiles $ExpectedDirectories
+    }
+
+    $Pyproject = [System.IO.File]::ReadAllText($PyprojectPath, [System.Text.Encoding]::UTF8)
+    $VersionMatch = [regex]::Match($Pyproject, '(?m)^version\s*=\s*"([^"]+)"\s*$')
+    if (-not $VersionMatch.Success -or $VersionMatch.Groups[1].Value -notmatch '^[A-Za-z0-9_.+-]+$') {
+        throw "Protected project metadata has no safe version for .venv validation."
+    }
+    $Version = $VersionMatch.Groups[1].Value
+    $DistInfo = "dicomxphits-$Version.dist-info"
+    foreach ($Relative in @(
+        "__editable__.dicomxphits-$Version.pth",
+        "$DistInfo\INSTALLER",
+        "$DistInfo\METADATA",
+        "$DistInfo\RECORD",
+        "$DistInfo\REQUESTED",
+        "$DistInfo\WHEEL",
+        "$DistInfo\direct_url.json",
+        "$DistInfo\entry_points.txt",
+        "$DistInfo\licenses\LICENSE",
+        "$DistInfo\top_level.txt"
+    )) {
+        Add-ExpectedVenvFile `
+            (Join-Path (Join-Path $VenvRoot "Lib\site-packages") $Relative) `
+            $VenvRoot $ExpectedFiles $ExpectedDirectories
+    }
+    $InScripts = $false
+    foreach ($Line in $Pyproject -split "`r?`n") {
+        $Trimmed = $Line.Trim()
+        if ($Trimmed -match '^\[(.+)\]$') {
+            $InScripts = $Matches[1] -ieq "project.scripts"
+            continue
+        }
+        if ($InScripts -and $Trimmed -match '^([A-Za-z0-9_.-]+)\s*=') {
+            Add-ExpectedVenvFile `
+                (Join-Path (Join-Path $VenvRoot "Scripts") ($Matches[1] + ".exe")) `
+                $VenvRoot $ExpectedFiles $ExpectedDirectories
+        }
+    }
+
+    foreach ($Entry in [System.IO.Directory]::EnumerateFileSystemEntries(
+        $VenvRoot,
+        "*",
+        [System.IO.SearchOption]::AllDirectories
+    )) {
+        $Full = [System.IO.Path]::GetFullPath($Entry)
+        if (([System.IO.File]::GetAttributes($Full) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Installation contains a symbolic link, junction, or reparse point: $Full"
+        }
+        if ([System.IO.File]::Exists($Full)) {
+            if (-not $ExpectedFiles.Contains($Full)) {
+                throw "Installation .venv contains an unknown file; preserve or remove it before uninstalling: $Full"
+            }
+        }
+        elseif ([System.IO.Directory]::Exists($Full)) {
+            if (-not $ExpectedDirectories.Contains($Full)) {
+                throw "Installation .venv contains an unknown directory; preserve or remove it before uninstalling: $Full"
+            }
+        }
+        else { throw "Installation contains a non-regular .venv entry: $Full" }
+    }
+}
+
 function Assert-ExactInstallationRoot {
     if (-not [System.IO.Directory]::Exists($BundleRoot)) {
         throw "Installation root is missing: $BundleRoot"
@@ -364,6 +586,26 @@ function Assert-ExactInstallationRoot {
     }
     $VenvRoot = Join-Path $BundleRoot ".venv"
     $InstallLog = Join-Path $BundleRoot "offline-install.log"
+    $TrustedWheels = @(
+        $Records | ForEach-Object {
+            $Relative = ([string]$_.path).Replace("\", "/")
+            if ($Relative -match '^wheelhouse/[^/]+\.whl$') {
+                Join-Path $ProtectedSourceRoot $Relative.Replace(
+                    "/",
+                    [System.IO.Path]::DirectorySeparatorChar
+                )
+            }
+        }
+    )
+    $EnsurePip = Join-Path $RuntimeRoot "Lib\ensurepip\_bundled"
+    if ([System.IO.Directory]::Exists($EnsurePip)) {
+        $TrustedWheels += @([System.IO.Directory]::GetFiles(
+            $EnsurePip,
+            "pip-*.whl",
+            [System.IO.SearchOption]::TopDirectoryOnly
+        ))
+    }
+    Assert-ExactVenvTree $VenvRoot $TrustedWheels (Join-Path $ProtectedSourceRoot "pyproject.toml")
     foreach ($Entry in [System.IO.Directory]::EnumerateFileSystemEntries(
         $BundleRoot,
         "*",
@@ -374,6 +616,8 @@ function Assert-ExactInstallationRoot {
             throw "Installation contains a symbolic link, junction, or reparse point: $Full"
         }
         $AllowedGenerated =
+            # Assert-ExactVenvTree has already checked every descendant against
+            # the authenticated wheel and finite venv inventories.
             $Full.StartsWith(($VenvRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase) -or
             [string]::Equals($Full, $VenvRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
             [string]::Equals($Full, $InstallLog, [System.StringComparison]::OrdinalIgnoreCase)
