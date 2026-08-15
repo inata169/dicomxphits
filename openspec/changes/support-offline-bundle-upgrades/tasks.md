@@ -101,7 +101,7 @@
 - [x] 8.7 Confirm no protected data, external-tool output, personal absolute
   path, physics behavior, DICOM meaning, version metadata, or tag change
   entered the diff.
-- [ ] 8.8 Build and verify a new exact-HEAD offline ZIP only after all required
+- [x] 8.8 Build and verify a new exact-HEAD offline ZIP only after all required
   repository checks pass.
 - [ ] 8.9 Obtain human Windows 11 installation, uninstallation, and GUI
   acceptance without
