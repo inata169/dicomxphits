@@ -177,6 +177,18 @@ folderを削除する前にread lockを解放する必要があるため、comma
 protected `failure.json`の正確な場所を表示します。成功時はそのstaging pathも消えます。残った
 場合は、表示されたfileで正確な失敗理由と残存path一覧を確認してください。
 
+`Verified cleanup was scheduled`という表示と呼出元promptへの復帰は、認証済みparentから
+detached elevated finalizerへ処理を引き渡したことを意味します。削除完了も失敗も意味しません。
+parentが終了してbundleのread lockを解放し、finalizerが限定checkと削除を完了するまで、展開
+folderが短時間残ることがあります。この間はuninstallerを再実行せず、対象を手動削除しないで
+ください。
+
+terminal outcomeまで待ってください。成功が完了したと判断するのは、展開folderと表示された
+cleanup-staging directoryが両方消えた後だけです。finalizerはstaging directoryを削除する前に、
+すべての正確なinstallation-owned targetが存在しないことを確認します。失敗時はcleanup-staging
+directoryが残り、表示された`failure.json`に正確な残存path一覧が記録されます。prompt復帰直後に
+展開folderが見えることだけではuninstall失敗ではなく、処理中の観察結果です。
+
 ## 整合性ファイル
 
 `bundle-manifest.json`には、source HEAD commit、正確なGit index entry列の

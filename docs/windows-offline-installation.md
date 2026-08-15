@@ -200,6 +200,23 @@ and prints the exact protected `failure.json` location. Successful cleanup
 removes that staging path; if it remains, open the reported file for the exact
 failure and remaining-path list.
 
+The `Verified cleanup was scheduled` message and return to the calling prompt
+mean that the authenticated parent handed work to the detached elevated
+finalizer. They do not mean that removal has already finished, and they do not
+mean that it failed. The extracted folder can remain briefly while the parent
+exits, releases its bundle read locks, and the finalizer completes its bounded
+checks and deletion. During this interval, do not run the uninstaller again or
+manually delete any target.
+
+Wait for a terminal outcome. Success is complete only after the extracted
+folder and the reported cleanup-staging directory have disappeared; before
+removing that staging directory, the finalizer verifies that every exact
+installation-owned target is absent. Failure leaves the cleanup-staging
+directory in place with the reported `failure.json`, which lists the exact
+remaining paths. Seeing the extracted folder immediately after the prompt
+returns is only an in-progress observation and is not, by itself, an uninstall
+failure.
+
 ## Integrity files
 
 `bundle-manifest.json` records the source HEAD commit, a SHA-256 fingerprint of
