@@ -37,6 +37,12 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Dicomxphits {
     public static class OfflineUninstallNative {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileDispositionInfo {
+            [MarshalAs(UnmanagedType.Bool)]
+            public bool DeleteFile;
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern SafeFileHandle CreateFile(
             string fileName,
@@ -47,6 +53,26 @@ namespace Dicomxphits {
             uint flagsAndAttributes,
             IntPtr templateFile
         );
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle fileHandle,
+            int fileInformationClass,
+            ref FileDispositionInfo fileInformation,
+            uint bufferSize
+        );
+
+        public static bool MarkDeletePending(SafeFileHandle fileHandle) {
+            FileDispositionInfo information = new FileDispositionInfo {
+                DeleteFile = true
+            };
+            return SetFileInformationByHandle(
+                fileHandle,
+                4,
+                ref information,
+                (uint)Marshal.SizeOf(information)
+            );
+        }
     }
 }
 '@
@@ -451,6 +477,9 @@ function Add-TrustedWheelVenvPaths(
 }
 
 function Assert-ExactVenvTree([string]$VenvRoot, [object[]]$TrustedWheels, [string]$PyprojectPath) {
+    if ([System.IO.File]::Exists($VenvRoot)) {
+        throw "Installation-generated .venv path must be a directory: $VenvRoot"
+    }
     if (-not [System.IO.Directory]::Exists($VenvRoot)) { return }
     $ExpectedFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $ExpectedDirectories = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -586,6 +615,9 @@ function Assert-ExactInstallationRoot {
     }
     $VenvRoot = Join-Path $BundleRoot ".venv"
     $InstallLog = Join-Path $BundleRoot "offline-install.log"
+    if ([System.IO.Directory]::Exists($InstallLog)) {
+        throw "Installation-generated offline install log must be a regular file: $InstallLog"
+    }
     $TrustedWheels = @(
         $Records | ForEach-Object {
             $Relative = ([string]$_.path).Replace("\", "/")
@@ -618,9 +650,12 @@ function Assert-ExactInstallationRoot {
         $AllowedGenerated =
             # Assert-ExactVenvTree has already checked every descendant against
             # the authenticated wheel and finite venv inventories.
-            $Full.StartsWith(($VenvRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase) -or
-            [string]::Equals($Full, $VenvRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
-            [string]::Equals($Full, $InstallLog, [System.StringComparison]::OrdinalIgnoreCase)
+            ([System.IO.Directory]::Exists($VenvRoot) -and (
+                $Full.StartsWith(($VenvRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase) -or
+                [string]::Equals($Full, $VenvRoot, [System.StringComparison]::OrdinalIgnoreCase)
+            )) -or
+            ([System.IO.File]::Exists($InstallLog) -and
+                [string]::Equals($Full, $InstallLog, [System.StringComparison]::OrdinalIgnoreCase))
         if ([System.IO.File]::Exists($Full)) {
             if (-not $ExpectedFiles.Contains($Full) -and -not $AllowedGenerated) {
                 throw "Installation contains an unknown file; preserve or remove it before uninstalling: $Full"
@@ -693,8 +728,33 @@ function Open-ExactUninstallDeleteHandle([string]$Path) {
     return $Handle
 }
 
-function Open-ExactUninstallDeleteHandles([string[]]$Targets) {
+function Open-ExactUninstallWriteGuardHandle([string]$Path) {
+    $Flags = 0x00200000
+    if ([System.IO.Directory]::Exists($Path)) { $Flags = $Flags -bor 0x02000000 }
+    $Handle = [Dicomxphits.OfflineUninstallNative]::CreateFile(
+        $Path,
+        0x00000081,
+        [System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete,
+        [System.IntPtr]::Zero,
+        [System.IO.FileMode]::Open,
+        $Flags,
+        [System.IntPtr]::Zero
+    )
+    if ($Handle.IsInvalid) {
+        $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        $Handle.Dispose()
+        $Message =
+            "Cannot freeze an exact uninstall target against writes before cleanup: " +
+                "$Path (Windows error $ErrorCode)"
+        throw (New-Object System.ComponentModel.Win32Exception($ErrorCode, $Message))
+    }
+    return $Handle
+}
+
+function Open-ExactUninstallWriteGuardPlan([string[]]$Targets) {
     $Handles = New-Object 'System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]'
+    $Entries = New-Object 'System.Collections.Generic.List[object]'
+    $Roots = New-Object 'System.Collections.Generic.List[object]'
     try {
         function Open-TargetTree([string]$Target, [bool]$Required) {
             $IsDirectory = [System.IO.Directory]::Exists($Target)
@@ -706,7 +766,14 @@ function Open-ExactUninstallDeleteHandles([string[]]$Targets) {
                 return
             }
             Assert-NoReparsePath $Target "Exact uninstall target"
-            $Handles.Add((Open-ExactUninstallDeleteHandle $Target))
+            $GuardHandle = Open-ExactUninstallWriteGuardHandle $Target
+            $Handles.Add($GuardHandle)
+            $Entries.Add([pscustomobject]@{
+                path = [System.IO.Path]::GetFullPath($Target)
+                is_directory = $IsDirectory
+                guard_handle = $GuardHandle
+                delete_handle = $null
+            })
             if ($IsDirectory) {
                 try {
                     $Children = @([System.IO.Directory]::GetFileSystemEntries($Target))
@@ -720,14 +787,81 @@ function Open-ExactUninstallDeleteHandles([string[]]$Targets) {
             }
         }
         foreach ($Target in $Targets) {
+            $FullTarget = [System.IO.Path]::GetFullPath($Target)
+            $Roots.Add([pscustomobject]@{
+                path = $FullTarget
+                existed = [System.IO.File]::Exists($FullTarget) -or
+                    [System.IO.Directory]::Exists($FullTarget)
+            })
             Open-TargetTree $Target $false
         }
-        return $Handles
+        return [pscustomobject]@{
+            roots = $Roots
+            entries = $Entries
+            handles = $Handles
+        }
     }
     catch {
         foreach ($Handle in $Handles) { $Handle.Dispose() }
         throw
     }
+}
+
+function Assert-ExactUninstallPlanSnapshot([object]$Plan) {
+    $Expected = New-Object 'System.Collections.Generic.Dictionary[string,bool]' (
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($Entry in $Plan.entries) {
+        $Expected.Add([string]$Entry.path, [bool]$Entry.is_directory)
+    }
+    $Observed = New-Object 'System.Collections.Generic.Dictionary[string,bool]' (
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    function Add-ObservedTree([string]$Path) {
+        $IsDirectory = [System.IO.Directory]::Exists($Path)
+        $IsFile = [System.IO.File]::Exists($Path)
+        if (-not ($IsDirectory -or $IsFile)) { return }
+        $Full = [System.IO.Path]::GetFullPath($Path)
+        Assert-NoReparsePath $Full "Exact uninstall target"
+        $Observed.Add($Full, $IsDirectory)
+        if ($IsDirectory) {
+            foreach ($Child in [System.IO.Directory]::GetFileSystemEntries($Full)) {
+                Add-ObservedTree $Child
+            }
+        }
+    }
+    foreach ($Root in $Plan.roots) {
+        $Exists = [System.IO.File]::Exists([string]$Root.path) -or
+            [System.IO.Directory]::Exists([string]$Root.path)
+        if ([bool]$Root.existed -ne $Exists) {
+            throw "Exact uninstall target tree changed after deletion preflight: $($Root.path)"
+        }
+        Add-ObservedTree ([string]$Root.path)
+    }
+    foreach ($Item in $Observed.GetEnumerator()) {
+        if (-not $Expected.ContainsKey($Item.Key) -or $Expected[$Item.Key] -ne $Item.Value) {
+            throw "Exact uninstall target tree changed after deletion preflight: $($Item.Key)"
+        }
+    }
+    foreach ($Item in $Expected.GetEnumerator()) {
+        if (-not $Observed.ContainsKey($Item.Key)) {
+            throw "Exact uninstall target tree changed after deletion preflight: $($Item.Key)"
+        }
+    }
+}
+
+function Open-ExactUninstallDeleteHandles([object]$Plan) {
+    Assert-ExactUninstallPlanSnapshot $Plan
+    foreach ($Entry in $Plan.entries) {
+        $Handle = Open-ExactUninstallDeleteHandle ([string]$Entry.path)
+        $Entry.delete_handle = $Handle
+        $Plan.handles.Add($Handle)
+    }
+    Assert-ExactUninstallPlanSnapshot $Plan
+}
+
+function Close-ExactUninstallPlan([object]$Plan) {
+    foreach ($Handle in $Plan.handles) { $Handle.Dispose() }
 }
 
 function New-ProtectedCleanupDirectory([string]$Path) {
@@ -975,12 +1109,27 @@ function Start-DetachedFinalizer([string]$TrustedPowerShell, [string]$CleanupDir
     ) | Out-Null
 }
 
-function Remove-ExactInstallationTargets {
-    foreach ($Target in @($BundleRoot, $RuntimeRoot, $ProtectedRuntimeReceipt, $RuntimeLog, $FailureDiagnostic)) {
-        if ([System.IO.File]::Exists($Target) -or [System.IO.Directory]::Exists($Target)) {
-            Assert-NoReparsePath $Target "Exact uninstall target"
-            Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction Stop
+function Remove-ExactInstallationTargets([object]$Plan) {
+    Assert-ExactUninstallPlanSnapshot $Plan
+    $Entries = @($Plan.entries | Sort-Object { ([string]$_.path).Length } -Descending)
+    foreach ($Entry in $Entries) {
+        $Path = [string]$Entry.path
+        Assert-NoReparsePath $Path "Exact uninstall target"
+        if ($null -eq $Entry.delete_handle) {
+            throw "Exact uninstall target has no retained deletion handle: $Path"
         }
+        if (-not [Dicomxphits.OfflineUninstallNative]::MarkDeletePending(
+            $Entry.delete_handle
+        )) {
+            $ErrorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw (New-Object System.ComponentModel.Win32Exception(
+                $ErrorCode,
+                "Exact uninstall target could not be removed from the frozen inventory: " +
+                    "$Path (Windows error $ErrorCode)"
+            ))
+        }
+        $Entry.delete_handle.Dispose()
+        $Entry.guard_handle.Dispose()
     }
     foreach ($Target in @($BundleRoot, $RuntimeRoot, $ProtectedRuntimeReceipt, $RuntimeLog, $FailureDiagnostic)) {
         if ([System.IO.File]::Exists($Target) -or [System.IO.Directory]::Exists($Target)) {
@@ -1007,16 +1156,30 @@ function Invoke-FinalCleanup([string]$CleanupDirectory, [int[]]$WaitProcessIds) 
     Assert-ProtectedCleanupPlan $CleanupDirectory ([string]$env:DICOMXPHITS_UNINSTALL_NONCE)
     Assert-NoAssociatedProcesses @($PID)
     Assert-ExactInstallationRoot
-    $DeleteHandles = Open-ExactUninstallDeleteHandles @(
+    $DeletePlan = Open-ExactUninstallWriteGuardPlan @(
         $BundleRoot,
         $RuntimeRoot,
         $ProtectedRuntimeReceipt,
         $RuntimeLog,
-        $FailureDiagnostic,
-        $CleanupDirectory
+        $FailureDiagnostic
     )
-    try { Remove-ExactInstallationTargets }
-    finally { foreach ($Handle in $DeleteHandles) { $Handle.Dispose() } }
+    $CleanupPlan = $null
+    try {
+        $CleanupPlan = Open-ExactUninstallWriteGuardPlan @($CleanupDirectory)
+        # Revalidate after existing files are write-frozen. Snapshot checks
+        # catch arrivals before mutation; exact non-recursive deletion never
+        # removes an arrival that races a later check.
+        Assert-ExactInstallationRoot
+        Assert-ExactUninstallPlanSnapshot $DeletePlan
+        Assert-ExactUninstallPlanSnapshot $CleanupPlan
+        Open-ExactUninstallDeleteHandles $DeletePlan
+        Open-ExactUninstallDeleteHandles $CleanupPlan
+        Remove-ExactInstallationTargets $DeletePlan
+    }
+    finally {
+        Close-ExactUninstallPlan $DeletePlan
+        if ($null -ne $CleanupPlan) { Close-ExactUninstallPlan $CleanupPlan }
+    }
     $CleanupParent = [System.IO.Path]::GetDirectoryName($CleanupDirectory)
     if (-not [string]::Equals(
         $CleanupParent,

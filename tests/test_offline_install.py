@@ -418,7 +418,16 @@ def test_runtime_failure_diagnostic_is_display_only_and_nonce_bound(
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
 @pytest.mark.parametrize(
-    "problem", ["valid", "unknown", "venv-unknown", "modified", "reparse"]
+    "problem",
+    [
+        "valid",
+        "unknown",
+        "venv-unknown",
+        "venv-file",
+        "log-directory",
+        "modified",
+        "reparse",
+    ],
 )
 def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, problem):
     bundle_root = tmp_path / "installed bundle"
@@ -462,6 +471,16 @@ def test_uninstall_inventory_rejects_unsafe_root_before_deletion(tmp_path, probl
         unknown.parent.mkdir()
         unknown.write_bytes(b"synthetic user content\n")
         expected = ".venv contains an unknown"
+        expected_code = 17
+    elif problem == "venv-file":
+        shutil.rmtree(bundle_root / ".venv")
+        (bundle_root / ".venv").write_bytes(b"synthetic user content\n")
+        expected = ".venv path must be a directory"
+        expected_code = 17
+    elif problem == "log-directory":
+        (bundle_root / "offline-install.log").unlink()
+        (bundle_root / "offline-install.log").mkdir()
+        expected = "offline install log must be a regular file"
         expected_code = 17
     elif problem == "modified":
         payload.write_text("modified\n", encoding="utf-8")
@@ -771,8 +790,9 @@ def test_uninstall_refuses_locked_root_before_any_exact_target_deletion(tmp_path
         "$env:DICOMXPHITS_TEST_CLEANUP)\n"
         "$Lock=Open-LockedBundleDirectory $env:DICOMXPHITS_TEST_ROOT\n"
         "try {\n"
-        " try {$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets;"
-        "foreach($Handle in $DeleteHandles){$Handle.Dispose()};exit 8}\n"
+        " try {$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets;"
+        "Open-ExactUninstallDeleteHandles $DeletePlan;"
+        "Close-ExactUninstallPlan $DeletePlan;exit 8}\n"
         " catch {\n"
         "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
         "  foreach($Target in $Targets){if(-not([IO.File]::Exists($Target)-or"
@@ -781,8 +801,9 @@ def test_uninstall_refuses_locked_root_before_any_exact_target_deletion(tmp_path
         " }\n"
         "}\n"
         "finally {$Lock.Dispose()}\n"
-        "$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets\n"
-        "foreach($Handle in $DeleteHandles){$Handle.Dispose()}\n"
+        "$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets\n"
+        "Open-ExactUninstallDeleteHandles $DeletePlan\n"
+        "Close-ExactUninstallPlan $DeletePlan\n"
         "Write-Output 'UNLOCKED_PREFLIGHT_OK'\n",
         encoding="utf-8",
     )
@@ -836,8 +857,9 @@ def test_uninstall_refuses_locked_descendant_before_any_exact_target_deletion(tm
         "$Lock=[IO.File]::Open($env:DICOMXPHITS_TEST_LOCKED,[IO.FileMode]::Open,"
         "[IO.FileAccess]::Read,[IO.FileShare]::Read)\n"
         "try {\n"
-        " try {$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets;"
-        "foreach($Handle in $DeleteHandles){$Handle.Dispose()};exit 8}\n"
+        " try {$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets;"
+        "Open-ExactUninstallDeleteHandles $DeletePlan;"
+        "Close-ExactUninstallPlan $DeletePlan;exit 8}\n"
         " catch {\n"
         "  if ($_.Exception.Message -notmatch 'target is in use') {Write-Error $_;exit 9}\n"
         "  foreach($Target in $Targets){if(-not([IO.File]::Exists($Target)-or"
@@ -846,8 +868,9 @@ def test_uninstall_refuses_locked_descendant_before_any_exact_target_deletion(tm
         " }\n"
         "}\n"
         "finally {$Lock.Dispose()}\n"
-        "$DeleteHandles=Open-ExactUninstallDeleteHandles $Targets\n"
-        "foreach($Handle in $DeleteHandles){$Handle.Dispose()}\n"
+        "$DeletePlan=Open-ExactUninstallWriteGuardPlan $Targets\n"
+        "Open-ExactUninstallDeleteHandles $DeletePlan\n"
+        "Close-ExactUninstallPlan $DeletePlan\n"
         "Write-Output 'UNLOCKED_DESCENDANT_PREFLIGHT_OK'\n",
         encoding="utf-8",
     )
@@ -869,6 +892,99 @@ def test_uninstall_refuses_locked_descendant_before_any_exact_target_deletion(tm
     assert "UNLOCKED_DESCENDANT_PREFLIGHT_OK" in result.stdout.splitlines()
     for path in (*preserved_files, receipt, runtime_log):
         assert path.read_bytes() == b"must remain\n"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_write_guards_freeze_existing_tree_until_cleanup(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    existing = bundle_root / "nested" / "existing.txt"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"must remain\n")
+
+    harness = tmp_path / "uninstall-write-freeze-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Root=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$Existing=Join-Path $Root 'nested\\existing.txt'\n"
+        "$Late=Join-Path $Root 'late.txt'\n"
+        "$Plan=Open-ExactUninstallWriteGuardPlan @($Root)\n"
+        "try {\n"
+        " $WriteBlocked=$false\n"
+        " try {$Stream=[IO.File]::Open($Existing,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete);"
+        "$Stream.Dispose()} catch {$WriteBlocked=$true}\n"
+        " if (-not $WriteBlocked) {Write-Output 'WRITE_NOT_BLOCKED';exit 8}\n"
+        " Open-ExactUninstallDeleteHandles $Plan\n"
+        " [IO.File]::WriteAllText($Late,'late')\n"
+        " $ChangedRejected=$false\n"
+        " try {Remove-ExactInstallationTargets $Plan} catch {$ChangedRejected=$true}\n"
+        " if (-not $ChangedRejected) {exit 9}\n"
+        " if (-not [IO.File]::Exists($Existing) -or -not [IO.File]::Exists($Late)) {exit 10}\n"
+        " Write-Output 'TREE_CHANGE_REJECTED'\n"
+        "}\n"
+        "finally {Close-ExactUninstallPlan $Plan}\n"
+        "$Stream=[IO.File]::Open($Existing,[IO.FileMode]::Open,"
+        "[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)\n"
+        "$Stream.Dispose()\n"
+        "Write-Output 'TREE_WRITE_RELEASED'\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "TREE_CHANGE_REJECTED" in result.stdout.splitlines()
+    assert "TREE_WRITE_RELEASED" in result.stdout.splitlines()
+    assert (bundle_root / "late.txt").read_text(encoding="utf-8") == "late"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-lock behavior")
+def test_uninstall_frozen_handle_does_not_delete_late_path_replacement(tmp_path):
+    bundle_root = tmp_path / "installed bundle"
+    existing = bundle_root / "nested" / "existing.txt"
+    moved = tmp_path / "moved-installer-file.txt"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"installer generated\n")
+
+    harness = tmp_path / "uninstall-path-replacement-harness.ps1"
+    harness.write_text(
+        _powershell_function_prefix(ROOT / "tools" / "uninstall_offline_verified.ps1")
+        + "\n$Root=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_ROOT)\n"
+        "$Existing=Join-Path $Root 'nested\\existing.txt'\n"
+        "$Moved=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_MOVED)\n"
+        "$Plan=Open-ExactUninstallWriteGuardPlan @($Root)\n"
+        "try {\n"
+        " Open-ExactUninstallDeleteHandles $Plan\n"
+        " [IO.File]::Move($Existing,$Moved)\n"
+        " [IO.File]::WriteAllText($Existing,'late replacement')\n"
+        " $ChangedRejected=$false\n"
+        " try {Remove-ExactInstallationTargets $Plan} catch {$ChangedRejected=$true}\n"
+        " if (-not $ChangedRejected) {exit 8}\n"
+        " if (-not [IO.File]::Exists($Existing)) {exit 9}\n"
+        " if ([IO.File]::Exists($Moved)) {exit 10}\n"
+        " Write-Output 'PATH_REPLACEMENT_PRESERVED'\n"
+        "}\n"
+        "finally {Close-ExactUninstallPlan $Plan}\n",
+        encoding="utf-8",
+    )
+    result = _run_powershell_harness(
+        harness,
+        {
+            "DICOMXPHITS_BUNDLE_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_ROOT": str(bundle_root),
+            "DICOMXPHITS_TEST_MOVED": str(moved),
+        },
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PATH_REPLACEMENT_PRESERVED" in result.stdout.splitlines()
+    assert existing.read_text(encoding="utf-8") == "late replacement"
+    assert not moved.exists()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell behavior")
@@ -955,11 +1071,12 @@ def test_uninstall_exact_cleanup_preserves_siblings(tmp_path):
         "$script:ProtectedRuntimeReceipt=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_RECEIPT)\n"
         "$script:RuntimeLog=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_LOG)\n"
         "$script:FailureDiagnostic=[IO.Path]::GetFullPath($env:DICOMXPHITS_TEST_FAILURE)\n"
-        "$DeleteHandles=Open-ExactUninstallDeleteHandles @($script:BundleRoot,"
+        "$DeletePlan=Open-ExactUninstallWriteGuardPlan @($script:BundleRoot,"
         "$script:RuntimeRoot,$script:ProtectedRuntimeReceipt,$script:RuntimeLog,"
         "$script:FailureDiagnostic)\n"
-        "try {Remove-ExactInstallationTargets}\n"
-        "finally {foreach($Handle in $DeleteHandles){$Handle.Dispose()}}\n"
+        "try {Open-ExactUninstallDeleteHandles $DeletePlan;"
+        "Remove-ExactInstallationTargets $DeletePlan}\n"
+        "finally {Close-ExactUninstallPlan $DeletePlan}\n"
         "Write-Output 'EXACT_CLEANUP_OK'\n",
         encoding="utf-8",
     )
@@ -1125,7 +1242,9 @@ def test_offline_uninstaller_has_bounded_verified_contract():
     assert "cleanup_helper_sha256" in helper
     assert "failure.json" in helper
     assert "Remove-ExactInstallationTargets" in helper
+    assert "Open-ExactUninstallWriteGuardPlan" in helper
     assert "Open-ExactUninstallDeleteHandles" in helper
+    assert "Assert-ExactUninstallPlanSnapshot" in helper
     assert "Cannot safely begin uninstallation because a target is in use" in helper
     assert "Cleanup staging remains after cleanup" in helper
     assert "-Verb RunAs -Wait" not in helper
