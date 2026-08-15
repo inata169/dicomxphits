@@ -60,9 +60,8 @@ author and version, minimum-window scrolling, and all five primary workflow
 actions were accepted.
 
 The user also reported completion of the bounded non-patient workflow from
-CT2PHITS through RTDOSE and separately reported no abnormal dose distribution
-or absolute dose in the external GPR comparison. The agent did not execute or
-inspect PHITS, Sumtally, phits2dicom, GPR, real DICOM, or real calculation
+CT2PHITS through RTDOSE and the external GPR handoff. The agent did not execute
+or inspect PHITS, Sumtally, phits2dicom, GPR, real DICOM, or real calculation
 results.
 
 For the final release candidate, the user reported that installation and GUI
