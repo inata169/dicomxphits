@@ -113,14 +113,17 @@
   entered the diff.
 - [x] 8.8 Build and verify a new exact-HEAD offline ZIP only after all required
   repository checks pass.
-- [ ] 8.9 Obtain human Windows 11 installation, uninstallation, and GUI
+- [x] 8.9 Obtain human Windows 11 installation, uninstallation, and GUI
   acceptance without
   agent execution of real external tools or real data.
+  The primary user reported successful installation and GUI launch. Verified
+  uninstallation then removed the exact bundle and matching protected runtime;
+  the agent performed only synthetic tests and bounded filesystem checks.
 
 ## 9. Complete OpenSpec Cleanup
 
-- [ ] 9.1 Confirm every approved acceptance criterion and required check is
+- [x] 9.1 Confirm every approved acceptance criterion and required check is
   complete before closing this change.
-- [ ] 9.2 Promote the accepted delta into the current specification, archive
+- [x] 9.2 Promote the accepted delta into the current specification, archive
   this change under the completion date, and strictly validate the resulting
   specification tree and archive.

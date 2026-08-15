@@ -82,15 +82,19 @@
 
 ## 7. Build and Accept the Offline Artifact
 
-- [ ] 7.1 Build the Windows offline ZIP from one exact validated integration
+- [x] 7.1 Build the Windows offline ZIP from one exact validated integration
   HEAD and verify its manifest records that HEAD and all payload hashes.
-- [ ] 7.2 Extract to a new empty directory and run repository-safe offline
+- [x] 7.2 Extract to a new empty directory and run repository-safe offline
   bundle checks without reusing or overwriting the prior installed folder.
-- [ ] 7.3 Obtain human Windows 11 acceptance for the fixed 6 MV identity, Help
+- [x] 7.3 Obtain human Windows 11 acceptance for the fixed 6 MV identity, Help
   menu, Web site action, `Hiroki Inata (inata169)`, package version, minimum-
   window scrolling, and all five pages' action reachability.
-- [ ] 7.4 Record any explicitly deferred non-blocking external installation
+- [x] 7.4 Record any explicitly deferred non-blocking external installation
   evidence accurately; do not run real PHITS-related tools or real DICOM.
+  The primary user reported successful Windows installation and GUI acceptance,
+  and separately reported no abnormal dose distribution or absolute dose in
+  their external-tool workflow. The agent did not execute or inspect PHITS,
+  Sumtally, phits2dicom, GPR, real DICOM, or calculation results.
 - [x] 7.5 Treat the acceptance-time attempt to save GUI settings below the
   protected `ProgramData` source snapshot as a merge-blocking integration
   defect rather than weakening the protected runtime permissions.
@@ -102,8 +106,8 @@
 
 ## 8. Complete OpenSpec Cleanup
 
-- [ ] 8.1 Confirm every approved acceptance criterion and required check is
+- [x] 8.1 Confirm every approved acceptance criterion and required check is
   complete before closing this change.
-- [ ] 8.2 Update this checklist accurately, promote accepted deltas, archive
+- [x] 8.2 Update this checklist accurately, promote accepted deltas, archive
   this change under the completion date, and strictly validate the resulting
   current specification tree and archive.
