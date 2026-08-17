@@ -754,9 +754,10 @@ RTDOSE Run stage performs its accepted correction handoff automatically.
   external research tool used by the optional gamma-comparison handoff. It is
   not bundled with dicomxphits, and its outputs must stay outside this
   repository.
-- [dicom4dicomxphits](https://github.com/inata169/dicom4dicomxphits) is a private,
-  data-only companion repository containing anonymized DICOM CT, RT Plan, and
-  RT Dose examples for dicomxphits. Access requires GitHub authorization. Its
+- [dicom4dicomxphits](https://github.com/inata169/dicom4dicomxphits) is the
+  public, data-only companion repository for
+  [inata169/dicomxphits](https://github.com/inata169/dicomxphits). It contains
+  anonymized DICOM CT, RT Plan, and RT Dose examples for dicomxphits. Its
   examples remain non-patient research and education data and do not establish
   clinical validity.
 
