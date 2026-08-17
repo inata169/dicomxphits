@@ -99,6 +99,7 @@ def require_reusable_gantry_geometry_contract(
         return CURRENT_GANTRY_GEOMETRY_CONTRACT
     if (
         contract == PREVIOUS_GANTRY_GEOMETRY_CONTRACT
+        and _has_only_explicit_zero_gantry(manifest)
         and _has_only_reflection_invariant_mlcx(manifest)
     ):
         return PREVIOUS_GANTRY_GEOMETRY_CONTRACT

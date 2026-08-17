@@ -180,6 +180,7 @@ def test_proven_legacy_zero_gantry_transport_remains_reusable(tmp_path: Path) ->
 def test_previous_contract_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> None:
     workspace = write_recoverable_workspace(
         tmp_path,
+        gantry_angle_deg=0.0,
         geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
         resolved_mlc_positions_mm={
             "bank_a": [-40.0, -15.0],
@@ -199,6 +200,7 @@ def test_previous_contract_keeps_reflection_invariant_mlcx_transport_reusable(
 ) -> None:
     workspace = write_recoverable_workspace(
         tmp_path,
+        gantry_angle_deg=0.0,
         geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
         resolved_mlc_positions_mm={
             "bank_a": [-40.0, -15.0],
@@ -210,6 +212,34 @@ def test_previous_contract_keeps_reflection_invariant_mlcx_transport_reusable(
 
     assert inspection.state == RECOVERY_READY
     assert inspection.phits_reusable is True
+
+
+@pytest.mark.parametrize(
+    "resolved_mlc_positions_mm",
+    [
+        None,
+        {
+            "bank_a": [-40.0, -15.0],
+            "bank_b": [40.0, 15.0],
+        },
+    ],
+)
+def test_previous_contract_rejects_nonzero_gantry_transport(
+    tmp_path: Path,
+    resolved_mlc_positions_mm: dict[str, list[float]] | None,
+) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=90.0,
+        geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
+        resolved_mlc_positions_mm=resolved_mlc_positions_mm,
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "rerun PHITS" in inspection.message
 
 
 def test_legacy_zero_gantry_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> None:
