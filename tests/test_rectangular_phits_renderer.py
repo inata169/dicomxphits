@@ -208,6 +208,28 @@ def parsed_runtime_tr3(text, gantry_deg):
     return [values[0:3], values[3:6], values[6:9]]
 
 
+def parsed_runtime_tr2(text, collimator_deg):
+    transform = text.split("[ Transform ]\n", 1)[1].split("\n[ T-Deposit ]", 1)[0]
+    lines = transform.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("tr2 "))
+    tokens = [line.strip() for line in lines[start + 1 : start + 10]]
+    sine = math.sin(math.radians(collimator_deg))
+    cosine = math.cos(math.radians(collimator_deg))
+    values_by_token = {
+        "cos(c10/180*pi)*cos(c21/180*pi)": cosine,
+        "sin(c10/180*pi)*cos(c31/180*pi)+cos(c10/180*pi)*sin(c21/180*pi)*sin(c31/180*pi)": sine,
+        "sin(c10/180*pi)*sin(c31/180*pi)-cos(c10/180*pi)*sin(c21/180*pi)*cos(c31/180*pi)": 0.0,
+        "-sin(c10/180*pi)*cos(c21/180*pi)": -sine,
+        "cos(c10/180*pi)*cos(c31/180*pi)-sin(c10/180*pi)*sin(c21/180*pi)*sin(c31/180*pi)": cosine,
+        "cos(c10/180*pi)*sin(c31/180*pi)+sin(c10/180*pi)*sin(c21/180*pi)*cos(c31/180*pi)": 0.0,
+        "sin(c21/180*pi)": 0.0,
+        "-cos(c21/180*pi)*sin(c31/180*pi)": 0.0,
+        "cos(c21/180*pi)*cos(c31/180*pi)": 1.0,
+    }
+    values = [values_by_token[token] for token in tokens]
+    return [values[0:3], values[3:6], values[6:9]]
+
+
 def complement_cell_ids(expression):
     return {int(token[1:]) for token in expression if token.startswith("#") and token[1:].isdigit()}
 
@@ -403,6 +425,54 @@ def test_runtime_gantry_geometry_has_independent_dicom_lps_anchors(
     )
     assert mapped_source == pytest.approx(source_lps_mm, abs=1.0e-9)
     assert mapped_direction == pytest.approx(direction_lps, abs=1.0e-10)
+
+
+@pytest.mark.parametrize(
+    ("collimator_deg", "mlcx_axis_lps", "mlcy_axis_lps"),
+    [
+        (0.0, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
+        (90.0, (0.0, 0.0, -1.0), (1.0, 0.0, 0.0)),
+        (180.0, (-1.0, 0.0, 0.0), (0.0, 0.0, -1.0)),
+        (270.0, (0.0, 0.0, 1.0), (-1.0, 0.0, 0.0)),
+        (
+            30.0,
+            (math.sqrt(3.0) / 2.0, 0.0, -0.5),
+            (0.5, 0.0, math.sqrt(3.0) / 2.0),
+        ),
+    ],
+)
+def test_runtime_collimator_geometry_has_independent_dicom_lps_anchors(
+    collimator_deg,
+    mlcx_axis_lps,
+    mlcy_axis_lps,
+):
+    text = render_runtime(
+        jaw_mlc_geometry(
+            angles_deg={
+                "gantry": 0.0,
+                "collimator": collimator_deg,
+                "couch": 0.0,
+            }
+        )
+    )
+
+    tr2 = parsed_runtime_tr2(text, collimator_deg)
+    # DICOM MLCX +X is PHITS local -X; MLCY +Y is PHITS local +Y.
+    mlcx_phits = tuple(-value for value in tr2[0])
+    mlcy_phits = tuple(tr2[1])
+
+    def phits_to_dicom_lps(vector):
+        x_value, y_value, z_value = vector
+        return (-x_value, z_value, y_value)
+
+    assert phits_to_dicom_lps(mlcx_phits) == pytest.approx(
+        mlcx_axis_lps,
+        abs=1.0e-10,
+    )
+    assert phits_to_dicom_lps(mlcy_phits) == pytest.approx(
+        mlcy_axis_lps,
+        abs=1.0e-10,
+    )
 
 
 def test_gantry_zero_source_and_transform_text_remain_unchanged():
