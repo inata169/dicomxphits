@@ -230,14 +230,17 @@ def _mlc_cm(
 ) -> dict[str, list[float]] | None:
     if state == "no_mlc" or positions in (None, {}):
         return None
+    # IEC BEAM LIMITING DEVICE +X maps to PHITS local -X under the accepted
+    # HFS/couch-zero transform.  Preserve each leaf pair's Y order while
+    # reflecting its DICOM MLCX opening [a, b] to PHITS [-b, -a].
     return {
         "bank_a": [
-            _cm(value, "mlc.bank_a") * projection_scale
-            for value in positions["bank_a"]
+            -_cm(value, "mlc.bank_b") * projection_scale
+            for value in positions["bank_b"]
         ],
         "bank_b": [
-            _cm(value, "mlc.bank_b") * projection_scale
-            for value in positions["bank_b"]
+            -_cm(value, "mlc.bank_a") * projection_scale
+            for value in positions["bank_a"]
         ],
     }
 

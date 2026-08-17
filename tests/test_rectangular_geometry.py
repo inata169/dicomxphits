@@ -424,6 +424,30 @@ def test_intermediate_geometry_converts_mm_to_cm_and_records_units():
     assert geometry["mlc_geometry"]["leaf_depth_cm"] == 6.0
 
 
+def test_intermediate_geometry_reflects_asymmetric_iec_mlcx_openings_to_phits_x():
+    segment = rectangular_segment(
+        resolved_mlc_positions_mm={
+            "bank_a": [-40.0, -15.0, -10.0, -5.0],
+            "bank_b": [10.0, 25.0, 30.0, 45.0],
+        }
+    )
+
+    geometry = build_intermediate_geometry(segment, machine_config())
+
+    assert geometry["mlc_positions_cm"] == {
+        "bank_a": [-1.0, -2.5, -3.0, -4.5],
+        "bank_b": [4.0, 1.5, 1.0, 0.5],
+    }
+
+    rendered = render_rectangular_phits_input(
+        geometry,
+        "deposit.out",
+        voxel_counts=(2, 2, 2),
+    )
+    assert "2001 rpp -7 -1 -1 -0.5 -35 -30" in rendered
+    assert "2002 rpp 4 10 -1 -0.5 -35 -30" in rendered
+
+
 def test_public_default_projects_aperture_to_approved_head_geometry():
     segment = rectangular_segment(
         resolved_mlc_positions_mm={

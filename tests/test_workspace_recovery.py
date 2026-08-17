@@ -17,6 +17,7 @@ from dicomxphits.fix_coordinates import AXIS_MAPPING, SCHEMA_VERSION
 from dicomxphits.gantry_geometry import (
     CURRENT_GANTRY_GEOMETRY_CONTRACT,
     GANTRY_GEOMETRY_CONTRACT_FIELD,
+    PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
 )
 from dicomxphits.gui import GuiConfig, StageResult, run_workspace_recovery
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
@@ -85,6 +86,7 @@ def write_recoverable_workspace(
     old_root: str | None = None,
     gantry_angle_deg: float = 90.0,
     geometry_contract: str | None = CURRENT_GANTRY_GEOMETRY_CONTRACT,
+    resolved_mlc_positions_mm: dict[str, list[float]] | None = None,
 ) -> Path:
     workspace = tmp_path / "case-3dcrt"
     segment = {
@@ -99,6 +101,9 @@ def write_recoverable_workspace(
         "phits_input_path": "segments/seg_001/phits.inp",
         "expected_output_path": "segments/seg_001/deposit-target-3D.out",
     }
+    if resolved_mlc_positions_mm is not None:
+        segment["mlc_aperture_state"] = "present"
+        segment["resolved_mlc_positions_mm"] = resolved_mlc_positions_mm
     manifest = {
         "schema_version": "segment_manifest_v2",
         "case_id": "synthetic",
@@ -170,6 +175,89 @@ def test_proven_legacy_zero_gantry_transport_remains_reusable(tmp_path: Path) ->
 
     assert inspection.state == RECOVERY_READY
     assert inspection.phits_reusable is True
+
+
+def test_previous_contract_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=0.0,
+        geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
+        resolved_mlc_positions_mm={
+            "bank_a": [-40.0, -15.0],
+            "bank_b": [10.0, 25.0],
+        },
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "rerun PHITS" in inspection.message
+
+
+def test_previous_contract_keeps_reflection_invariant_mlcx_transport_reusable(
+    tmp_path: Path,
+) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=0.0,
+        geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
+        resolved_mlc_positions_mm={
+            "bank_a": [-40.0, -15.0],
+            "bank_b": [40.0, 15.0],
+        },
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_READY
+    assert inspection.phits_reusable is True
+
+
+@pytest.mark.parametrize(
+    "resolved_mlc_positions_mm",
+    [
+        None,
+        {
+            "bank_a": [-40.0, -15.0],
+            "bank_b": [40.0, 15.0],
+        },
+    ],
+)
+def test_previous_contract_rejects_nonzero_gantry_transport(
+    tmp_path: Path,
+    resolved_mlc_positions_mm: dict[str, list[float]] | None,
+) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=90.0,
+        geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
+        resolved_mlc_positions_mm=resolved_mlc_positions_mm,
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "rerun PHITS" in inspection.message
+
+
+def test_legacy_zero_gantry_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=0.0,
+        geometry_contract=None,
+        resolved_mlc_positions_mm={
+            "bank_a": [-40.0, -15.0],
+            "bank_b": [10.0, 25.0],
+        },
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "rerun PHITS" in inspection.message
 
 
 def test_missing_generation_summary_recovers_from_matching_execution_digest(
