@@ -83,12 +83,13 @@ confirmation, and overwrite controls are not persisted.
 
 An existing calculation is reopened through the distinct **Open existing
 case…** action. Selecting one 3D-CRT workspace triggers read-only validation of
-the strict manifest, the current IEC gantry-geometry contract, PHITS execution
-evidence, and every recorded active-output SHA-256. A legacy manifest without
-the current contract is reusable only when every active segment explicitly
-proves gantry zero. Missing, ambiguous, or nonzero-angle legacy geometry
-requires preparing new segment inputs and rerunning PHITS and all downstream
-stages; a final-DICOM mirror cannot repair the transported dose. A
+the strict manifest, the current IEC gantry/MLCX/collimator geometry contract,
+PHITS execution evidence, and every recorded active-output SHA-256. PHITS
+transport is reusable only when that current v4 geometry contract validates.
+Any v3, older, missing, mixed, or ambiguous geometry provenance requires newly
+prepared v4 segment inputs and rerunning PHITS, Sumtally, and RTDOSE regardless
+of recorded gantry, collimator, or MLC values; a final-DICOM mirror cannot
+repair transport produced with an obsolete geometry convention. A
 standard-profile `*-3dcrt` case may restore exactly one corresponding
 `*-ct2phits` handoff below the validated RT-PHITS work root; no drive or DICOM
 search is performed. When PHITS evidence is reusable, Workspace Prepare and
