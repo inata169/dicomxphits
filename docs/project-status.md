@@ -25,6 +25,12 @@ comparison conditions, and interpretation limits, see the
 For the final v1.0.2 integration, verified offline lifecycle, human Windows
 acceptance, pull-request sequence, and published release state, see the
 [`2026-08-15 v1.0.2 release closeout`](development-handoff-2026-08-15-v1.0.2.md).
+For the post-release MLCX patient-axis correction, companion comparison
+documentation, and external-validation stopping boundary, see the
+[`2026-08-17 development handoff`](development-handoff-2026-08-17.md).
+For the completed per-field comparison, collimator-direction correction, and
+post-merge stopping boundary, see the
+[`2026-08-18 development handoff`](development-handoff-2026-08-18.md).
 
 ## Current baseline
 
@@ -44,12 +50,21 @@ acceptance, pull-request sequence, and published release state, see the
   [#40](https://github.com/inata169/dicomxphits/pull/40),
   [#41](https://github.com/inata169/dicomxphits/pull/41), and
   [#42](https://github.com/inata169/dicomxphits/pull/42)
-- Final merge commit: `efb0dace568fbcb12019f3d320a468dcfb446e34`
+- Release final merge commit: `efb0dace568fbcb12019f3d320a468dcfb446e34`
+- Reviewed post-release `main` baseline:
+  `6816b6329fef94c72a24f6f3b338ffd451689292`
+- Post-release pull requests:
+  [#44](https://github.com/inata169/dicomxphits/pull/44), MLCX patient-axis
+  reflection correction,
+  [#45](https://github.com/inata169/dicomxphits/pull/45), public companion
+  comparison documentation, and
+  [#47](https://github.com/inata169/dicomxphits/pull/47), IEC collimator
+  rotation-direction correction
 - Human acceptance: offline installation, GUI startup, bounded external
   workflow, and final verified uninstall reported complete
-- OpenSpec state: accepted v1.0.2 changes promoted and archived; no active
-  change remains
-- Status last reviewed: 2026-08-15
+- OpenSpec state: accepted v1.0.2 and collimator-direction changes promoted and
+  archived; no active change remains
+- Status last reviewed: 2026-08-18
 
 The GitHub Release publishes the verified Windows offline ZIP built from the
 exact `v1.0.2` manifest source commit. GitHub reported the asset as uploaded
@@ -57,6 +72,14 @@ with the same SHA-256 and size as the independently validated local artifact.
 The ZIP passed duplicate-name, CRC, complete inventory, per-file size and
 SHA-256, manifest membership, and `SHA256SUMS.txt` binding checks. The release
 is not published to PyPI.
+
+The reviewed post-release `main` baseline contains the MLCX patient-axis
+reflection correction from pull request #44 and the collimator-direction
+correction from pull request #47. Prepared-workspace geometry provenance is
+now `dicomxphits_iec_gantry_mlcx_collimator_geometry_v4`, and all pre-v4 PHITS
+transport evidence is rejected. Neither correction is contained in the
+`v1.0.2` tag or its published offline ZIP; those release artifacts remain
+bound to the exact release commit and manifest recorded above.
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,
@@ -334,6 +357,14 @@ follow-up implementation, or active OpenSpec change remains. Any new
 capability, public-scope change, physics, geometry, dose, MU, machine-model,
 DICOM, or clinical claim requires a separate human-approved task.
 
+The human operator subsequently reported completion and visual acceptance of
+the planned external per-field MLC comparison. A separate non-patient,
+fixed-gantry, asymmetric-aperture comparison exposed the reversed collimator
+rotation corrected in pull request #47; the human-operated rerun was then
+accepted for rotation and shape. This durable record contains only that
+human-reported completion boundary. External paths, datasets, DICOM, images,
+metrics, dose values, and generated outputs remain outside Git.
+
 Do not add personal-computer paths, private dataset details, patient or facility
 data, credentials, or real-tool output to this document.
 
@@ -348,9 +379,11 @@ At the start of a future development session:
    `efb0dace568fbcb12019f3d320a468dcfb446e34` or a later reviewed descendant,
    and that annotated tag `v1.0.2` still dereferences to that exact commit.
 4. Read this document, the
-   [v1.0.2 release closeout](development-handoff-2026-08-15-v1.0.2.md), and the
-   [workflow stage guide](workflow_stages.md), and verify that their baseline
-   still matches `main`.
+   [v1.0.2 release closeout](development-handoff-2026-08-15-v1.0.2.md), the
+   [2026-08-17 development handoff](development-handoff-2026-08-17.md), and
+   [2026-08-18 development handoff](development-handoff-2026-08-18.md), then
+   read the [workflow stage guide](workflow_stages.md) and verify that their
+   baseline still matches `main`.
 5. Confirm current OpenSpec specifications and active-change state before
    proposing any new behavior. Do not recreate an unapproved proposal by
    inference.
