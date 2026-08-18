@@ -189,10 +189,7 @@ def _manifest_and_outputs(workspace_root: Path) -> tuple[dict[str, Any], list[Pa
             "The prepared 3D-CRT manifest no longer passes the public fixed-field gate."
         ) from exc
     try:
-        require_reusable_gantry_geometry_contract(
-            manifest,
-            allow_legacy_zero_gantry=True,
-        )
+        require_reusable_gantry_geometry_contract(manifest)
     except GantryGeometryContractError as exc:
         raise WorkspaceRecoveryError(str(exc)) from exc
     outputs: list[Path] = []
