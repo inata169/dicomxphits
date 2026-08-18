@@ -36,6 +36,8 @@ post-merge stopping boundary, see the
 
 - Public release: [`v1.0.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
 - Previous public release: `v1.0.1`
+- Release target: `v1.0.3` (release preparation in progress; not yet tagged or
+  published)
 - Public workflow scope: documented fixed-field 3D-CRT
 - Release tag and commit: `v1.0.2` at
   `efb0dace568fbcb12019f3d320a468dcfb446e34` (2026-08-15)
@@ -51,20 +53,24 @@ post-merge stopping boundary, see the
   [#41](https://github.com/inata169/dicomxphits/pull/41), and
   [#42](https://github.com/inata169/dicomxphits/pull/42)
 - Release final merge commit: `efb0dace568fbcb12019f3d320a468dcfb446e34`
-- Reviewed post-release `main` baseline:
-  `6816b6329fef94c72a24f6f3b338ffd451689292`
+- Reviewed v1.0.3 release-preparation baseline:
+  `c509c8e6342ff0b46c9630ad98c433da164ba0a0`
 - Post-release pull requests:
   [#44](https://github.com/inata169/dicomxphits/pull/44), MLCX patient-axis
   reflection correction,
   [#45](https://github.com/inata169/dicomxphits/pull/45), public companion
   comparison documentation, and
   [#47](https://github.com/inata169/dicomxphits/pull/47), IEC collimator
-  rotation-direction correction
+  rotation-direction correction, followed by documentation integration in
+  [#46](https://github.com/inata169/dicomxphits/pull/46)
 - Human acceptance: offline installation, GUI startup, bounded external
-  workflow, and final verified uninstall reported complete
+  workflow, and final verified uninstall reported complete for v1.0.2; the
+  human operator reported the v1.0.3 GUI release gate passed on 2026-08-19
 - OpenSpec state: accepted v1.0.2 and collimator-direction changes promoted and
   archived; no active change remains
-- Status last reviewed: 2026-08-18
+- v1.0.3 publication state: final offline ZIP, tag, GitHub Release, and release
+  asset are not yet created or confirmed
+- Status last reviewed: 2026-08-19
 
 The GitHub Release publishes the verified Windows offline ZIP built from the
 exact `v1.0.2` manifest source commit. GitHub reported the asset as uploaded
@@ -352,10 +358,14 @@ paragraph records the earlier boundary rather than the current OpenSpec state.
 
 ## Human-decision queue
 
-No known merge-blocking defect, required v1.0.2 release action, approved
-follow-up implementation, or active OpenSpec change remains. Any new
-capability, public-scope change, physics, geometry, dose, MU, machine-model,
-DICOM, or clinical claim requires a separate human-approved task.
+The human approved v1.0.3 release preparation after reporting the bounded GUI
+release gate passed. The release-preparation pull request remains to be
+reviewed and merged. Final offline ZIP confirmation, tag creation, GitHub
+Release publication, asset upload, and branch deletion each remain separate
+human decisions. No active OpenSpec change or new runtime implementation is
+authorized. Any new capability, public-scope change, physics, geometry, dose,
+MU, machine-model, DICOM, or clinical claim requires a separate human-approved
+task.
 
 The human operator subsequently reported completion and visual acceptance of
 the planned external per-field MLC comparison. A separate non-patient,

@@ -71,8 +71,8 @@ transported through incorrectly rotated beam-limiting geometry.
 ## Approval Status
 
 The primary user approved this bounded runtime and test implementation on
-2026-08-18. The primary user subsequently completed the separately controlled
-external non-patient comparison and accepted the corrected rotation direction
-and aperture orientation on 2026-08-18. No external path, dataset identifier,
-image, numerical result, DICOM, workspace, or calculation artifact was read or
-imported into the repository.
+2026-08-18. The primary user subsequently reported completion of the separately
+controlled external non-patient comparison on 2026-08-18. The repository does
+not record or assess that comparison outcome. No external path, dataset
+identifier, image, numerical result, DICOM, workspace, or calculation artifact
+was read or imported into the repository.

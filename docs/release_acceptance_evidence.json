@@ -1,6 +1,6 @@
 {
   "schema_version": "dicomxphits_v1_release_acceptance_evidence_v1",
-  "target_release": "v1.0.2",
+  "target_release": "v1.0.3",
   "scope": "fixed_field_3dcrt_education_and_research_only",
   "prior_release_physical_rerun_performed": false,
   "prior_physical_evidence": {
@@ -49,7 +49,8 @@
   },
   "target_release_external_manual_check": {
     "status": "human_reported_complete_untracked",
-    "verification_basis": "human_authorized_non_patient_report_and_screenshots",
+    "verification_basis": "human_reported_non_patient_release_gate",
+    "release_gate_status": "passed",
     "workflow_stages_completed": [
       "ct2phits",
       "workspace_prepare",
@@ -63,19 +64,23 @@
     "agent_result_file_inspected": false,
     "numerical_result_recorded": false,
     "result_file_recorded": false,
+    "image_recorded": false,
     "absolute_path_recorded": false,
     "dicom_recorded": false,
     "claim_boundary": "One bounded external non-patient research workflow; no clinical or general dose-accuracy claim."
   },
   "target_release_offline_bundle_check": {
-    "status": "human_reported_complete_untracked",
-    "artifact_name": "dicomxphits-offline-win64-1.0.2.zip",
-    "artifact_sha256": "6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217",
-    "manifest_source_head": "efb0dace568fbcb12019f3d320a468dcfb446e34",
-    "installation": "passed",
-    "gui_launch": "passed",
-    "verified_uninstall": "passed",
-    "uninstall_launch_method": "uninstall.cmd from Windows Explorer",
+    "status": "pending_release_artifact",
+    "artifact_name": "dicomxphits-offline-win64-1.0.3.zip",
+    "artifact_sha256": null,
+    "manifest_source_head": null,
+    "installation": "not_yet_performed",
+    "gui_launch": "not_yet_performed",
+    "verified_uninstall": "not_yet_performed",
+    "uninstall_launch_method": null,
+    "final_artifact_confirmed": false,
+    "github_release_published": false,
+    "release_asset_uploaded": false,
     "agent_external_tool_execution_performed": false,
     "absolute_path_recorded": false
   },

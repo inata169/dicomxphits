@@ -50,7 +50,7 @@ def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
     assert evidence["water_regression"]["new_result_claimed"] is False
     assert evidence["voxel_regression"]["status"] == "approved_knowledge_based_reuse"
     assert evidence["multi_beam_regression"]["status"] == "approved_knowledge_based_reuse"
-    assert evidence["target_release"] == "v1.0.2"
+    assert evidence["target_release"] == "v1.0.3"
     gpr = evidence["gpr_regression"]
     assert gpr["status"] == "historical_v1.0.0_evidence_only"
     assert gpr["historical_release"] == "v1.0.0"
@@ -59,12 +59,23 @@ def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
 
     manual = evidence["target_release_external_manual_check"]
     assert manual["status"] == "human_reported_complete_untracked"
+    assert manual["release_gate_status"] == "passed"
     assert manual["agent_result_file_inspected"] is False
     assert manual["numerical_result_recorded"] is False
     assert manual["result_file_recorded"] is False
+    assert manual["image_recorded"] is False
     assert manual["absolute_path_recorded"] is False
     assert manual["dicom_recorded"] is False
     assert "external_gpr_comparison" in manual["workflow_stages_completed"]
+
+    offline = evidence["target_release_offline_bundle_check"]
+    assert offline["status"] == "pending_release_artifact"
+    assert offline["artifact_name"] == "dicomxphits-offline-win64-1.0.3.zip"
+    assert offline["artifact_sha256"] is None
+    assert offline["manifest_source_head"] is None
+    assert offline["final_artifact_confirmed"] is False
+    assert offline["github_release_published"] is False
+    assert offline["release_asset_uploaded"] is False
 
 
 def test_beam6_controls_map_approved_evidence_to_current_public_classifier() -> None:

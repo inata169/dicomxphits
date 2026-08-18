@@ -7,7 +7,7 @@ import dicomxphits
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET_VERSION = "1.0.2"
+TARGET_VERSION = "1.0.3"
 
 
 def test_release_version_metadata_is_consistent() -> None:

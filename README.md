@@ -17,11 +17,11 @@ tool distributions, and real-tool outputs must remain outside this repository.
 
 ## Status
 
-Version 1.0.2 includes standalone public adapters for strict 3D-CRT workspace
+Version 1.0.3 includes standalone public adapters for strict 3D-CRT workspace
 preparation, PHITS segment execution, Sumtally generation and execution,
 RTDOSE conversion and coordinate correction, and an optional external
-GPR-comparing handoff. See the [v1.0.2 release notes](docs/release-notes-v1.0.2.md)
-for the changes since v1.0.1.
+GPR-comparing handoff. See the [v1.0.3 release notes](docs/release-notes-v1.0.3.md)
+for the changes since v1.0.2.
 
 The current public release is
 [`v1.0.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2). Its
