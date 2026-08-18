@@ -7,6 +7,11 @@ software remains education and research software for the documented
 fixed-field 3D-CRT workflow; this record does not establish clinical validity,
 commissioning, patient QA, or vendor certification.
 
+The calculation-in-progress and planned-validation sections below intentionally
+preserve the 2026-08-17 stopping point. The later human-reported completion,
+collimator-direction correction, and repository closeout are recorded in the
+[2026-08-18 development handoff](development-handoff-2026-08-18.md).
+
 ## Repository and GitHub baseline
 
 Before this handoff branch was created, local `main` was clean and matched

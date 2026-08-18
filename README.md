@@ -113,6 +113,11 @@ it is installation evidence, not clinical validation.
 
 ## Workflow at a Glance
 
+![Guided dicomxphits 3D-CRT workflow](docs/assets/dicomxphits-gui-workflow.gif)
+
+The animation shows the guided staged workflow with local paths and identifiers
+redacted.
+
 The guided workflow keeps each stage explicit and gated:
 
 1. **CT2PHITS** — on Windows, `dicomxphits-run-ct2phits` invokes the
@@ -643,12 +648,13 @@ outputs and accepted Sumtally output match their recorded SHA-256 values and
 contain one consistent mesh header. If reconstruction cannot be proven, rerun
 Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and Run.
 Existing segment PHITS outputs remain reusable without PHITS transport only
-when their manifest records the current IEC gantry-geometry contract, or when
-every active segment explicitly proves gantry zero, whose rendered geometry is
-unchanged. Old, missing, ambiguous, or nonzero-angle geometry provenance
+when their manifest records the current
+`dicomxphits_iec_gantry_mlcx_collimator_geometry_v4` contract. Transport
+evidence with v3 or older, missing, mixed, or ambiguous geometry provenance
 requires a newly prepared workspace and PHITS, Sumtally, and RTDOSE
-recalculation. Mirroring or relabeling only the final DICOM is not a repair for
-transport performed from the wrong patient side.
+recalculation regardless of recorded gantry, collimator, or MLC values.
+Mirroring or relabeling only the final DICOM is not a repair for transport
+performed with an obsolete geometry convention.
 For a workspace with stale or factor-one weighted-average evidence, reopen it
 with **Open existing case…** and select **Create DICOM RT Dose**. The contextual
 confirmation lists the downstream stages and preserves old Sumtally/RTDOSE
