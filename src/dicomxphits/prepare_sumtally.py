@@ -269,10 +269,7 @@ def select_sumtally_base_input(
 
 
 def validate_manifest_for_sumtally(manifest: dict[str, Any]) -> dict[str, Any]:
-    require_reusable_gantry_geometry_contract(
-        manifest,
-        allow_legacy_zero_gantry=True,
-    )
+    require_reusable_gantry_geometry_contract(manifest)
     gate = validate_public_strict_3dcrt_gate(manifest)
     for segment in active_segments(manifest):
         expected_output_path = str(segment.get("expected_output_path") or "")

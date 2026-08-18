@@ -85,6 +85,7 @@ def write_recoverable_workspace(
     *,
     old_root: str | None = None,
     gantry_angle_deg: float = 90.0,
+    collimator_angle_deg: float = 0.0,
     geometry_contract: str | None = CURRENT_GANTRY_GEOMETRY_CONTRACT,
     resolved_mlc_positions_mm: dict[str, list[float]] | None = None,
 ) -> Path:
@@ -98,6 +99,7 @@ def write_recoverable_workspace(
         "mu_weight": 100.0,
         "mu_weight_unit": "MU",
         "gantry_angle_deg": gantry_angle_deg,
+        "collimator_angle_deg": collimator_angle_deg,
         "phits_input_path": "segments/seg_001/phits.inp",
         "expected_output_path": "segments/seg_001/deposit-target-3D.out",
     }
@@ -164,28 +166,11 @@ def test_old_nonzero_gantry_transport_is_not_reusable(tmp_path: Path) -> None:
     assert "rerun PHITS" in inspection.message
 
 
-def test_proven_legacy_zero_gantry_transport_remains_reusable(tmp_path: Path) -> None:
+def test_legacy_zero_angle_transport_is_not_reusable_under_v4(tmp_path: Path) -> None:
     workspace = write_recoverable_workspace(
         tmp_path,
         gantry_angle_deg=0.0,
         geometry_contract=None,
-    )
-
-    inspection = inspect_existing_workspace(workspace)
-
-    assert inspection.state == RECOVERY_READY
-    assert inspection.phits_reusable is True
-
-
-def test_previous_contract_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> None:
-    workspace = write_recoverable_workspace(
-        tmp_path,
-        gantry_angle_deg=0.0,
-        geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
-        resolved_mlc_positions_mm={
-            "bank_a": [-40.0, -15.0],
-            "bank_b": [10.0, 25.0],
-        },
     )
 
     inspection = inspect_existing_workspace(workspace)
@@ -195,7 +180,22 @@ def test_previous_contract_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> 
     assert "rerun PHITS" in inspection.message
 
 
-def test_previous_contract_keeps_reflection_invariant_mlcx_transport_reusable(
+def test_v3_nonzero_collimator_transport_is_not_reusable(tmp_path: Path) -> None:
+    workspace = write_recoverable_workspace(
+        tmp_path,
+        gantry_angle_deg=0.0,
+        collimator_angle_deg=30.0,
+        geometry_contract=PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "rerun PHITS" in inspection.message
+
+
+def test_v3_zero_collimator_transport_is_not_reusable(
     tmp_path: Path,
 ) -> None:
     workspace = write_recoverable_workspace(
@@ -210,8 +210,9 @@ def test_previous_contract_keeps_reflection_invariant_mlcx_transport_reusable(
 
     inspection = inspect_existing_workspace(workspace)
 
-    assert inspection.state == RECOVERY_READY
-    assert inspection.phits_reusable is True
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "rerun PHITS" in inspection.message
 
 
 @pytest.mark.parametrize(
@@ -224,7 +225,7 @@ def test_previous_contract_keeps_reflection_invariant_mlcx_transport_reusable(
         },
     ],
 )
-def test_previous_contract_rejects_nonzero_gantry_transport(
+def test_v3_contract_rejects_nonzero_gantry_transport(
     tmp_path: Path,
     resolved_mlc_positions_mm: dict[str, list[float]] | None,
 ) -> None:

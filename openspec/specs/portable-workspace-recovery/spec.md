@@ -70,12 +70,15 @@ summary alone MUST NOT establish current completion.
 The workflow SHALL allow a relocated workspace's PHITS segment outputs to be
 reused without PHITS execution only when the strict manifest, complete active
 segment output set, a recorded SHA-256 for every active segment output, and the
-current IEC gantry-geometry contract validate at the current workspace. A
-legacy manifest without that contract MAY remain reusable only when every
-active segment explicitly records gantry zero, whose source and transform
-geometry is unchanged by the correction. Missing, ambiguous, or nonzero-angle
-legacy gantry provenance MUST fail closed and require newly prepared segment
-inputs followed by PHITS, Sumtally, and RTDOSE recalculation.
+current IEC gantry/MLCX/collimator geometry contract validate at the current
+workspace.
+
+Any v3, older, missing, mixed, or ambiguous geometry provenance MUST fail
+closed regardless of recorded gantry, collimator, or MLC values. Recovery MUST
+require newly prepared v4 segment inputs followed by PHITS, Sumtally, and
+RTDOSE recalculation. It MUST NOT provide an angle-dependent exception for a
+workspace produced under a geometry version known to contain the collimator
+direction defect.
 
 Missing SHA-256 evidence for any active segment output MUST fail closed and
 MUST NOT be inferred from file existence, path binding, or a successful
@@ -83,8 +86,9 @@ execution summary. Recovery SHALL regenerate Sumtally and RTDOSE evidence under
 the current workspace and SHALL retain the existing requirement that an
 external run create a new output or change its SHA-256. It MUST NOT silently
 delete a conflicting historical artifact or accept unchanged bytes as a fresh
-result. It MUST NOT treat a final-DICOM mirror, affine rewrite, or coordinate
-relabel as repair for transport made with the prior nonzero-angle convention.
+result. It MUST NOT treat a final-DICOM mirror, rotation, affine rewrite,
+coordinate relabel, or collimator-angle relabel as repair for transport made
+with a prior nonzero-angle geometry convention.
 
 With explicit recovery permission, it SHALL move conflicting downstream
 summaries and artifacts into a new
@@ -97,23 +101,26 @@ required preservation step fails, and MUST NOT move PHITS segment outputs.
 #### Scenario: Verified relocated segment outputs
 
 - **WHEN** all active PHITS segment outputs, their binding evidence, and their
-  individually recorded SHA-256 values, and the current IEC gantry-geometry
-  contract validate after bounded relocation
+  individually recorded SHA-256 values, and the current IEC
+  gantry/MLCX/collimator geometry contract validate after bounded relocation
 - **THEN** the user may start recovery at Sumtally Generate without rerunning
   PHITS
 
-#### Scenario: Proven legacy all-zero-gantry workspace
+#### Scenario: Prior v3 workspace
 
-- **WHEN** a legacy manifest lacks the current gantry contract but every active
-  segment explicitly records gantry zero
-- **THEN** recovery may reuse the unchanged PHITS transport after all existing
-  digest and binding checks pass
+- **WHEN** a workspace carries the v3 gantry/MLCX geometry contract
+- **THEN** recovery rejects PHITS reuse and requires newly prepared v4 inputs
+  and complete downstream recalculation
 
-#### Scenario: Legacy nonzero or ambiguous gantry workspace
+#### Scenario: Prior v3 workspace records only collimator zero
 
-- **WHEN** a legacy manifest contains a nonzero active gantry angle or does not
-  provide enough angle provenance to prove every active segment used gantry
-  zero
+- **WHEN** every active segment records collimator zero but the workspace
+  carries the v3 geometry contract
+- **THEN** recovery still rejects PHITS reuse without an angle-based exception
+
+#### Scenario: Older or ambiguous geometry provenance
+
+- **WHEN** geometry provenance is older than v3, missing, mixed, or ambiguous
 - **THEN** recovery rejects PHITS reuse and requires newly prepared inputs and
   PHITS and downstream recalculation
 

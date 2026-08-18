@@ -217,11 +217,11 @@ def parsed_runtime_tr2(text, collimator_deg):
     cosine = math.cos(math.radians(collimator_deg))
     values_by_token = {
         "cos(c10/180*pi)*cos(c21/180*pi)": cosine,
-        "sin(c10/180*pi)*cos(c31/180*pi)+cos(c10/180*pi)*sin(c21/180*pi)*sin(c31/180*pi)": sine,
-        "sin(c10/180*pi)*sin(c31/180*pi)-cos(c10/180*pi)*sin(c21/180*pi)*cos(c31/180*pi)": 0.0,
-        "-sin(c10/180*pi)*cos(c21/180*pi)": -sine,
-        "cos(c10/180*pi)*cos(c31/180*pi)-sin(c10/180*pi)*sin(c21/180*pi)*sin(c31/180*pi)": cosine,
-        "cos(c10/180*pi)*sin(c31/180*pi)+sin(c10/180*pi)*sin(c21/180*pi)*cos(c31/180*pi)": 0.0,
+        "-sin(c10/180*pi)*cos(c31/180*pi)+cos(c10/180*pi)*sin(c21/180*pi)*sin(c31/180*pi)": -sine,
+        "-sin(c10/180*pi)*sin(c31/180*pi)-cos(c10/180*pi)*sin(c21/180*pi)*cos(c31/180*pi)": 0.0,
+        "sin(c10/180*pi)*cos(c21/180*pi)": sine,
+        "cos(c10/180*pi)*cos(c31/180*pi)+sin(c10/180*pi)*sin(c21/180*pi)*sin(c31/180*pi)": cosine,
+        "cos(c10/180*pi)*sin(c31/180*pi)-sin(c10/180*pi)*sin(c21/180*pi)*cos(c31/180*pi)": 0.0,
         "sin(c21/180*pi)": 0.0,
         "-cos(c21/180*pi)*sin(c31/180*pi)": 0.0,
         "cos(c21/180*pi)*cos(c31/180*pi)": 1.0,
@@ -431,13 +431,13 @@ def test_runtime_gantry_geometry_has_independent_dicom_lps_anchors(
     ("collimator_deg", "mlcx_axis_lps", "mlcy_axis_lps"),
     [
         (0.0, (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)),
-        (90.0, (0.0, 0.0, -1.0), (1.0, 0.0, 0.0)),
+        (90.0, (0.0, 0.0, 1.0), (-1.0, 0.0, 0.0)),
         (180.0, (-1.0, 0.0, 0.0), (0.0, 0.0, -1.0)),
-        (270.0, (0.0, 0.0, 1.0), (-1.0, 0.0, 0.0)),
+        (270.0, (0.0, 0.0, -1.0), (1.0, 0.0, 0.0)),
         (
             30.0,
-            (math.sqrt(3.0) / 2.0, 0.0, -0.5),
-            (0.5, 0.0, math.sqrt(3.0) / 2.0),
+            (math.sqrt(3.0) / 2.0, 0.0, 0.5),
+            (-0.5, 0.0, math.sqrt(3.0) / 2.0),
         ),
     ],
 )
@@ -465,14 +465,97 @@ def test_runtime_collimator_geometry_has_independent_dicom_lps_anchors(
         x_value, y_value, z_value = vector
         return (-x_value, z_value, y_value)
 
-    assert phits_to_dicom_lps(mlcx_phits) == pytest.approx(
+    actual_mlcx_axis_lps = phits_to_dicom_lps(mlcx_phits)
+    actual_mlcy_axis_lps = phits_to_dicom_lps(mlcy_phits)
+    assert actual_mlcx_axis_lps == pytest.approx(
         mlcx_axis_lps,
         abs=1.0e-10,
     )
-    assert phits_to_dicom_lps(mlcy_phits) == pytest.approx(
+    assert actual_mlcy_axis_lps == pytest.approx(
         mlcy_axis_lps,
         abs=1.0e-10,
     )
+    assert sum(value**2 for value in actual_mlcx_axis_lps) == pytest.approx(1.0)
+    assert sum(value**2 for value in actual_mlcy_axis_lps) == pytest.approx(1.0)
+    assert sum(
+        x_value * y_value
+        for x_value, y_value in zip(
+            actual_mlcx_axis_lps,
+            actual_mlcy_axis_lps,
+            strict=True,
+        )
+    ) == pytest.approx(0.0, abs=1.0e-10)
+    assert actual_mlcx_axis_lps[1] == pytest.approx(0.0, abs=1.0e-10)
+    assert actual_mlcy_axis_lps[1] == pytest.approx(0.0, abs=1.0e-10)
+
+
+def test_runtime_collimator_positive_angle_preserves_asymmetric_feature_orientation():
+    def transformed_feature_lps(collimator_deg):
+        text = render_runtime(
+            jaw_mlc_geometry(
+                angles_deg={
+                    "gantry": 0.0,
+                    "collimator": collimator_deg,
+                    "couch": 0.0,
+                }
+            )
+        )
+        tr2 = parsed_runtime_tr2(text, collimator_deg)
+        mlcx_phits = tuple(-value for value in tr2[0])
+        mlcy_phits = tuple(tr2[1])
+
+        def phits_to_dicom_lps(vector):
+            x_value, y_value, z_value = vector
+            return (-x_value, z_value, y_value)
+
+        mlcx_lps = phits_to_dicom_lps(mlcx_phits)
+        mlcy_lps = phits_to_dicom_lps(mlcy_phits)
+        return tuple(
+            2.0 * mlcx_value + mlcy_value
+            for mlcx_value, mlcy_value in zip(mlcx_lps, mlcy_lps, strict=True)
+        )
+
+    positive = transformed_feature_lps(30.0)
+    negative = transformed_feature_lps(-30.0)
+    assert positive == pytest.approx(
+        (math.sqrt(3.0) - 0.5, 0.0, 1.0 + math.sqrt(3.0) / 2.0),
+        abs=1.0e-10,
+    )
+    assert negative == pytest.approx(
+        (math.sqrt(3.0) + 0.5, 0.0, -1.0 + math.sqrt(3.0) / 2.0),
+        abs=1.0e-10,
+    )
+    assert positive != pytest.approx(negative, abs=1.0e-10)
+
+
+def test_collimator_correction_preserves_dicom_angle_source_and_gantry_transform():
+    zero_text = render_runtime(
+        jaw_mlc_geometry(
+            angles_deg={"gantry": 90.0, "collimator": 0.0, "couch": 0.0}
+        )
+    )
+    positive_text = render_runtime(
+        jaw_mlc_geometry(
+            angles_deg={"gantry": 90.0, "collimator": 30.0, "couch": 0.0}
+        )
+    )
+
+    def source_section(text):
+        return text.split("[ S o u r c e ]\n", 1)[1].split("\n[ Surface ]", 1)[0]
+
+    def tr3_lines(text):
+        transform = text.split("[ Transform ]\n", 1)[1].split(
+            "\n[ T-Deposit ]",
+            1,
+        )[0]
+        lines = transform.splitlines()
+        start = next(index for index, line in enumerate(lines) if line.startswith("tr3 "))
+        return lines[start : start + 11]
+
+    assert "set: c10[30] $ Collimator angle (deg)" in positive_text
+    assert "set: c10[-30]" not in positive_text
+    assert source_section(positive_text) == source_section(zero_text)
+    assert tr3_lines(positive_text) == tr3_lines(zero_text)
 
 
 def test_gantry_zero_source_and_transform_text_remain_unchanged():
