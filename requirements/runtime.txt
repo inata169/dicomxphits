@@ -1,3 +1,3 @@
 # Runtime versions shared by normal CI and the Windows offline bundle.
-numpy==2.5.1
+numpy==2.5.2
 pydicom==3.0.2
