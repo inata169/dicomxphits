@@ -193,6 +193,10 @@ aperture at every Control Point must remain inside the closed collimator-local
 isocenter-plane box from `-100.000 mm` to `+100.000 mm` on both X and Y. Each
 effective width must also be no greater than `200.000 mm`.
 
+Only coplanar plans are supported (`コプラナーのみ対応`): the patient
+support/couch angle must be zero. The public v1 runtime rejects nonzero couch
+angles.
+
 A centered `20 × 20 cm²` aperture is therefore the largest square at the
 boundary. A narrower offset aperture is eligible only when every effective
 point remains inside the same box. The workflow rejects overruns rather than
