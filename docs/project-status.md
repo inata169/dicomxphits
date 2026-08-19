@@ -31,32 +31,37 @@ documentation, and external-validation stopping boundary, see the
 For the completed per-field comparison, collimator-direction correction, and
 post-merge stopping boundary, see the
 [`2026-08-18 development handoff`](development-handoff-2026-08-18.md).
+For the v1.0.3 publication boundary and the decision to publish without a
+Windows offline ZIP, see the
+[`v1.0.3 release notes`](release-notes-v1.0.3.md).
 
 ## Current baseline
 
-- Public release: [`v1.0.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
-- Previous public release: `v1.0.1`
-- Release target: `v1.0.3` (release preparation in progress; not yet tagged or
-  published)
+- Public release: [`v1.0.3`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.3)
+- Previous public release: `v1.0.2`
+- Release state: v1.0.3 published on 2026-08-19 without a custom offline asset
 - Public workflow scope: documented fixed-field 3D-CRT
-- Release tag and commit: `v1.0.2` at
-  `efb0dace568fbcb12019f3d320a468dcfb446e34` (2026-08-15)
-- Published custom asset: `dicomxphits-offline-win64-1.0.2.zip` (withdrawal
-  approved on 2026-08-19; manual GitHub removal pending)
-- Release asset SHA-256:
+- Release tag and commit: `v1.0.3` at
+  `63dea40cdbced8c85d0d50c8f92aeb513ff78622` (2026-08-19)
+- Published custom asset: none
+- Withdrawn historical v1.0.2 custom asset:
+  `dicomxphits-offline-win64-1.0.2.zip` (removed from GitHub on 2026-08-19)
+- Historical v1.0.2 asset SHA-256:
   `6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217`
-- Release asset size: `36,937,317 bytes`
-- Manifest source HEAD: `efb0dace568fbcb12019f3d320a468dcfb446e34`
-- Release integration pull requests:
+- Historical v1.0.2 asset size: `36,937,317 bytes`
+- Historical v1.0.2 manifest source HEAD:
+  `efb0dace568fbcb12019f3d320a468dcfb446e34`
+- v1.0.2 release integration pull requests:
   [#38](https://github.com/inata169/dicomxphits/pull/38),
   [#39](https://github.com/inata169/dicomxphits/pull/39),
   [#40](https://github.com/inata169/dicomxphits/pull/40),
   [#41](https://github.com/inata169/dicomxphits/pull/41), and
   [#42](https://github.com/inata169/dicomxphits/pull/42)
-- Release final merge commit: `efb0dace568fbcb12019f3d320a468dcfb446e34`
-- Reviewed v1.0.3 release-preparation baseline:
+- v1.0.2 release final merge commit:
+  `efb0dace568fbcb12019f3d320a468dcfb446e34`
+- Reviewed v1.0.3 release-preparation starting baseline:
   `c509c8e6342ff0b46c9630ad98c433da164ba0a0`
-- Post-release pull requests:
+- v1.0.3 content pull requests:
   [#44](https://github.com/inata169/dicomxphits/pull/44), MLCX patient-axis
   reflection correction,
   [#45](https://github.com/inata169/dicomxphits/pull/45), public companion
@@ -64,6 +69,10 @@ post-merge stopping boundary, see the
   [#47](https://github.com/inata169/dicomxphits/pull/47), IEC collimator
   rotation-direction correction, followed by documentation integration in
   [#46](https://github.com/inata169/dicomxphits/pull/46)
+- v1.0.3 release-preparation pull request:
+  [#48](https://github.com/inata169/dicomxphits/pull/48)
+- v1.0.3 release merge commit:
+  `63dea40cdbced8c85d0d50c8f92aeb513ff78622`
 - Human acceptance: offline installation, GUI startup, bounded external
   workflow, and final verified uninstall reported complete for v1.0.2; the
   human operator reported the v1.0.3 GUI release gate passed on 2026-08-19
@@ -72,8 +81,9 @@ post-merge stopping boundary, see the
 - v1.0.3 offline candidate: human-reported installation and GUI startup passed,
   but behavior-based endpoint protection blocked verified uninstallation; the
   candidate is not accepted for public distribution
-- v1.0.3 publication state: the release is planned without an offline ZIP
-  asset; tag and GitHub Release are not yet created
+- v1.0.3 publication state: tag and GitHub Release published without an offline
+  ZIP asset; the merged release-preparation branch was deleted locally and
+  remotely
 - Status last reviewed: 2026-08-19
 
 The v1.0.2 GitHub Release initially published the verified Windows offline ZIP
@@ -82,30 +92,32 @@ uploaded with the same SHA-256 and size as the independently validated local
 artifact. The ZIP passed duplicate-name, CRC, complete inventory, per-file size
 and SHA-256, manifest membership, and `SHA256SUMS.txt` binding checks. The human
 has since approved withdrawing only that custom asset after a later
-endpoint-protection compatibility failure; manual GitHub removal remains
-pending, and the ZIP should not be used if it is still visible. The v1.0.2 tag,
-Release, source archives, and historical record remain. The release is not
-published to PyPI.
+endpoint-protection compatibility failure. The asset was removed from GitHub on
+2026-08-19 and must not be used or redistributed. The v1.0.2 tag, Release,
+source archives, and historical record remain. The release is not published to
+PyPI.
 
 The local v1.0.3 offline candidate is not a final or public release artifact.
 The human-reported installation and GUI-startup checks passed, but the verified
 uninstaller was blocked by behavior-based endpoint protection. The v1.0.3
-GitHub Release will therefore omit the offline ZIP. No candidate path,
+GitHub Release therefore omits the offline ZIP. No candidate path,
 checksum, size, endpoint-product detail, or local cleanup target is recorded in
 the repository. The relevant installer and uninstaller files are unchanged
-from the v1.0.2 tag, so the v1.0.2 custom ZIP is also being withdrawn. Endpoint
-protection must not be disabled and system PowerShell must not be excluded as a
-workaround. The offline builder and its existing runtime contract remain
-unchanged for maintainer evaluation; publication of a future offline asset
-requires separate review and a complete successful exact-HEAD lifecycle check.
+from the v1.0.2 tag, so the v1.0.2 custom ZIP was also withdrawn and removed.
+Endpoint protection must not be disabled and system PowerShell must not be
+excluded as a workaround. The offline builder and its existing runtime contract
+remain unchanged for maintainer evaluation; publication of a future offline
+asset requires separate review and a complete successful exact-HEAD lifecycle
+check.
 
 The reviewed post-release `main` baseline contains the MLCX patient-axis
 reflection correction from pull request #44 and the collimator-direction
 correction from pull request #47. Prepared-workspace geometry provenance is
 now `dicomxphits_iec_gantry_mlcx_collimator_geometry_v4`, and all pre-v4 PHITS
 transport evidence is rejected. Neither correction is contained in the
-`v1.0.2` tag or its published offline ZIP; those release artifacts remain
-bound to the exact release commit and manifest recorded above.
+`v1.0.2` tag or its formerly published offline ZIP. The v1.0.2 tag and
+historical artifact record remain bound to the exact release commit and
+manifest recorded above.
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,
@@ -172,7 +184,7 @@ public-tree audit passes 138 tracked files.
 
 The following chronology is retained as historical evidence. Its references to
 then-current specification counts and active changes are superseded by the
-v1.0.2 current baseline and release closeout above.
+v1.0.3 current baseline and release closeout above.
 
 The completion state for pull request #8 was validated locally on Windows
 with:
@@ -379,16 +391,14 @@ paragraph records the earlier boundary rather than the current OpenSpec state.
 ## Human-decision queue
 
 The human approved v1.0.3 release preparation after reporting the bounded GUI
-release gate passed. The release-preparation pull request remains to be
-reviewed and merged. The human subsequently approved publishing v1.0.3 without
-an offline ZIP asset after the candidate's verified uninstall was blocked by
-endpoint protection and approved withdrawing the v1.0.2 custom offline ZIP.
-Manual removal of that existing GitHub asset remains pending. Pull-request
-merge, tag creation, GitHub Release publication, and branch deletion each
-remain separate human decisions. No v1.0.3 offline asset upload is planned. No
-active OpenSpec change or new runtime implementation is authorized. Any new
-capability, public-scope change, physics, geometry, dose, MU, machine-model,
-DICOM, or clinical claim requires a separate human-approved task.
+release gate passed. Pull request #48 was reviewed and merged. The human then
+separately approved the v1.0.3 tag, GitHub Release publication without an
+offline ZIP asset, removal of the v1.0.2 custom offline ZIP, and local and
+remote release-preparation branch deletion. Those release steps are complete;
+no v1.0.3 offline asset was uploaded. No active OpenSpec change or new runtime
+implementation is authorized. Any new capability, public-scope change,
+physics, geometry, dose, MU, machine-model, DICOM, or clinical claim requires a
+separate human-approved task.
 
 The human operator subsequently reported completion and visual acceptance of
 the planned external per-field MLC comparison. A separate non-patient,
@@ -408,10 +418,12 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, branch, clean status, remote, recent history,
    and tags before making changes.
-3. Confirm that `main` contains release commit
-   `efb0dace568fbcb12019f3d320a468dcfb446e34` or a later reviewed descendant,
-   and that annotated tag `v1.0.2` still dereferences to that exact commit.
+3. Confirm that `main` contains v1.0.3 release commit
+   `63dea40cdbced8c85d0d50c8f92aeb513ff78622`, that annotated tag `v1.0.3`
+   dereferences to that exact commit, and that historical tag `v1.0.2` still
+   dereferences to `efb0dace568fbcb12019f3d320a468dcfb446e34`.
 4. Read this document, the
+   [v1.0.3 release notes](release-notes-v1.0.3.md), the
    [v1.0.2 release closeout](development-handoff-2026-08-15-v1.0.2.md), the
    [2026-08-17 development handoff](development-handoff-2026-08-17.md), and
    [2026-08-18 development handoff](development-handoff-2026-08-18.md), then

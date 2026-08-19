@@ -9,13 +9,14 @@ certification software.
 
 ## Current Public Release
 
-- The current public release is `v1.0.2`, tagged at commit
-  `efb0dace568fbcb12019f3d320a468dcfb446e34`.
-- The published Windows offline asset is bound to that exact manifest source
-  commit and is documented in `docs/release-notes-v1.0.2.md`.
+- The current public release is `v1.0.3`, tagged at commit
+  `63dea40cdbced8c85d0d50c8f92aeb513ff78622`.
+- No custom Windows offline asset is published for v1.0.3. The v1.0.2 custom
+  offline asset was withdrawn and removed; its historical identity remains
+  documented in `docs/release-notes-v1.0.2.md`.
 - Release publication does not expand the normative public scope below. The
   accepted contracts remain under `openspec/specs/`, and no active OpenSpec
-  change remains after the v1.0.2 closeout.
+  change remains after the v1.0.3 closeout.
 
 ## Technology
 

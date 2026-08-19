@@ -58,7 +58,7 @@ Guide](gui-user-guide.md), [workflow stage guide](workflow_stages.md), and
 
 ## Windows offline release asset
 
-The v1.0.3 GitHub Release will not include a Windows offline ZIP. A local
+The v1.0.3 GitHub Release does not include a Windows offline ZIP. A local
 candidate passed the bounded human installation and GUI-startup checks, but
 behavior-based endpoint protection blocked the verified uninstaller. Because
 the complete lifecycle did not pass, that candidate is not a final release
@@ -67,7 +67,7 @@ Its local path, checksum, size, and endpoint-product details are intentionally
 not published here.
 
 The relevant installer and uninstaller implementation is unchanged from the
-v1.0.2 tag. The v1.0.2 custom offline ZIP is therefore also being withdrawn;
+v1.0.2 tag. The v1.0.2 custom offline ZIP was therefore withdrawn and removed;
 its tag, GitHub Release, source archives, and historical integrity record are
 retained.
 
@@ -77,5 +77,3 @@ disable endpoint protection or exclude system PowerShell as a workaround. A
 future public offline asset requires separate review and a newly built
 exact-HEAD candidate that passes installation, GUI startup, and verified
 uninstallation under the intended endpoint protection environment.
-
-No v1.0.3 tag or GitHub Release is created by this preparation change.

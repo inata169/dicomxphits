@@ -26,12 +26,11 @@ starts a PHITS calculation.
 There is no currently supported public Windows offline bundle. The custom
 `dicomxphits-offline-win64-1.0.2.zip` asset from the
 [v1.0.2 GitHub Release](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
-is being withdrawn after a later candidate using the same relevant installer
-and uninstaller implementation exposed a behavior-based endpoint-protection
-failure during verified uninstallation. Do not download, install, or continue
-to distribute that custom ZIP even if it remains temporarily visible while
-manual removal is pending. Do not disable endpoint protection or exclude
-system PowerShell as a workaround.
+was withdrawn and removed after a later candidate using the same relevant
+installer and uninstaller implementation exposed a behavior-based
+endpoint-protection failure during verified uninstallation. Do not download,
+install, or continue to distribute a retained copy of that custom ZIP. Do not
+disable endpoint protection or exclude system PowerShell as a workaround.
 
 The following values are retained only as the historical identity of the
 withdrawn v1.0.2 asset, not as download instructions:
