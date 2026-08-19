@@ -25,10 +25,10 @@ GPR-comparingは、利用者が正規に取得して別途導入する外部ツ�
 [v1.0.2 GitHub Release](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
 のcustom asset `dicomxphits-offline-win64-1.0.2.zip`は、同じ関連installer・
 uninstaller実装を使う後続candidateのverified uninstallがbehavior-based
-endpoint protectionに阻止されたため、withdrawal対象です。人間による削除待ちの間に
-assetが一時的に表示されていても、download、install、再配布しないでください。
-回避策としてendpoint protectionを停止したり、system PowerShellを除外したり
-しないでください。
+endpoint protectionに阻止されたため、withdrawしてGitHubから削除しました。保持されて
+いるcustom ZIPのcopyをdownload元として案内したり、install、再配布したりしないで
+ください。回避策としてendpoint protectionを停止したり、system PowerShellを除外
+したりしないでください。
 
 次の値は、withdrawn v1.0.2 assetのhistorical identityとしてのみ保持します。
 download手順ではありません。

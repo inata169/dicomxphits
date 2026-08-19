@@ -81,7 +81,7 @@ def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
         == "human_reported_failed_endpoint_security_blocked"
     )
     assert offline["final_artifact_confirmed"] is False
-    assert offline["github_release_published"] is False
+    assert offline["github_release_published"] is True
     assert offline["release_asset_uploaded"] is False
     assert offline["endpoint_protection_disable_or_exclusion_recommended"] is False
 
@@ -149,6 +149,10 @@ def test_public_offline_guides_match_withdrawal_policy() -> None:
     prior_release_notes = (ROOT / "docs" / "release-notes-v1.0.2.md").read_text(
         encoding="utf-8-sig"
     )
+    project = (ROOT / "openspec" / "project.md").read_text(encoding="utf-8-sig")
+    status = (ROOT / "docs" / "project-status.md").read_text(
+        encoding="utf-8-sig"
+    )
 
     assert "For controlled maintainer evaluation only" in readme
     assert "no currently supported public Windows offline bundle" in english
@@ -156,4 +160,10 @@ def test_public_offline_guides_match_withdrawal_policy() -> None:
     assert "現在、supported public Windows offline bundleはありません" in japanese
     assert "maintainer evaluation" in japanese
     assert "Do not install or upgrade from the withdrawn" in prior_release_notes
-    assert "will not include a Windows offline ZIP" in release_notes
+    assert "does not include a Windows offline ZIP" in release_notes
+    assert "The current public release is\n[`v1.0.3`]" in readme
+    assert "The current public release is `v1.0.3`" in project
+    assert "- Public release: [`v1.0.3`]" in status
+    assert "manual GitHub removal pending" not in status
+    assert "tag and GitHub Release are not yet created" not in status
+    assert "No v1.0.3 tag or GitHub Release is created" not in release_notes

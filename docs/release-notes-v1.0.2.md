@@ -64,14 +64,13 @@ Guide](windows-offline-installation.md).
 
 ## Windows offline release asset
 
-> **Withdrawal notice:** The custom Windows offline ZIP is being withdrawn and
-> should not be used, even if it remains temporarily visible while manual
-> removal is pending. A later candidate using the same relevant installer and
-> uninstaller implementation exposed a behavior-based endpoint-protection
-> failure during verified uninstallation. Do not disable endpoint protection
-> or exclude system PowerShell as a workaround. The v1.0.2 tag, GitHub Release,
-> source archives, and the historical identity and validation record below are
-> retained.
+> **Withdrawal notice:** The custom Windows offline ZIP was withdrawn and
+> removed from GitHub and must not be used or redistributed. A later candidate
+> using the same relevant installer and uninstaller implementation exposed a
+> behavior-based endpoint-protection failure during verified uninstallation.
+> Do not disable endpoint protection or exclude system PowerShell as a
+> workaround. The v1.0.2 tag, GitHub Release, source archives, and the historical
+> identity and validation record below are retained.
 
 - File: `dicomxphits-offline-win64-1.0.2.zip`
 - SHA-256: `6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217`

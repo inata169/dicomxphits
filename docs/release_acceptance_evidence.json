@@ -81,7 +81,7 @@
     "verified_uninstall": "human_reported_failed_endpoint_security_blocked",
     "uninstall_launch_method": "verified_uninstall_entry_point",
     "final_artifact_confirmed": false,
-    "github_release_published": false,
+    "github_release_published": true,
     "release_asset_uploaded": false,
     "endpoint_protection_disable_or_exclusion_recommended": false,
     "agent_external_tool_execution_performed": false,

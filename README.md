@@ -24,10 +24,11 @@ GPR-comparing handoff. See the [v1.0.3 release notes](docs/release-notes-v1.0.3.
 for the changes since v1.0.2.
 
 The current public release is
-[`v1.0.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2). Its
-custom Windows offline ZIP is being withdrawn after a later endpoint-protection
-compatibility failure and should not be used. The tag, GitHub Release, source
-archives, and historical artifact identity remain recorded in the
+[`v1.0.3`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.3). It is
+published without a custom Windows offline ZIP. The v1.0.2 custom offline ZIP
+was withdrawn and removed after a later endpoint-protection compatibility
+failure and should not be used. The v1.0.2 tag, GitHub Release, source archives,
+and historical artifact identity remain recorded in its
 [release notes](docs/release-notes-v1.0.2.md).
 
 ## Supported Environment
@@ -87,17 +88,17 @@ For the complete v1.0.x walkthrough, see the
 
 ## Windows Offline Installation
 
-The v1.0.3 GitHub Release will not include a public Windows offline ZIP. A
+The v1.0.3 GitHub Release does not include a public Windows offline ZIP. A
 locally built v1.0.3 bundle passed bounded human installation and GUI-startup
 checks, but behavior-based endpoint protection blocked the verified
 uninstaller. The candidate was therefore not accepted as a public release
 asset. Do not disable endpoint protection or exclude system PowerShell to work
 around this limitation.
 
-The v1.0.2 custom offline ZIP uses the same relevant installer and uninstaller
-implementation and is also being withdrawn. The v1.0.2 tag, GitHub Release,
-and source archives remain available, but the custom ZIP should not be used
-even if it is still temporarily visible while manual removal is pending.
+The v1.0.2 custom offline ZIP used the same relevant installer and uninstaller
+implementation and was withdrawn and removed from its GitHub Release. The
+v1.0.2 tag, GitHub Release, and source archives remain available, but the custom
+ZIP should not be used or redistributed.
 
 The repository retains the bundle builder for maintainer evaluation; its
 output is not a v1.0.3 public release artifact. A future public offline asset
