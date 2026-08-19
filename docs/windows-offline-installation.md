@@ -48,6 +48,19 @@ requires separate review and a complete successful exact-HEAD installation,
 GUI-startup, and verified-uninstall lifecycle under the intended endpoint
 protection environment.
 
+A human maintainer may retain a locally generated candidate under facility
+control, but it remains unpublished and is neither a supported public asset nor
+an end-user distribution. Exceptional manual removal after endpoint protection
+has terminally blocked the verified uninstaller is a facility-administered
+local recovery, not a replacement public uninstall path. A concrete command
+checklist may be retained locally only as the specifically Git-ignored
+`docs/local-offline-manual-uninstall.ja.md`. It requires an exact receipt-to-
+bundle-root identity match and forbids disabling endpoint protection or
+removing a shared parent, another installation, GUI settings, a workspace,
+DICOM, external tools, or calculation results. If detached cleanup exists or
+its outcome is indeterminate, do not perform manual deletion; preserve the
+evidence and follow the verified-uninstall guidance below.
+
 ## Create an evaluation bundle on an online computer (maintainers only)
 
 Use an internet-connected Windows 10/11 x64 computer with:

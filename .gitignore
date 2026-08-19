@@ -13,5 +13,6 @@ dist/
 .coverage
 htmlcov/
 design-qa.md
+docs/local-offline-manual-uninstall.ja.md
 .env
 .env.*
