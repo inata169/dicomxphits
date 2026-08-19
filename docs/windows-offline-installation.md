@@ -21,22 +21,35 @@ local settings, private-repository material, credentials, personal
 information, and facility information are also excluded. The installer never
 starts a PHITS calculation.
 
-## Download the current release bundle
+## Public bundle withdrawal
 
-The verified Windows bundle is published with
-[v1.0.2](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2) as
-`dicomxphits-offline-win64-1.0.2.zip`. Before extraction, verify its SHA-256:
+There is no currently supported public Windows offline bundle. The custom
+`dicomxphits-offline-win64-1.0.2.zip` asset from the
+[v1.0.2 GitHub Release](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
+is being withdrawn after a later candidate using the same relevant installer
+and uninstaller implementation exposed a behavior-based endpoint-protection
+failure during verified uninstallation. Do not download, install, or continue
+to distribute that custom ZIP even if it remains temporarily visible while
+manual removal is pending. Do not disable endpoint protection or exclude
+system PowerShell as a workaround.
+
+The following values are retained only as the historical identity of the
+withdrawn v1.0.2 asset, not as download instructions:
 
 ```text
 6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217
 ```
 
-The release asset was built from manifest source HEAD
+The historical asset was built from manifest source HEAD
 `efb0dace568fbcb12019f3d320a468dcfb446e34`. The following build procedure is
-for producing a reviewed replacement bundle, not for changing the published
-asset in place.
+retained for maintainer evaluation and future compatibility work only. Its
+output is not a public release artifact and must not be represented or
+distributed as a supported replacement bundle. A future public offline asset
+requires separate review and a complete successful exact-HEAD installation,
+GUI-startup, and verified-uninstall lifecycle under the intended endpoint
+protection environment.
 
-## Create the USB bundle on an online computer
+## Create an evaluation bundle on an online computer (maintainers only)
 
 Use an internet-connected Windows 10/11 x64 computer with:
 
@@ -87,11 +100,16 @@ confirming that the existing generated ZIP may be replaced. `dist/`, downloaded
 runtime sources, wheels, and staging files are ignored and must not be
 committed.
 
-Copy the completed ZIP to the USB storage. Keep the ZIP SHA-256 printed by the
-preparation script as transfer evidence if your organization has a controlled
-media process.
+For bounded maintainer testing, copy the completed ZIP only through the
+organization's controlled-media process and retain the SHA-256 printed by the
+preparation script as transfer evidence. This does not make the ZIP a public or
+supported release asset.
 
-## Install on the offline computer: three steps
+## Maintainer evaluation on the offline computer: three steps
+
+The remaining installation and uninstallation procedure is retained for
+controlled maintainer evaluation and future revalidation. It is not an
+end-user installation procedure for a currently supported public bundle.
 
 1. Copy the ZIP from USB to a writable folder on a local disk and extract it
    completely. Do not open files inside the ZIP and do not use the USB folder
@@ -178,7 +196,7 @@ from a terminal whose current directory is outside that folder. For example:
 
 ```powershell
 Set-Location D:\
-& "D:\path\to\dicomxphits-offline-win64-1.0.2\uninstall_offline.cmd"
+& "D:\path\to\dicomxphits-offline-win64-<version>\uninstall_offline.cmd"
 ```
 
 After the local verification succeeds, type the exact confirmation word

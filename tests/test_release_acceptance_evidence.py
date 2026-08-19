@@ -133,3 +133,21 @@ def test_acceptance_evidence_contains_no_private_absolute_paths_or_uids() -> Non
     assert "DICOM/" not in text
     assert "1.2.840." not in text
     assert "C:\\" not in text
+
+
+def test_public_offline_guides_match_withdrawal_policy() -> None:
+    english = (ROOT / "docs" / "windows-offline-installation.md").read_text(
+        encoding="utf-8-sig"
+    )
+    japanese = (ROOT / "docs" / "windows-offline-installation.ja.md").read_text(
+        encoding="utf-8-sig"
+    )
+    release_notes = (ROOT / "docs" / "release-notes-v1.0.3.md").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "no currently supported public Windows offline bundle" in english
+    assert "maintainer evaluation" in english
+    assert "現在、supported public Windows offline bundleはありません" in japanese
+    assert "maintainer evaluation" in japanese
+    assert "will not include a Windows offline ZIP" in release_notes

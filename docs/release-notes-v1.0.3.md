@@ -24,9 +24,11 @@ The public automated suite uses synthetic or mock inputs and does not execute
 PHITS, RT-PHITS, CT2PHITS, Sumtally, `phits2dicom`, external GPR software, or
 real DICOM. The human operator reported completion of the bounded external GUI
 workflow through the GPR visual-comparison stage and marked the v1.0.3 GUI
-release gate as passed. The repository does not contain or assess the external
-workspace, DICOM, images, numerical values, comparison results, or generated
-outputs.
+release gate as passed. The repository does not contain, duplicate, or
+independently assess the external workspace, DICOM, images, numerical values,
+comparison results, or generated outputs. The durable boundary for the
+human-reported visual acceptance remains in the
+[project status](project-status.md).
 
 This evidence is a bounded human release decision for education-and-research
 software. It is not clinical validation, commissioning, patient QA, vendor
