@@ -50,7 +50,7 @@ def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
     assert evidence["water_regression"]["new_result_claimed"] is False
     assert evidence["voxel_regression"]["status"] == "approved_knowledge_based_reuse"
     assert evidence["multi_beam_regression"]["status"] == "approved_knowledge_based_reuse"
-    assert evidence["target_release"] == "v1.0.2"
+    assert evidence["target_release"] == "v1.0.3"
     gpr = evidence["gpr_regression"]
     assert gpr["status"] == "historical_v1.0.0_evidence_only"
     assert gpr["historical_release"] == "v1.0.0"
@@ -59,12 +59,31 @@ def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
 
     manual = evidence["target_release_external_manual_check"]
     assert manual["status"] == "human_reported_complete_untracked"
+    assert manual["release_gate_status"] == "passed"
     assert manual["agent_result_file_inspected"] is False
     assert manual["numerical_result_recorded"] is False
     assert manual["result_file_recorded"] is False
+    assert manual["image_recorded"] is False
     assert manual["absolute_path_recorded"] is False
     assert manual["dicom_recorded"] is False
     assert "external_gpr_comparison" in manual["workflow_stages_completed"]
+
+    offline = evidence["target_release_offline_bundle_check"]
+    assert offline["status"] == "withheld_from_public_release"
+    assert offline["publication_policy"] == "no_public_offline_asset"
+    assert offline["artifact_name"] is None
+    assert offline["artifact_sha256"] is None
+    assert offline["manifest_source_head"] is None
+    assert offline["installation"] == "human_reported_passed"
+    assert offline["gui_launch"] == "human_reported_passed"
+    assert (
+        offline["verified_uninstall"]
+        == "human_reported_failed_endpoint_security_blocked"
+    )
+    assert offline["final_artifact_confirmed"] is False
+    assert offline["github_release_published"] is False
+    assert offline["release_asset_uploaded"] is False
+    assert offline["endpoint_protection_disable_or_exclusion_recommended"] is False
 
 
 def test_beam6_controls_map_approved_evidence_to_current_public_classifier() -> None:
@@ -114,3 +133,27 @@ def test_acceptance_evidence_contains_no_private_absolute_paths_or_uids() -> Non
     assert "DICOM/" not in text
     assert "1.2.840." not in text
     assert "C:\\" not in text
+
+
+def test_public_offline_guides_match_withdrawal_policy() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8-sig")
+    english = (ROOT / "docs" / "windows-offline-installation.md").read_text(
+        encoding="utf-8-sig"
+    )
+    japanese = (ROOT / "docs" / "windows-offline-installation.ja.md").read_text(
+        encoding="utf-8-sig"
+    )
+    release_notes = (ROOT / "docs" / "release-notes-v1.0.3.md").read_text(
+        encoding="utf-8-sig"
+    )
+    prior_release_notes = (ROOT / "docs" / "release-notes-v1.0.2.md").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "For controlled maintainer evaluation only" in readme
+    assert "no currently supported public Windows offline bundle" in english
+    assert "maintainer evaluation" in english
+    assert "現在、supported public Windows offline bundleはありません" in japanese
+    assert "maintainer evaluation" in japanese
+    assert "Do not install or upgrade from the withdrawn" in prior_release_notes
+    assert "will not include a Windows offline ZIP" in release_notes

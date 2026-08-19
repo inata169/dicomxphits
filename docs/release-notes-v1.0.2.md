@@ -50,11 +50,13 @@ general dose-accuracy claim.
 
 ## Upgrade
 
-Build or install v1.0.2 from one exact verified source or release artifact. The
-Windows offline installer can replace the matching verified runtime for the
-same extracted bundle location, while the verified uninstaller removes only
-that exact installation. Preserve case folders, external tools, and per-user
-GUI settings outside the extraction root.
+Do not install or upgrade from the withdrawn v1.0.2 custom offline ZIP. The
+v1.0.2 tag and source archives remain available for the documented
+education-and-research source workflow. The offline install, replacement, and
+verified-uninstall lifecycle described by this historical release is retained
+only for controlled maintainer evaluation and future compatibility work; it is
+not a current end-user release path. Preserve case folders, external tools, and
+per-user GUI settings outside any evaluation extraction root.
 
 For installation and operation, see the [README](../README.md), [GUI User
 Guide](gui-user-guide.md), and [Windows Offline Installation
@@ -62,13 +64,25 @@ Guide](windows-offline-installation.md).
 
 ## Windows offline release asset
 
+> **Withdrawal notice:** The custom Windows offline ZIP is being withdrawn and
+> should not be used, even if it remains temporarily visible while manual
+> removal is pending. A later candidate using the same relevant installer and
+> uninstaller implementation exposed a behavior-based endpoint-protection
+> failure during verified uninstallation. Do not disable endpoint protection
+> or exclude system PowerShell as a workaround. The v1.0.2 tag, GitHub Release,
+> source archives, and the historical identity and validation record below are
+> retained.
+
 - File: `dicomxphits-offline-win64-1.0.2.zip`
 - SHA-256: `6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217`
 - Size: `36,937,317 bytes`
 - Manifest source HEAD: `efb0dace568fbcb12019f3d320a468dcfb446e34`
 
-The published asset is available from the
+The asset was originally published with the
 [v1.0.2 GitHub Release](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2).
 GitHub's uploaded-asset digest and size matched the independently validated
 local artifact. ZIP CRC, duplicate-name protection, manifest inventory,
-per-file size and SHA-256, and `SHA256SUMS.txt` binding checks passed.
+per-file size and SHA-256, and `SHA256SUMS.txt` binding checks passed. Those
+historical integrity checks do not override the later endpoint-protection
+compatibility failure or make the custom ZIP suitable for continued public
+distribution.

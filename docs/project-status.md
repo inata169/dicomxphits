@@ -36,10 +36,13 @@ post-merge stopping boundary, see the
 
 - Public release: [`v1.0.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
 - Previous public release: `v1.0.1`
+- Release target: `v1.0.3` (release preparation in progress; not yet tagged or
+  published)
 - Public workflow scope: documented fixed-field 3D-CRT
 - Release tag and commit: `v1.0.2` at
   `efb0dace568fbcb12019f3d320a468dcfb446e34` (2026-08-15)
-- Published custom asset: `dicomxphits-offline-win64-1.0.2.zip`
+- Published custom asset: `dicomxphits-offline-win64-1.0.2.zip` (withdrawal
+  approved on 2026-08-19; manual GitHub removal pending)
 - Release asset SHA-256:
   `6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217`
 - Release asset size: `36,937,317 bytes`
@@ -51,27 +54,50 @@ post-merge stopping boundary, see the
   [#41](https://github.com/inata169/dicomxphits/pull/41), and
   [#42](https://github.com/inata169/dicomxphits/pull/42)
 - Release final merge commit: `efb0dace568fbcb12019f3d320a468dcfb446e34`
-- Reviewed post-release `main` baseline:
-  `6816b6329fef94c72a24f6f3b338ffd451689292`
+- Reviewed v1.0.3 release-preparation baseline:
+  `c509c8e6342ff0b46c9630ad98c433da164ba0a0`
 - Post-release pull requests:
   [#44](https://github.com/inata169/dicomxphits/pull/44), MLCX patient-axis
   reflection correction,
   [#45](https://github.com/inata169/dicomxphits/pull/45), public companion
   comparison documentation, and
   [#47](https://github.com/inata169/dicomxphits/pull/47), IEC collimator
-  rotation-direction correction
+  rotation-direction correction, followed by documentation integration in
+  [#46](https://github.com/inata169/dicomxphits/pull/46)
 - Human acceptance: offline installation, GUI startup, bounded external
-  workflow, and final verified uninstall reported complete
+  workflow, and final verified uninstall reported complete for v1.0.2; the
+  human operator reported the v1.0.3 GUI release gate passed on 2026-08-19
 - OpenSpec state: accepted v1.0.2 and collimator-direction changes promoted and
   archived; no active change remains
-- Status last reviewed: 2026-08-18
+- v1.0.3 offline candidate: human-reported installation and GUI startup passed,
+  but behavior-based endpoint protection blocked verified uninstallation; the
+  candidate is not accepted for public distribution
+- v1.0.3 publication state: the release is planned without an offline ZIP
+  asset; tag and GitHub Release are not yet created
+- Status last reviewed: 2026-08-19
 
-The GitHub Release publishes the verified Windows offline ZIP built from the
-exact `v1.0.2` manifest source commit. GitHub reported the asset as uploaded
-with the same SHA-256 and size as the independently validated local artifact.
-The ZIP passed duplicate-name, CRC, complete inventory, per-file size and
-SHA-256, manifest membership, and `SHA256SUMS.txt` binding checks. The release
-is not published to PyPI.
+The v1.0.2 GitHub Release initially published the verified Windows offline ZIP
+built from the exact manifest source commit. GitHub reported the asset as
+uploaded with the same SHA-256 and size as the independently validated local
+artifact. The ZIP passed duplicate-name, CRC, complete inventory, per-file size
+and SHA-256, manifest membership, and `SHA256SUMS.txt` binding checks. The human
+has since approved withdrawing only that custom asset after a later
+endpoint-protection compatibility failure; manual GitHub removal remains
+pending, and the ZIP should not be used if it is still visible. The v1.0.2 tag,
+Release, source archives, and historical record remain. The release is not
+published to PyPI.
+
+The local v1.0.3 offline candidate is not a final or public release artifact.
+The human-reported installation and GUI-startup checks passed, but the verified
+uninstaller was blocked by behavior-based endpoint protection. The v1.0.3
+GitHub Release will therefore omit the offline ZIP. No candidate path,
+checksum, size, endpoint-product detail, or local cleanup target is recorded in
+the repository. The relevant installer and uninstaller files are unchanged
+from the v1.0.2 tag, so the v1.0.2 custom ZIP is also being withdrawn. Endpoint
+protection must not be disabled and system PowerShell must not be excluded as a
+workaround. The offline builder and its existing runtime contract remain
+unchanged for maintainer evaluation; publication of a future offline asset
+requires separate review and a complete successful exact-HEAD lifecycle check.
 
 The reviewed post-release `main` baseline contains the MLCX patient-axis
 reflection correction from pull request #44 and the collimator-direction
@@ -352,8 +378,15 @@ paragraph records the earlier boundary rather than the current OpenSpec state.
 
 ## Human-decision queue
 
-No known merge-blocking defect, required v1.0.2 release action, approved
-follow-up implementation, or active OpenSpec change remains. Any new
+The human approved v1.0.3 release preparation after reporting the bounded GUI
+release gate passed. The release-preparation pull request remains to be
+reviewed and merged. The human subsequently approved publishing v1.0.3 without
+an offline ZIP asset after the candidate's verified uninstall was blocked by
+endpoint protection and approved withdrawing the v1.0.2 custom offline ZIP.
+Manual removal of that existing GitHub asset remains pending. Pull-request
+merge, tag creation, GitHub Release publication, and branch deletion each
+remain separate human decisions. No v1.0.3 offline asset upload is planned. No
+active OpenSpec change or new runtime implementation is authorized. Any new
 capability, public-scope change, physics, geometry, dose, MU, machine-model,
 DICOM, or clinical claim requires a separate human-approved task.
 

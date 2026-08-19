@@ -19,23 +19,33 @@ GPR-comparingは、利用者が正規に取得して別途導入する外部ツ�
 ローカル設定、privateリポジトリ由来ファイル、認証情報、個人情報、施設情報も
 含めません。インストーラーからPHITS計算を開始することはありません。
 
-## 現在のrelease bundleを取得する
+## 公開bundleのwithdrawal
 
-検証済みWindows bundleは
-[v1.0.2](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)に
-`dicomxphits-offline-win64-1.0.2.zip`として公開されています。展開前に
-SHA-256を確認してください。
+現在、supported public Windows offline bundleはありません。
+[v1.0.2 GitHub Release](https://github.com/inata169/dicomxphits/releases/tag/v1.0.2)
+のcustom asset `dicomxphits-offline-win64-1.0.2.zip`は、同じ関連installer・
+uninstaller実装を使う後続candidateのverified uninstallがbehavior-based
+endpoint protectionに阻止されたため、withdrawal対象です。人間による削除待ちの間に
+assetが一時的に表示されていても、download、install、再配布しないでください。
+回避策としてendpoint protectionを停止したり、system PowerShellを除外したり
+しないでください。
+
+次の値は、withdrawn v1.0.2 assetのhistorical identityとしてのみ保持します。
+download手順ではありません。
 
 ```text
 6b957e1ff236ef787d791db0921edabd18ea459a27fbe745f7c2d98979e86217
 ```
 
-release assetのmanifest source HEADは
+historical assetのmanifest source HEADは
 `efb0dace568fbcb12019f3d320a468dcfb446e34`です。以下の作成手順は、
-レビュー済みの置換bundleを生成するためのものであり、公開済みassetを
-その場で変更する手順ではありません。
+maintainer evaluationと将来のcompatibility対応のためだけに保持します。生成物は
+public release artifactではなく、supported replacement bundleとして表示・配布しては
+いけません。将来public offline assetを提供するには、別途reviewし、予定するendpoint
+protection環境で新しいexact-HEAD candidateのinstall、GUI起動、verified uninstallの
+完全なlifecycleを合格させる必要があります。
 
-## オンラインPCでUSB用ZIPを作成する
+## オンラインPCでevaluation用ZIPを作成する（maintainerのみ）
 
 インターネット接続済みWindows 10/11 64-bit PCで、次を準備します。
 
@@ -84,10 +94,14 @@ dist/dicomxphits-offline-win64-<version>.zip
 確認した場合だけ`-Force`を使用してください。`dist/`、取得したruntime source、
 wheel、作業用ファイルはGit管理対象外であり、コミットしないでください。
 
-完成したZIPをUSBストレージへコピーします。組織で媒体持込み手順がある場合は、
-作成スクリプトが表示したZIPのSHA-256も転送記録として保存してください。
+限定的なmaintainer testでは、組織の管理された媒体手順だけで完成ZIPを転送し、
+作成スクリプトが表示したSHA-256を転送記録として保存してください。これはZIPを
+publicまたはsupported release assetにするものではありません。
 
-## オフラインPCでの基本操作：3段階
+## オフラインPCでのmaintainer evaluation：3段階
+
+以下のinstall・uninstall手順は、管理されたmaintainer evaluationと将来の再検証用に
+保持しています。現在supported public bundleを対象とするend-user導入手順ではありません。
 
 1. USBからZIPをローカルディスク上の書込み可能なフォルダーへコピーし、完全に
    展開します。ZIP内のファイルを直接開いたり、USB上をeditable projectの場所に
@@ -164,7 +178,7 @@ current directoryが展開folderの外にあるterminalから、次のように�
 
 ```powershell
 Set-Location D:\
-& "D:\path\to\dicomxphits-offline-win64-1.0.2\uninstall_offline.cmd"
+& "D:\path\to\dicomxphits-offline-win64-<version>\uninstall_offline.cmd"
 ```
 
 local検証成功後、確認語`UNINSTALL`を正確に入力し、Windowsの管理者promptを承認します。
