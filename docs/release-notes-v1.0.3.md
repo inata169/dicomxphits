@@ -56,8 +56,24 @@ Guide](gui-user-guide.md), [workflow stage guide](workflow_stages.md), and
 
 ## Windows offline release asset
 
-The planned release asset is `dicomxphits-offline-win64-1.0.3.zip`. Its final
-SHA-256, size, and manifest source commit will be recorded only after the
-reviewed release-preparation pull request is merged and the exact artifact is
-independently validated. No v1.0.3 tag, GitHub Release, or final release asset
-is created by this preparation change.
+The v1.0.3 GitHub Release will not include a Windows offline ZIP. A local
+candidate passed the bounded human installation and GUI-startup checks, but
+behavior-based endpoint protection blocked the verified uninstaller. Because
+the complete lifecycle did not pass, that candidate is not a final release
+artifact and must not be uploaded or represented as a supported v1.0.3 asset.
+Its local path, checksum, size, and endpoint-product details are intentionally
+not published here.
+
+The relevant installer and uninstaller implementation is unchanged from the
+v1.0.2 tag. The v1.0.2 custom offline ZIP is therefore also being withdrawn;
+its tag, GitHub Release, source archives, and historical integrity record are
+retained.
+
+The repository retains the offline-bundle builder for maintainer evaluation,
+without changing its runtime or specification contract. Users should not
+disable endpoint protection or exclude system PowerShell as a workaround. A
+future public offline asset requires separate review and a newly built
+exact-HEAD candidate that passes installation, GUI startup, and verified
+uninstallation under the intended endpoint protection environment.
+
+No v1.0.3 tag or GitHub Release is created by this preparation change.

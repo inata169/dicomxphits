@@ -69,13 +69,21 @@ def test_water_voxel_and_gpr_evidence_records_honest_reuse_boundaries() -> None:
     assert "external_gpr_comparison" in manual["workflow_stages_completed"]
 
     offline = evidence["target_release_offline_bundle_check"]
-    assert offline["status"] == "pending_release_artifact"
-    assert offline["artifact_name"] == "dicomxphits-offline-win64-1.0.3.zip"
+    assert offline["status"] == "withheld_from_public_release"
+    assert offline["publication_policy"] == "no_public_offline_asset"
+    assert offline["artifact_name"] is None
     assert offline["artifact_sha256"] is None
     assert offline["manifest_source_head"] is None
+    assert offline["installation"] == "human_reported_passed"
+    assert offline["gui_launch"] == "human_reported_passed"
+    assert (
+        offline["verified_uninstall"]
+        == "human_reported_failed_endpoint_security_blocked"
+    )
     assert offline["final_artifact_confirmed"] is False
     assert offline["github_release_published"] is False
     assert offline["release_asset_uploaded"] is False
+    assert offline["endpoint_protection_disable_or_exclusion_recommended"] is False
 
 
 def test_beam6_controls_map_approved_evidence_to_current_public_classifier() -> None:
