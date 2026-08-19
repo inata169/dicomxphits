@@ -136,6 +136,7 @@ def test_acceptance_evidence_contains_no_private_absolute_paths_or_uids() -> Non
 
 
 def test_public_offline_guides_match_withdrawal_policy() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8-sig")
     english = (ROOT / "docs" / "windows-offline-installation.md").read_text(
         encoding="utf-8-sig"
     )
@@ -145,9 +146,14 @@ def test_public_offline_guides_match_withdrawal_policy() -> None:
     release_notes = (ROOT / "docs" / "release-notes-v1.0.3.md").read_text(
         encoding="utf-8-sig"
     )
+    prior_release_notes = (ROOT / "docs" / "release-notes-v1.0.2.md").read_text(
+        encoding="utf-8-sig"
+    )
 
+    assert "For controlled maintainer evaluation only" in readme
     assert "no currently supported public Windows offline bundle" in english
     assert "maintainer evaluation" in english
     assert "現在、supported public Windows offline bundleはありません" in japanese
     assert "maintainer evaluation" in japanese
+    assert "Do not install or upgrade from the withdrawn" in prior_release_notes
     assert "will not include a Windows offline ZIP" in release_notes

@@ -105,14 +105,15 @@ requires a newly reviewed exact-HEAD bundle and a successful complete
 install/launch/verified-uninstall lifecycle under the intended endpoint
 protection environment.
 
-For a Windows 10/11 x64 computer without internet access, an online Windows
-computer can create a USB-ready bundle with:
+For controlled maintainer evaluation only, an online Windows 10/11 x64
+computer can create a candidate bundle with:
 
 ```powershell
 .\tools\prepare_offline_bundle.ps1
 ```
 
-On the offline computer, the primary procedure is only:
+During that controlled maintainer evaluation, the offline-computer procedure
+is:
 
 1. Copy and fully extract the ZIP to a writable local-disk folder.
 2. Run `install_offline.cmd` from the extracted folder.
@@ -124,7 +125,9 @@ only to construct its authenticated Python runtime in protected storage,
 creates the repository-local `.venv`, uses only bundled wheels, verifies the required
 imports, and offers the existing GUI launcher after success. Denying elevation
 stops before Python starts. It does not bundle, discover, or run PHITS-related
-external tools. See the complete [English offline installation guide](docs/windows-offline-installation.md)
+external tools. These steps do not make the candidate a public or supported
+release asset. See the complete maintainer-evaluation boundary in the
+[English offline installation guide](docs/windows-offline-installation.md)
 or [Japanese offline installation guide](docs/windows-offline-installation.ja.md).
 The bounded 2026-08-07 human check is recorded in the
 [Windows offline installation validation record](docs/windows-offline-installation-validation-2026-08-07.md)

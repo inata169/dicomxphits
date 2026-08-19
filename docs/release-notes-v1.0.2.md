@@ -50,11 +50,13 @@ general dose-accuracy claim.
 
 ## Upgrade
 
-Build or install v1.0.2 from one exact verified source or release artifact. The
-Windows offline installer can replace the matching verified runtime for the
-same extracted bundle location, while the verified uninstaller removes only
-that exact installation. Preserve case folders, external tools, and per-user
-GUI settings outside the extraction root.
+Do not install or upgrade from the withdrawn v1.0.2 custom offline ZIP. The
+v1.0.2 tag and source archives remain available for the documented
+education-and-research source workflow. The offline install, replacement, and
+verified-uninstall lifecycle described by this historical release is retained
+only for controlled maintainer evaluation and future compatibility work; it is
+not a current end-user release path. Preserve case folders, external tools, and
+per-user GUI settings outside any evaluation extraction root.
 
 For installation and operation, see the [README](../README.md), [GUI User
 Guide](gui-user-guide.md), and [Windows Offline Installation
