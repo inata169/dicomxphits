@@ -45,6 +45,17 @@ public release artifactではなく、supported replacement bundleとして表�
 protection環境で新しいexact-HEAD candidateのinstall、GUI起動、verified uninstallの
 完全なlifecycleを合格させる必要があります。
 
+人間のmaintainerが施設管理用にローカル生成candidateを保持する場合でも、
+それは未公開であり、supported public assetやend-user向け配布物にはなりません。
+endpoint protectionがverified uninstallerを終局的に阻止した後の例外的な
+手動撤去は、施設管理者が実施するローカルrecoveryであり、公開uninstall手順の
+代替ではありません。具体的なcommand checklistはGitで特定してignoreした
+`docs/local-offline-manual-uninstall.ja.md`にのみローカル保持できます。その手順は
+receiptとbundle rootの完全一致を必須とし、endpoint protectionの停止、共有parent、
+別installation、GUI設定、workspace、DICOM、外部tool、計算結果の削除を禁止します。
+detached cleanupが存在する、または結果がindeterminateな場合は手動削除せず、
+下記のverified-uninstall手順に従ってevidenceを保持します。
+
 ## オンラインPCでevaluation用ZIPを作成する（maintainerのみ）
 
 インターネット接続済みWindows 10/11 64-bit PCで、次を準備します。

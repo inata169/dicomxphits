@@ -110,6 +110,20 @@ remain unchanged for maintainer evaluation; publication of a future offline
 asset requires separate review and a complete successful exact-HEAD lifecycle
 check.
 
+The human maintainer may retain a locally generated v1.0.3 candidate under
+facility control, but it remains unpublished, unsupported as a public asset,
+and outside the end-user installation contract. Any exceptional manual removal
+after endpoint protection has terminally blocked the verified uninstaller is a
+human-administered local recovery, not a replacement public uninstall path. A
+local command checklist may be kept only in the specifically Git-ignored
+`docs/local-offline-manual-uninstall.ja.md`; it is not tracked release
+documentation. That checklist must require exact receipt-to-bundle identity,
+must not disable endpoint protection, and must not remove shared runtime
+parents, another installation, GUI settings, workspaces, DICOM, external
+tools, or calculation results. If detached cleanup exists or its outcome is
+indeterminate, the tracked verified-uninstall guidance remains controlling:
+preserve the evidence and do not perform manual deletion.
+
 The reviewed post-release `main` baseline contains the MLCX patient-axis
 reflection correction from pull request #44 and the collimator-direction
 correction from pull request #47. Prepared-workspace geometry provenance is
