@@ -155,6 +155,7 @@ class GuiConfig:
     maxcas: int | str = DEFAULT_SEGMENT_MAXCAS
     maxbch: int | str = DEFAULT_SEGMENT_MAXBCH
     omp_threads: int | str = DEFAULT_SEGMENT_OMP_THREADS
+    calculation_config_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -416,6 +417,15 @@ def validate_stage(
                 raise GuiValidationError(
                     "machine_config_path must be an existing regular file"
                 )
+        if (
+            geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT
+            and _path_value(config, "calculation_config_path")
+        ):
+            calculation_config = _resolved_path(config, "calculation_config_path")
+            if not calculation_config.is_file():
+                raise GuiValidationError(
+                    "calculation_config_path must be an existing regular file"
+                )
 
     missing: list[str] = []
     for field_name, label, expect_dir in required_paths:
@@ -533,6 +543,16 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
                 [
                     "--machine-config-path",
                     str(_resolved_path(config, "machine_config_path")),
+                ]
+            )
+        if (
+            geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT
+            and _path_value(config, "calculation_config_path")
+        ):
+            command.extend(
+                [
+                    "--calculation-config-path",
+                    str(_resolved_path(config, "calculation_config_path")),
                 ]
             )
         if geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT:
@@ -976,6 +996,7 @@ def _base_default_values() -> dict[str, str]:
         ),
         "ct_reference_dicom": "",
         "machine_config_path": "",
+        "calculation_config_path": "",
         "ct_datfiles_root": "",
         "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
         **RUNTIME_SETTING_DEFAULTS,
@@ -1762,6 +1783,7 @@ def _build_gui() -> int:
             rtdose_template_dicom=values["rtdose_template_dicom"].get(),
             ct_reference_dicom=values["ct_reference_dicom"].get(),
             machine_config_path=values["machine_config_path"].get(),
+            calculation_config_path=values["calculation_config_path"].get(),
             geometry_mode=values["geometry_mode"].get(),
             allow_overwrite=overwrite.get(),
             ct_datfiles_root=values["ct_datfiles_root"].get(),
@@ -2651,6 +2673,14 @@ def _build_gui() -> int:
         "machine_config_path",
         directory=False,
         helper="Leave empty to use the built-in public rectangular research model.",
+    )
+    path_row(
+        workspace_frame,
+        5,
+        "Calculation config (optional)",
+        "calculation_config_path",
+        directory=False,
+        helper="Leave empty to use the legacy 101x101x101 3 mm dose tally mesh.",
     )
     runtime_frame = ttk.Frame(workspace_frame, style="Surface.TFrame")
     runtime_frame.grid(

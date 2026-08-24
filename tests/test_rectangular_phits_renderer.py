@@ -14,6 +14,7 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 import dicomxphits.rectangular_phits_renderer as renderer_module
+from dicomxphits.calculation_config import load_calculation_config
 from dicomxphits.public_spectrum import (
     PUBLIC_SPECTRUM_BIN_COUNT,
     PUBLIC_SPECTRUM_SHA256,
@@ -583,6 +584,68 @@ def test_relative_expected_output_path_is_reflected_in_t_deposit():
 
     assert "[ T-Deposit ]" in text
     assert " file = segments/seg_002/dose.out" in text
+
+
+def test_custom_calculation_config_changes_only_the_3d_tally_mesh(tmp_path):
+    config_path = tmp_path / "calculation.json"
+    config_path.write_text(
+        """{
+  "schema_version": "dicomxphits_public_calculation_config_v1",
+  "dose_tally_3d": {
+    "center_min_mm": [-1.25, -2, -3],
+    "center_max_mm": [1.25, 2, 3],
+    "voxel_size_mm": [0.25, 0.5, 1.5]
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    default_text = render_runtime()
+    custom_text = render_runtime(
+        calculation_config=load_calculation_config(config_path)
+    )
+
+    _default_prefix, default_3d, default_pdd = default_text.split(
+        "[ T-Deposit ]\n", 2
+    )
+    _custom_prefix, custom_3d, custom_pdd = custom_text.split(
+        "[ T-Deposit ]\n", 2
+    )
+    assert "[ T-Deposit ]\n" + default_3d == (
+        "[ T-Deposit ]\n"
+        " title = Public CT voxel 101x101x101 dose grid, 3 mm spacing\n"
+        " mesh = xyz\n"
+        " x-type = 2\n"
+        " xmin = -15.15\n"
+        " xmax = 15.15\n"
+        " nx = 101\n"
+        " y-type = 2\n"
+        " ymin = -15.15\n"
+        " ymax = 15.15\n"
+        " ny = 101\n"
+        " z-type = 2\n"
+        " zmin = -10.15\n"
+        " zmax = 20.15\n"
+        " nz = 101\n"
+        " unit = 0\n"
+        " material = all\n"
+        " output = dose\n"
+        " axis = xy\n"
+        " file = segments/seg_001/deposit-target-3D.out\n"
+        " part = all\n"
+        " epsout = 1\n\n"
+    )
+    assert default_pdd == custom_pdd
+    assert " title = Public CT voxel 11x9x5 dose grid, x/y/z spacing 0.25/0.5/1.5 mm" in custom_3d
+    assert " xmin = -0.1375" in custom_3d
+    assert " xmax = 0.1375" in custom_3d
+    assert " nx = 11" in custom_3d
+    assert " ymin = -0.225" in custom_3d
+    assert " ymax = 0.225" in custom_3d
+    assert " ny = 9" in custom_3d
+    assert " zmin = -0.375" in custom_3d
+    assert " zmax = 0.375" in custom_3d
+    assert " nz = 5" in custom_3d
 
 
 def test_renderer_emits_exact_approved_totfact_when_supplied():

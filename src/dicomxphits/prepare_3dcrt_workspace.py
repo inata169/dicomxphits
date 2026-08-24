@@ -12,6 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from dicomxphits.calculation_config import (
+    NormalizedCalculationConfig,
+    load_calculation_config,
+    public_default_calculation_config,
+    require_rendered_3d_mesh,
+    validate_rtdose_serialization_preflight,
+)
 from dicomxphits.ct2phits_datfiles import (
     PreparedCt2PhitsSet,
     prepare_ct2phits_assets,
@@ -472,6 +479,8 @@ def persist_rectangular_manifest_paths(
     manifest: dict[str, Any],
     prepared_segments: list[dict[str, Any]],
     manifest_path: Path,
+    calculation_geometry_sha256: str,
+    calculation_tally_geometry_sha256: str,
 ) -> None:
     active = active_segments(manifest)
     if len(active) != len(prepared_segments):
@@ -479,6 +488,10 @@ def persist_rectangular_manifest_paths(
     for segment, prepared_segment in zip(active, prepared_segments):
         segment["phits_input_path"] = prepared_segment["_public_phits_input_path"]
         segment["expected_output_path"] = prepared_segment["_public_expected_output_path"]
+        segment["calculation_geometry_sha256"] = calculation_geometry_sha256
+        segment["calculation_tally_geometry_sha256"] = (
+            calculation_tally_geometry_sha256
+        )
     write_json(manifest_path, manifest, case_root=manifest_path.parents[1])
 
 
@@ -495,11 +508,16 @@ def generate_rectangular_phits_workspace(
     maxcas: int = DEFAULT_SEGMENT_MAXCAS,
     maxbch: int = DEFAULT_SEGMENT_MAXBCH,
     omp_threads: int = DEFAULT_SEGMENT_OMP_THREADS,
+    calculation_config: NormalizedCalculationConfig | None = None,
+    calculation_rtdose_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     bind_current_gantry_geometry_contract(manifest)
     maxcas = require_positive_integer(maxcas, label="maxcas")
     maxbch = require_positive_integer(maxbch, label="maxbch")
     omp_threads = require_positive_integer(omp_threads, label="omp_threads")
+    effective_calculation_config = (
+        calculation_config or public_default_calculation_config()
+    )
     if machine_config_path is None:
         machine_config = public_default_machine_config()
         machine_config_source = "built_in_public_default"
@@ -544,9 +562,16 @@ def generate_rectangular_phits_workspace(
                     maxcas_per_batch=maxcas,
                     batches=maxbch,
                     omp_threads=omp_threads,
+                    calculation_config=(
+                        effective_calculation_config
+                        if effective_calculation_config.source == "user_supplied"
+                        else None
+                    ),
                 ),
             )
         )
+    for _segment, rendered_text in rendered_inputs:
+        require_rendered_3d_mesh(rendered_text, effective_calculation_config)
     generation_mode = RECTANGULAR_CT_GENERATION_MODE
     write_ct_rectangular_phits_inputs_atomically(
         case_root=case_root,
@@ -558,6 +583,12 @@ def generate_rectangular_phits_workspace(
             manifest=manifest,
             prepared_segments=prepared_segments,
             manifest_path=manifest_path,
+            calculation_geometry_sha256=(
+                effective_calculation_config.semantic_sha256
+            ),
+            calculation_tally_geometry_sha256=(
+                effective_calculation_config.tally_geometry_sha256()
+            ),
         )
 
     summary = {
@@ -568,6 +599,9 @@ def generate_rectangular_phits_workspace(
         "generation_mode": generation_mode,
         GANTRY_GEOMETRY_CONTRACT_FIELD: CURRENT_GANTRY_GEOMETRY_CONTRACT,
         "machine_config_source": machine_config_source,
+        "calculation_config": effective_calculation_config.evidence(
+            rtdose_preflight=calculation_rtdose_preflight,
+        ),
         "segment_runtime": {
             "maxcas": maxcas,
             "maxbch": maxbch,
@@ -659,6 +693,7 @@ def prepare_public_3dcrt_workspace(
     expected_output_name: str = DEFAULT_EXPECTED_OUTPUT_NAME,
     geometry_mode: str = GEOMETRY_MODE_RECTANGULAR_3DCRT,
     machine_config_path: Path | None = None,
+    calculation_config_path: Path | None = None,
     apply_approved_totfact: bool = True,
     ct_datfiles_root: Path | None = None,
     ct_reference_dicom: Path | None = None,
@@ -672,6 +707,11 @@ def prepare_public_3dcrt_workspace(
     omp_threads = require_positive_integer(omp_threads, label="omp_threads")
     validate_geometry_mode_args(geometry_mode=geometry_mode, machine_config_path=machine_config_path)
     require_tool_paths(paths, geometry_mode=geometry_mode)
+    calculation_config = (
+        public_default_calculation_config()
+        if calculation_config_path is None
+        else load_calculation_config(calculation_config_path)
+    )
     if geometry_mode == GEOMETRY_MODE_RECTANGULAR_3DCRT:
         if ct_datfiles_root is None:
             raise ValueError(
@@ -702,6 +742,13 @@ def prepare_public_3dcrt_workspace(
             output_root=Path(temp_dir) / "prepared",
             confirmed_non_patient_phantom=confirmed_non_patient_phantom,
         )
+        calculation_rtdose_preflight = validate_rtdose_serialization_preflight(
+            calculation_config,
+            rtplan_isocenter_dicom_mm=tuple(
+                value * 10.0
+                for value in ct_preparation.rtplan_isocenter_dicom_cm
+            ),
+        )
         manifest, manifest_path = export_segment_manifest(
             rtplan_path=rtplan_path,
             case_root=workspace_root,
@@ -726,6 +773,8 @@ def prepare_public_3dcrt_workspace(
             maxcas=maxcas,
             maxbch=maxbch,
             omp_threads=omp_threads,
+            calculation_config=calculation_config,
+            calculation_rtdose_preflight=calculation_rtdose_preflight,
         )
     rtplan_summary_path = rtplan_path.name
     workspace_summary_path = "."
@@ -768,6 +817,7 @@ def prepare_public_3dcrt_workspace(
             "omp_threads": omp_threads,
             "omp_directive": f"$OMP = {omp_threads}",
         },
+        "calculation_config": phits_summary["calculation_config"],
         "phits_generation": phits_summary,
         "phits_execution_performed": False,
     }
@@ -813,6 +863,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=GEOMETRY_MODE_RECTANGULAR_3DCRT,
     )
     parser.add_argument("--machine-config-path", default=None)
+    parser.add_argument("--calculation-config-path", default=None)
     parser.add_argument(
         "--ct-datfiles-root",
         default=None,
@@ -864,6 +915,11 @@ def main(argv: list[str] | None = None) -> int:
             expected_output_name=args.expected_output_name,
             geometry_mode=args.geometry_mode,
             machine_config_path=Path(args.machine_config_path) if args.machine_config_path else None,
+            calculation_config_path=(
+                Path(args.calculation_config_path)
+                if args.calculation_config_path
+                else None
+            ),
             apply_approved_totfact=not args.relative_dose_only,
             ct_datfiles_root=(
                 Path(args.ct_datfiles_root)

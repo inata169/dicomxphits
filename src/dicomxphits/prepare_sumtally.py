@@ -284,6 +284,30 @@ def validate_manifest_for_sumtally(manifest: dict[str, Any]) -> dict[str, Any]:
     return gate
 
 
+def validate_calculation_tally_geometry_binding(
+    manifest: dict[str, Any],
+    tally_geometry_binding: dict[str, Any],
+) -> str | None:
+    active = active_segments(manifest)
+    recorded = [
+        str(segment.get("calculation_tally_geometry_sha256") or "")
+        for segment in active
+    ]
+    if not any(recorded):
+        return None
+    if any(not value for value in recorded) or len(set(recorded)) != 1:
+        raise ValueError(
+            "active segments have missing or inconsistent prepared calculation geometry bindings"
+        )
+    expected = recorded[0]
+    actual = str(tally_geometry_binding.get("mesh_geometry_sha256") or "")
+    if actual != expected:
+        raise ValueError(
+            "actual segment tally geometry does not match the prepared calculation geometry"
+        )
+    return expected
+
+
 def resolve_phits_include_path(path_value: str, *, execution_cwd: Path) -> Path:
     path = Path(path_value)
     if not path.is_absolute():
@@ -514,6 +538,12 @@ def generate_sumtally(
         tally_geometry_binding = segment_tally_geometry_binding(
             expected_segment_outputs(workspace_root, manifest)
         )
+        calculation_tally_geometry_sha256 = (
+            validate_calculation_tally_geometry_binding(
+                manifest,
+                tally_geometry_binding,
+            )
+        )
         wrapper_include_evidence = file_digest_evidence(
             transitive_phits_include_paths(
                 sum_input_path,
@@ -542,6 +572,9 @@ def generate_sumtally(
             "sumtally_input_sha256": sumtally_input_sha256,
             "segment_output_evidence": segment_output_evidence,
             "tally_geometry_binding": tally_geometry_binding,
+            "calculation_tally_geometry_sha256": (
+                calculation_tally_geometry_sha256
+            ),
             "wrapper_include_evidence": wrapper_include_evidence,
             "path_config": {
                 "phits_root_folder": paths.phits_root_folder,

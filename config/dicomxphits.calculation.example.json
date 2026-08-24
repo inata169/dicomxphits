@@ -1,0 +1,9 @@
+{
+  "$schema": "dicomxphits.calculation.schema.json",
+  "schema_version": "dicomxphits_public_calculation_config_v1",
+  "dose_tally_3d": {
+    "center_min_mm": [-150, -150, -100],
+    "center_max_mm": [150, 150, 200],
+    "voxel_size_mm": [3, 3, 3]
+  }
+}

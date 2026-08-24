@@ -116,6 +116,7 @@ dicomxphits-prepare-3dcrt-workspace `
   --maxcas 1000000 `
   --maxbch 10 `
   --omp-threads 8 `
+  --calculation-config-path "C:\outside-repo\calculation.json" `
   --ct-datfiles-root $CtDatfilesRoot `
   --ct-reference-dicom $CtReferenceDicom `
   --confirm-non-patient-phantom
@@ -127,6 +128,14 @@ vendor dataset, facility geometry/calibration input, or original IAEA
 phase-space/header file. The licensed PHITS installation is the only default
 external software prerequisite; the confirmed non-patient CT2PHITS raw
 `DATfiles` and CT reference are a separate input-data requirement.
+
+The shown `--calculation-config-path` is optional; omit that line for the
+legacy 101 x 101 x 101, 3 mm 3D tally. A supplied file follows the inclusive
+voxel-centre schema and limits in
+[Calculation Configuration](calculation-configuration.md), applies identically
+to every active segment, and does not change the PDD tally. Actual PHITS and
+Sumtally output meshes remain the downstream authority. Keep this optional
+research configuration outside the repository along with other local inputs.
 
 Run all generated active segments with the public runner:
 

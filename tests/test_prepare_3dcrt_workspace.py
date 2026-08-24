@@ -123,6 +123,24 @@ def write_machine_config(tmp_path, config=None):
     return path
 
 
+def write_calculation_config(tmp_path, *, name="calculation config.json"):
+    path = tmp_path / name
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dicomxphits_public_calculation_config_v1",
+                "dose_tally_3d": {
+                    "center_min_mm": [-1.25, -2, -3],
+                    "center_max_mm": [1.25, 2, 3],
+                    "voxel_size_mm": [0.25, 0.5, 1.5],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def write_ct_assets(tmp_path, *, voxel_counts=(2, 2, 2)):
     root = tmp_path / "ct2phits_assets"
     root.mkdir()
@@ -360,6 +378,7 @@ def test_parser_exposes_geometry_mode_and_machine_config_path():
 
     assert "geometry_mode" in parser_actions
     assert "machine_config_path" in parser_actions
+    assert "calculation_config_path" in parser_actions
     assert "relative_dose_only" in parser_actions
     assert parser_actions["maxcas"].default == 1_000_000
     assert parser_actions["maxbch"].default == 10
@@ -377,6 +396,22 @@ def test_parser_exposes_geometry_mode_and_machine_config_path():
             if action.dest == "geometry_mode"
         ).choices
     ) == ("rectangular_3dcrt",)
+
+
+def test_invalid_calculation_config_fails_before_workspace_creation(tmp_path):
+    workspace = tmp_path / "workspace"
+    invalid = tmp_path / "invalid-calculation.json"
+    invalid.write_text("{", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="malformed JSON"):
+        prepare_public_3dcrt_workspace(
+            rtplan_path=tmp_path / "synthetic_rtplan.dcm",
+            workspace_root=workspace,
+            paths=complete_paths(),
+            calculation_config_path=invalid,
+        )
+
+    assert not workspace.exists()
 
 
 @pytest.mark.parametrize(
@@ -502,6 +537,13 @@ def test_rectangular_3dcrt_default_needs_no_vendor_or_iaea_runtime_input(
         encoding="utf-8"
     )
     assert generation["machine_config_source"] == "built_in_public_default"
+    assert generation["calculation_config"]["source"] == "built_in_legacy_default"
+    assert generation["calculation_config"]["source_sha256"] is None
+    assert generation["calculation_config"]["dose_tally_3d"]["counts"] == [
+        101,
+        101,
+        101,
+    ]
     assert generation["segment_runtime"] == {
         "maxcas": 1_000_000,
         "maxbch": 10,
@@ -759,6 +801,75 @@ def test_rectangular_3dcrt_writes_one_input_per_active_segment_in_manifest_order
     assert all((workspace / segment["phits_input_path"]).is_file() for segment in active_segments)
     summary_text = (workspace / "analysis" / "public_preparation_workspace_summary.json").read_text(encoding="utf-8")
     assert str(tmp_path) not in summary_text
+
+
+def test_custom_calculation_mesh_is_bound_to_every_active_segment(
+    monkeypatch,
+    tmp_path,
+):
+    manifest = manifest_with(
+        rectangular_segment(
+            segment_id="first",
+            expected_output_path="segments/first/deposit-target-3D.out",
+        ),
+        rectangular_segment(
+            segment_id="second",
+            expected_output_path="segments/second/deposit-target-3D.out",
+        ),
+    )
+    install_manifest_export(monkeypatch, manifest)
+    rtplan = tmp_path / "synthetic_rtplan.dcm"
+    rtplan.write_text("placeholder", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    calculation_path = write_calculation_config(tmp_path)
+
+    summary = prepare_public_3dcrt_workspace(
+        rtplan_path=rtplan,
+        workspace_root=workspace,
+        paths=complete_paths(),
+        machine_config_path=write_machine_config(tmp_path),
+        calculation_config_path=calculation_path,
+        apply_approved_totfact=False,
+        ct_datfiles_root=tmp_path / "DATfiles",
+        ct_reference_dicom=tmp_path / "CT.dcm",
+        confirmed_non_patient_phantom=True,
+    )
+
+    evidence = summary["calculation_config"]
+    assert evidence["source"] == "user_supplied"
+    assert evidence["source_sha256"]
+    assert evidence["dose_tally_3d"]["counts"] == [11, 9, 5]
+    assert evidence["rtdose_serialization_preflight"]["status"] == "passed"
+    digest = evidence["semantic_sha256"]
+    generated = summary["phits_generation"]["generated_phits_inputs"]
+    assert len(generated) == 2
+    for relative_path in generated:
+        text = (workspace / relative_path).read_text(encoding="utf-8")
+        _prefix, first_tally, pdd = text.split("[ T-Deposit ]\n", 2)
+        assert " xmin = -0.1375" in first_tally
+        assert " xmax = 0.1375" in first_tally
+        assert " nx = 11" in first_tally
+        assert " ymin = -0.225" in first_tally
+        assert " ymax = 0.225" in first_tally
+        assert " ny = 9" in first_tally
+        assert " zmin = -0.375" in first_tally
+        assert " zmax = 0.375" in first_tally
+        assert " nz = 5" in first_tally
+        assert " title = Public CT voxel central-axis PDD, reference depth 10 cm" in pdd
+        assert " nx = 1" in pdd
+        assert " ny = 1" in pdd
+        assert " nz = 101" in pdd
+    persisted = json.loads(
+        (workspace / "segments" / "segment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    active = [item for item in persisted["segments"] if not item.get("skip_reason")]
+    assert {item["calculation_geometry_sha256"] for item in active} == {digest}
+    assert {
+        item["calculation_tally_geometry_sha256"] for item in active
+    } == {evidence["tally_geometry_sha256"]}
+    assert str(calculation_path.resolve()) not in json.dumps(summary)
 
 
 def test_rectangular_3dcrt_ignores_inactive_segments(monkeypatch, tmp_path):
