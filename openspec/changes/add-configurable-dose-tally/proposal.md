@@ -32,9 +32,9 @@ edges such as `xmin = -15.15` or provide arbitrary PHITS tally syntax.
   configuration is supplied.
 - Reject malformed, non-finite, non-positive, non-integral-grid, unknown, or
   resource-unsafe configurations, including bounded-file or numeric-rendering
-  violations and downstream binary64 or fixed-decimal DICOM-serialization
-  incompatibility, before creating or modifying a workspace or launching
-  PHITS.
+  violations, downstream binary64 voxel-position incompatibility, or
+  fixed-decimal DICOM-serialization incompatibility, before creating or
+  modifying a workspace or launching PHITS.
 - Load one effective calculation configuration per workspace preparation and
   render the same normalized 3D mesh into every active segment.
 - Record the effective calculation source, normalized mesh, derived PHITS
@@ -65,8 +65,8 @@ edges such as `xmin = -15.15` or provide arbitrary PHITS tally syntax.
   centre-to-edge conversion, default-render regression, workspace-wide mesh
   identity, resource limits, CLI/GUI handoff, and existing Sumtally/RTDOSE
   geometry-consistency regression coverage, including compact huge-exponent
-  inputs and sub-resolution DICOM geometry, using synthetic data and fake or
-  mock runners only.
+  inputs, sub-resolution DICOM geometry, and large-offset binary64
+  cancellation, using synthetic data and fake or mock runners only.
 - Backward compatibility: omitting the calculation configuration retains the
   existing x/y/z centre ranges, `3 mm` voxel sizes, `101` bins per axis, and
   PHITS edges `[-15.15, 15.15]`, `[-15.15, 15.15]`, and

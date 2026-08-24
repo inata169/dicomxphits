@@ -104,6 +104,18 @@ The round-trip MUST preserve positive `PixelSpacing`, strictly increasing
 all three attributes. This compatibility validation MUST NOT change the
 existing DICOM serializer, coordinate transform, or geometry tolerance.
 
+Preparation MUST also construct the complete predicted RTDOSE affine through
+the existing binary64 tally-geometry, centre-generation, coordinate-mapping,
+and DICOM-serialization path. For every axis index, the voxel positions
+produced by that affine MUST match the positions obtained by applying the
+existing frozen-plan coordinate mapping to the exact decimal configured centre
+sequence within the existing `1e-6 mm` absolute tolerance. This preflight MAY
+use regular-grid equivalence to avoid allocating every three-dimensional point,
+but MUST cover every supported voxel position and MUST NOT validate only edge
+ordering or serialized geometry attributes. Failure MUST occur before
+workspace mutation or external execution and MUST NOT be hidden by a larger
+tolerance or a changed coordinate mapping.
+
 #### Scenario: Reversed or empty centre interval
 
 - **WHEN** any axis has its minimum centre greater than or equal to its maximum
@@ -161,6 +173,15 @@ existing DICOM serializer, coordinate transform, or geometry tolerance.
 - **WHEN** any mesh-dependent RTDOSE Decimal String component exceeds 16 ASCII
   characters or does not reparse as finite within the existing geometry
   contract
+- **THEN** preparation rejects the mesh before workspace mutation or external
+  execution
+
+#### Scenario: Large offset loses binary64 voxel-position precision
+
+- **WHEN** exact configured centres `100000000000` and
+  `100000000000.001` mm with `0.001` mm spacing produce a predicted binary64
+  and serialized RTDOSE affine whose voxel positions differ from the exact
+  configured centre mapping by more than `1e-6 mm`
 - **THEN** preparation rejects the mesh before workspace mutation or external
   execution
 

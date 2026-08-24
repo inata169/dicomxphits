@@ -14,7 +14,8 @@
   compact huge exponents rejected before decimal arithmetic, predicted
   rendered-token overflow, downstream binary64 incompatibility, and DICOM
   fixed-decimal serialization that would zero, collapse, or oversize derived
-  geometry, without using real data or external tools.
+  geometry, plus large-offset binary64 cancellation that exceeds the existing
+  voxel-position tolerance, without using real data or external tools.
 
 ## 2. Workspace preparation and PHITS rendering
 

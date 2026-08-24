@@ -162,6 +162,17 @@ existing RTDOSE geometry tolerance for all three attributes. This is an
 upstream compatibility gate; it does not change the existing serializer,
 coordinate transform, or downstream tolerance.
 
+Attribute-level checks are not sufficient when a small spacing is combined
+with a large centre offset. Before workspace mutation, preparation will also
+construct the complete predicted RTDOSE affine through the existing binary64
+tally-parser, centre-generation, coordinate-mapping, and DICOM-serialization
+path. Every voxel position from that affine must match the position obtained
+by applying the existing frozen-plan coordinate mapping to the exact decimal
+configured centre sequence within the existing `1e-6 mm` absolute tolerance.
+The check may exploit the regular-grid structure, but it must cover every
+axis index and must not validate only the serialized attributes or edge
+ordering.
+
 This supports ordinary JSON decimal and exponent notation while rejecting
 non-JSON values such as NaN and Infinity. Exponent notation is accepted only
 when its bounded canonical representation and binary64 result satisfy the same
@@ -199,7 +210,10 @@ rejects:
 - mesh-dependent RTDOSE placement that cannot round-trip through the existing
   `.10f` DICOM Decimal String serialization within its 16-character and
   geometry constraints, including spacing that becomes zero or frame offsets
-  that cease to be strictly increasing.
+  that cease to be strictly increasing; or
+- a predicted binary64 and serialized RTDOSE affine whose voxel positions
+  differ from the exact configured centre mapping by more than the existing
+  `1e-6 mm` absolute tolerance.
 
 The per-axis and total limits are conservative public v1 guardrails rather
 than claims about the maximum capability of PHITS. They accept both the legacy
@@ -323,8 +337,9 @@ a new schema version or OpenSpec delta.
 4. Reject malformed JSON, schema mismatches, unknown keys, wrong vector sizes,
    booleans, strings, non-finite values, reversed/equal ranges, non-positive
    sizes, fractional grid steps, oversized files or tokens, compact huge
-   exponents, downstream binary64 incompatibility, sub-resolution or oversized
-   DICOM geometry serialization, per-axis overflow, and total-voxel overflow.
+   exponents, downstream binary64 incompatibility, large-offset binary64
+   cancellation, sub-resolution or oversized DICOM geometry serialization,
+   per-axis overflow, and total-voxel overflow.
 5. Prove validation happens before any workspace artifact is created or
    modified.
 6. Prove every active segment receives one identical mesh and configuration
@@ -356,6 +371,9 @@ a new schema version or OpenSpec delta.
 - **A finite mesh rounds to invalid or zero DICOM geometry.** Round-trip the
   derived placement through the existing fixed-decimal DICOM serialization
   before workspace mutation and require its current geometry invariants.
+- **Large centre offsets lose voxel-position precision in binary64.** Compare
+  the complete predicted serialized affine with the exact decimal configured
+  centre mapping before workspace mutation and retain the existing tolerance.
 - **Configuration evidence masks changed external output.** Preserve actual
   PHITS/Sumtally output as downstream geometry authority.
 - **Changing 3D z sampling accidentally changes PDD.** Separate renderer inputs
