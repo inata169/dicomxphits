@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/inata169/dicomxphits/schemas/dicomxphits.calculation.schema.json",
+  "title": "dicomxphits public calculation configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "dose_tally_3d"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema reference for editors and validators."
+    },
+    "schema_version": {
+      "const": "dicomxphits_public_calculation_config_v1"
+    },
+    "dose_tally_3d": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "center_min_mm",
+        "center_max_mm",
+        "voxel_size_mm"
+      ],
+      "properties": {
+        "center_min_mm": {
+          "$ref": "#/$defs/vector3"
+        },
+        "center_max_mm": {
+          "$ref": "#/$defs/vector3"
+        },
+        "voxel_size_mm": {
+          "$ref": "#/$defs/vector3"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "vector3": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "number"
+      }
+    }
+  }
+}

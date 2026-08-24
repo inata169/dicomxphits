@@ -504,17 +504,27 @@ never persisted and always start empty or cleared. Existing flat tool settings
 are retained as a custom layout unless they match the supported standard
 profile. The tracked repository does not contain populated local paths.
 
+The Workspace page also accepts one optional **Calculation config** JSON path.
+It changes only the prepared 3D dose tally mesh, is used only by Workspace
+Prepare, and is not persisted. Leaving it blank preserves the legacy
+101 x 101 x 101, 3 mm tally. See
+[Calculation Configuration](docs/calculation-configuration.md) for the schema,
+inclusive voxel-centre convention, limits, evidence, and downstream guards.
+
 ## Key Files and Directories
 
 This is a selected map of the public tree, not an exhaustive directory listing.
 
 ```text
 config/
+  dicomxphits.calculation.schema.json
+  dicomxphits.calculation.example.json
   dicomxphits.machine.schema.json
   dicomxphits.machine.example.json
   dicomxphits.paths.schema.json
   dicomxphits.paths.example.json
 docs/
+  calculation-configuration.md
   development-handoff-2026-08-07.md
   development-handoff-2026-08-06.md
   gui-user-guide.md
@@ -561,6 +571,7 @@ dicomxphits-prepare-3dcrt-workspace `
   --maxcas 1000000 `
   --maxbch 10 `
   --omp-threads 8 `
+  --calculation-config-path "C:\outside-repo\calculation.json" `
   --ct-datfiles-root "C:\path\to\RTphits\work\case-id\DATfiles" `
   --ct-reference-dicom "C:\path\to\RTphits\work\case-id\CT\CT000001.dcm" `
   --confirm-non-patient-phantom
@@ -573,6 +584,11 @@ and rectangular PHITS input generation use the built-in public research model
 and package-owned helper code inside this repository. They do not require a
 machine-config argument, private `scripts/` imports, vendor/facility inputs, or
 the original IAEA files.
+
+`--calculation-config-path` is optional. Omit it for the byte-compatible legacy
+3D tally. A supplied file is validated before workspace mutation and is bound
+to every active segment; it does not change the PDD tally. Actual segment and
+Sumtally output mesh geometry remains authoritative for Sumtally and RTDOSE.
 
 Run the generated active segments explicitly before Sumtally:
 
