@@ -342,9 +342,9 @@ def test_reviewed_windows_wheel_lock_has_exact_artifacts_and_hashes():
     assert [(entry.distribution, entry.version, entry.filename, entry.sha256) for entry in entries] == [
         (
             "numpy",
-            "2.5.1",
-            "numpy-2.5.1-cp312-cp312-win_amd64.whl",
-            "f7d60026c0bdb1380e83bfa7a0419c4577ee4b9a08880afcb6dadeb74c649fa2",
+            "2.5.2",
+            "numpy-2.5.2-cp312-cp312-win_amd64.whl",
+            "28ac63476ec7651484215ee7fa15a1f78b57c14621f01e392afe17b9a1390ce4",
         ),
         (
             "pydicom",
@@ -360,9 +360,9 @@ def test_reviewed_windows_wheel_lock_has_exact_artifacts_and_hashes():
         ),
         (
             "wheel",
-            "0.47.0",
-            "wheel-0.47.0-py3-none-any.whl",
-            "212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced",
+            "0.48.0",
+            "wheel-0.48.0-py3-none-any.whl",
+            "3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab",
         ),
         (
             "packaging",

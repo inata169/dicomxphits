@@ -1,17 +1,17 @@
 # CPython 3.12 Windows x64 binary-only lock. Regenerate only from reviewed
 # official PyPI artifacts and update the corresponding security tests.
-# artifact: numpy-2.5.1-cp312-cp312-win_amd64.whl
-numpy==2.5.1 \
-    --hash=sha256:f7d60026c0bdb1380e83bfa7a0419c4577ee4b9a08880afcb6dadeb74c649fa2
+# artifact: numpy-2.5.2-cp312-cp312-win_amd64.whl
+numpy==2.5.2 \
+    --hash=sha256:28ac63476ec7651484215ee7fa15a1f78b57c14621f01e392afe17b9a1390ce4
 # artifact: pydicom-3.0.2-py3-none-any.whl
 pydicom==3.0.2 \
     --hash=sha256:abf971a5440f84dbaf42c4b6758e30e62480902584f8b270b9a5d146e278a07b
 # artifact: setuptools-84.0.0-py3-none-any.whl
 setuptools==84.0.0 \
     --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
-# artifact: wheel-0.47.0-py3-none-any.whl
-wheel==0.47.0 \
-    --hash=sha256:212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced
+# artifact: wheel-0.48.0-py3-none-any.whl
+wheel==0.48.0 \
+    --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab
 # artifact: packaging-26.3-py3-none-any.whl
 packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
