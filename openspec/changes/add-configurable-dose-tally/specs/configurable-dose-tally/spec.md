@@ -94,6 +94,16 @@ minimum-to-maximum ordering and positive spacing. Failure of any representation
 or compatibility guard MUST occur before workspace mutation or external
 execution.
 
+After applying the existing frozen-plan and tally-geometry mapping, preparation
+MUST round-trip the mesh-dependent RTDOSE `PixelSpacing`,
+`GridFrameOffsetVector`, and `ImagePositionPatient` through the existing `.10f`
+DICOM Decimal String serialization before workspace mutation. Each serialized
+component MUST contain no more than 16 ASCII characters and reparse as finite.
+The round-trip MUST preserve positive `PixelSpacing`, strictly increasing
+`GridFrameOffsetVector` values, and the existing RTDOSE geometry tolerance for
+all three attributes. This compatibility validation MUST NOT change the
+existing DICOM serializer, coordinate transform, or geometry tolerance.
+
 #### Scenario: Reversed or empty centre interval
 
 - **WHEN** any axis has its minimum centre greater than or equal to its maximum
@@ -137,6 +147,22 @@ execution.
 - **WHEN** a derived edge or spacing converts to a non-finite binary64 value or
   binary64 conversion loses strict edge ordering or positive spacing
 - **THEN** preparation rejects the mesh before PHITS input generation
+
+#### Scenario: Finite spacing collapses during DICOM serialization
+
+- **WHEN** a finite positive derived spacing, such as `1e-20` mm, becomes zero
+  or produces duplicate frame offsets after the existing `.10f` DICOM Decimal
+  String round-trip
+- **THEN** preparation rejects the mesh before workspace mutation or external
+  execution
+
+#### Scenario: DICOM geometry value is not representable
+
+- **WHEN** any mesh-dependent RTDOSE Decimal String component exceeds 16 ASCII
+  characters or does not reparse as finite within the existing geometry
+  contract
+- **THEN** preparation rejects the mesh before workspace mutation or external
+  execution
 
 ### Requirement: Legacy Default Geometry Preservation
 

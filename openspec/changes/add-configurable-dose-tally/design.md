@@ -151,6 +151,17 @@ preserve strict `minimum < maximum` ordering and positive spacing on every
 axis. These checks are compatibility and serialization guards, not permission
 to change the existing downstream parser or its geometry tolerance.
 
+Once the frozen-plan isocentre is available, but still before workspace
+mutation, preparation will also derive the mesh-dependent RTDOSE placement and
+round-trip its `PixelSpacing`, `GridFrameOffsetVector`, and
+`ImagePositionPatient` through the existing `.10f` DICOM Decimal String
+serialization. Every serialized component must contain no more than 16 ASCII
+characters and reparse as finite. The round-trip must preserve positive
+`PixelSpacing`, strictly increasing `GridFrameOffsetVector` values, and the
+existing RTDOSE geometry tolerance for all three attributes. This is an
+upstream compatibility gate; it does not change the existing serializer,
+coordinate transform, or downstream tolerance.
+
 This supports ordinary JSON decimal and exponent notation while rejecting
 non-JSON values such as NaN and Infinity. Exponent notation is accepted only
 when its bounded canonical representation and binary64 result satisfy the same
@@ -184,7 +195,11 @@ rejects:
   ASCII characters, determined without materializing an oversized token; or
 - a derived edge or spacing that is non-finite, loses strict edge ordering, or
   loses positive spacing when converted through the existing downstream
-  binary64 geometry representation.
+  binary64 geometry representation; or
+- mesh-dependent RTDOSE placement that cannot round-trip through the existing
+  `.10f` DICOM Decimal String serialization within its 16-character and
+  geometry constraints, including spacing that becomes zero or frame offsets
+  that cease to be strictly increasing.
 
 The per-axis and total limits are conservative public v1 guardrails rather
 than claims about the maximum capability of PHITS. They accept both the legacy
@@ -308,8 +323,8 @@ a new schema version or OpenSpec delta.
 4. Reject malformed JSON, schema mismatches, unknown keys, wrong vector sizes,
    booleans, strings, non-finite values, reversed/equal ranges, non-positive
    sizes, fractional grid steps, oversized files or tokens, compact huge
-   exponents, downstream binary64 incompatibility, per-axis overflow, and
-   total-voxel overflow.
+   exponents, downstream binary64 incompatibility, sub-resolution or oversized
+   DICOM geometry serialization, per-axis overflow, and total-voxel overflow.
 5. Prove validation happens before any workspace artifact is created or
    modified.
 6. Prove every active segment receives one identical mesh and configuration
@@ -338,6 +353,9 @@ a new schema version or OpenSpec delta.
   token.** Bound the source file, source numeric tokens, and predicted
   canonical rendered tokens before materialization, then require downstream
   binary64 compatibility.
+- **A finite mesh rounds to invalid or zero DICOM geometry.** Round-trip the
+  derived placement through the existing fixed-decimal DICOM serialization
+  before workspace mutation and require its current geometry invariants.
 - **Configuration evidence masks changed external output.** Preserve actual
   PHITS/Sumtally output as downstream geometry authority.
 - **Changing 3D z sampling accidentally changes PDD.** Separate renderer inputs

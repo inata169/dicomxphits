@@ -12,8 +12,9 @@
 - [ ] 1.4 Add focused validation tests for valid, malformed, non-integral, and
   resource-unsafe meshes, including oversized files and numeric tokens,
   compact huge exponents rejected before decimal arithmetic, predicted
-  rendered-token overflow, and downstream binary64 incompatibility, without
-  using real data or external tools.
+  rendered-token overflow, downstream binary64 incompatibility, and DICOM
+  fixed-decimal serialization that would zero, collapse, or oversize derived
+  geometry, without using real data or external tools.
 
 ## 2. Workspace preparation and PHITS rendering
 
