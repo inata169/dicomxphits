@@ -196,7 +196,12 @@ Select **2 Workspace**.
    - Keep it outside the repository.
 2. Confirm that **Geometry mode** is `rectangular_3dcrt`.
 3. Normally, leave **Machine config (optional)** empty. This selects the built-in public rectangular research model.
-4. For a first exercise, review the runtime controls and keep their defaults unless you have a specific reason to change them.
+4. Leave **Calculation config (optional)** empty for the legacy 101 x 101 x 101,
+   3 mm 3D tally. To prepare a different regular mesh, Browse to a valid v1
+   calculation JSON. The selection applies only to the new workspace, is not
+   saved in GUI settings, and does not change the PDD tally. See
+   [Calculation Configuration](calculation-configuration.md).
+5. For a first exercise, review the runtime controls and keep their defaults unless you have a specific reason to change them.
 
    | Setting | Default | Meaning |
    | --- | ---: | --- |
@@ -204,9 +209,11 @@ Select **2 Workspace**.
    | `maxbch` | 10 | Number of batches |
    | OpenMP threads | 8 | Parallel threads for segment execution |
 
-5. Select **Prepare workspace**.
+6. Select **Prepare workspace**.
 
-PHITS does not run during this stage. dicomxphits validates the RT Plan, MU, aperture, and CT/RT coordinate relationship, then generates PHITS inputs for the plan segments.
+PHITS does not run during this stage. dicomxphits validates the RT Plan, MU,
+aperture, CT/RT coordinate relationship, and optional calculation mesh before
+changing the workspace, then generates PHITS inputs for the plan segments.
 
 Important outputs include:
 

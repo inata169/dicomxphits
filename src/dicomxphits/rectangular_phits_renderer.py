@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import PurePosixPath
 from typing import Any, Mapping
 
+from dicomxphits.calculation_config import NormalizedCalculationConfig
 from dicomxphits.public_spectrum import PUBLIC_SPECTRUM_BIN_COUNT, PUBLIC_SPECTRUM_NAME, public_spectrum_lines
 
 
@@ -37,6 +38,7 @@ def render_rectangular_phits_input(
     totfact_per_mu: str | Decimal | None = None,
     voxel_counts: tuple[int, int, int] | None = None,
     output_pdd_path: str | None = None,
+    calculation_config: NormalizedCalculationConfig | None = None,
 ) -> str:
     """Render a complete public CT-voxel rectangular PHITS input.
 
@@ -48,8 +50,9 @@ def render_rectangular_phits_input(
     - `voxel_counts` must match the validated caller-supplied CT2PHITS assets.
     - The renderer is pure: it does not read DICOM, perform mm conversion,
       create files or directories, call private scripts, or mutate input.
-    - The result uses the validated CT chassis, 101-cube dose grid, PDD tally,
-      runtime gantry/collimator transforms, and optional approved dose factor.
+    - The result uses the validated CT chassis, normalized 3D dose grid, fixed
+      PDD tally, runtime gantry/collimator transforms, and optional approved
+      dose factor.
     """
 
     params = _validate_params(
@@ -79,6 +82,7 @@ def render_rectangular_phits_input(
         maxcas_per_batch=params.maxcas,
         batches=params.maxbch,
         epsout=params.epsout,
+        calculation_config=calculation_config,
     )
 
 

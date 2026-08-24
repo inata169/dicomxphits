@@ -125,6 +125,19 @@ values are written to every newly generated segment input and recorded in both
 preparation summaries. They do not alter existing workspaces or Sumtally
 inputs.
 
+It also accepts an optional `--calculation-config-path` for the 3D dose tally.
+The closed v1 JSON contract uses inclusive first/last voxel centres and voxel
+sizes in millimetres; exact decimal validation derives PHITS centimetre edges
+and counts before the workspace is changed. One semantic mesh digest is bound
+to every active segment. Omission preserves the legacy 101 x 101 x 101, 3 mm
+3D tally byte for byte, and the PDD tally is unchanged in both cases. See
+[Calculation Configuration](calculation-configuration.md).
+
+This configuration is an upstream request, not downstream geometry authority.
+Sumtally continues to compare complete geometry parsed from every actual active
+segment output. RTDOSE continues to derive placement from the accepted actual
+Sumtally output and rejects missing, stale, ambiguous, or inconsistent evidence.
+
 ## PHITS Segment Execution
 
 `dicomxphits-run-segments` executes the active segment inputs from the strict

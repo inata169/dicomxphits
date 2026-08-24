@@ -28,6 +28,7 @@ from dicomxphits.prepare_sumtally import (
     select_sumtally_base_input,
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError
+from dicomxphits.rtdose_geometry import tally_mesh_geometry_sha256
 from dicomxphits.sumtally_inputs import file_sha256
 
 def tally_output_text() -> str:
@@ -42,6 +43,18 @@ def tally_output_text() -> str:
         " zmin = -0.9\n"
         " zmax = 0.3\n"
         " nz = 3\n"
+    )
+
+
+def tally_output_geometry_sha256() -> str:
+    return tally_mesh_geometry_sha256(
+        {
+            "axes": {
+                "x": {"minimum_cm": -0.7, "maximum_cm": 0.5, "bin_count": 4},
+                "y": {"minimum_cm": -0.3, "maximum_cm": 0.1, "bin_count": 2},
+                "z": {"minimum_cm": -0.9, "maximum_cm": 0.3, "bin_count": 3},
+            }
+        }
     )
 
 
@@ -167,6 +180,68 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert "sumfactor = 100" in content
     assert "seg_001/deposit-target-3D.out  40" in content
     assert "seg_002/deposit-target-3D.out  60" in content
+
+
+def test_generate_sumtally_accepts_matching_prepared_calculation_geometry(tmp_path):
+    digest = tally_output_geometry_sha256()
+    workspace, _ = write_workspace(
+        tmp_path,
+        active_segment(
+            0,
+            segment_mu=40.0,
+            mu_weight=40.0,
+            calculation_tally_geometry_sha256=digest,
+        ),
+        active_segment(
+            1,
+            segment_mu=60.0,
+            mu_weight=60.0,
+            calculation_tally_geometry_sha256=digest,
+        ),
+    )
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    assert summary["calculation_tally_geometry_sha256"] == digest
+
+
+def test_generate_sumtally_rejects_actual_geometry_that_differs_from_config(
+    tmp_path,
+):
+    workspace, _ = write_workspace(
+        tmp_path,
+        active_segment(
+            0,
+            segment_mu=40.0,
+            mu_weight=40.0,
+            calculation_tally_geometry_sha256="0" * 64,
+        ),
+        active_segment(
+            1,
+            segment_mu=60.0,
+            mu_weight=60.0,
+            calculation_tally_geometry_sha256="0" * 64,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="does not match the prepared"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+    failure = json.loads(
+        (workspace / "analysis" / "sumtally_generation_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "gate_failed"
+    assert failure["phits_execution_started"] is False
 
 
 @pytest.mark.parametrize(

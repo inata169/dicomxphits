@@ -47,10 +47,13 @@ report the evidence and wait for a human.
 
 Once the human-approved acceptance criteria are met and the required checks
 pass, stop deepening the work. Only a concrete merge-blocking defect in the
-current diff may justify one final minimal correction round in the same pull
-request. Treat robustness ideas, refactors, optional coverage, and future work
-as non-blocking; do not create a follow-up branch, pull request, Issue, OpenSpec
-change, automation, or other work item unless a human explicitly requests it.
+current diff may justify another minimal correction round in the same pull
+request, up to six review-driven correction rounds total; stop immediately when
+no verified merge-blocking defect remains. Treat robustness ideas, refactors,
+optional coverage, and future work as non-blocking; do not create a follow-up
+branch, pull request, Issue, OpenSpec change, automation, or other work item
+unless a human explicitly requests it. After the sixth correction round,
+report any remaining possible blocker and stop for a human decision.
 The required OpenSpec promotion and archive cleanup above belongs to the
 current task and is not a follow-up work item.
 

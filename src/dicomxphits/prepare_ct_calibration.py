@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from dicomxphits.calculation_config import NormalizedCalculationConfig
 from dicomxphits.machine_config import public_default_machine_config
 from dicomxphits.public_spectrum import (
     PUBLIC_SPECTRUM_NAME,
@@ -488,6 +489,7 @@ def _render_gui_chassis_input(
     totfact_per_mu: str | None = None,
     runtime_angles: bool = False,
     epsout: float = 1,
+    calculation_config: NormalizedCalculationConfig | None = None,
 ) -> str:
     if batches <= 0:
         raise CtCalibrationError("replica batches must be positive")
@@ -525,6 +527,7 @@ def _render_gui_chassis_input(
             "sumtally_pdd_files.inp" if sumtally_target == "pdd" else None
         ),
         epsout=epsout,
+        calculation_config=calculation_config,
     )
     lines = [
         f"$OMP = {omp_threads}",
@@ -613,25 +616,64 @@ def _dose_tally_lines(
     sumtally_3d_include: str | None = None,
     sumtally_pdd_include: str | None = None,
     epsout: float = 1,
+    calculation_config: NormalizedCalculationConfig | None = None,
 ) -> list[str]:
     three_d_header = "[ T-Deposit ]" if sumtally_3d_include is not None or sumtally_pdd_include is None else "[ T-Deposit ] off"
     pdd_header = "[ T-Deposit ]" if sumtally_pdd_include is not None or sumtally_3d_include is None else "[ T-Deposit ] off"
+    if calculation_config is None:
+        mesh = {
+            "axes": {
+                "x": {
+                    "minimum_cm": str(DOSE_GRID_TRANSVERSE_MIN_CM),
+                    "maximum_cm": str(DOSE_GRID_TRANSVERSE_MAX_CM),
+                    "bin_count": DOSE_GRID_COUNT,
+                    "voxel_size_mm": "3",
+                },
+                "y": {
+                    "minimum_cm": str(DOSE_GRID_TRANSVERSE_MIN_CM),
+                    "maximum_cm": str(DOSE_GRID_TRANSVERSE_MAX_CM),
+                    "bin_count": DOSE_GRID_COUNT,
+                    "voxel_size_mm": "3",
+                },
+                "z": {
+                    "minimum_cm": str(DOSE_GRID_MIN_CM),
+                    "maximum_cm": str(DOSE_GRID_MAX_CM),
+                    "bin_count": DOSE_GRID_COUNT,
+                    "voxel_size_mm": "3",
+                },
+            }
+        }
+    else:
+        mesh = calculation_config.renderer_mesh()
+    axes = mesh["axes"]
+    counts = tuple(int(axes[axis]["bin_count"]) for axis in ("x", "y", "z"))
+    sizes = tuple(str(axes[axis]["voxel_size_mm"]) for axis in ("x", "y", "z"))
+    if sizes[0] == sizes[1] == sizes[2]:
+        title = (
+            f"Public CT voxel {counts[0]}x{counts[1]}x{counts[2]} dose grid, "
+            f"{sizes[0]} mm spacing"
+        )
+    else:
+        title = (
+            f"Public CT voxel {counts[0]}x{counts[1]}x{counts[2]} dose grid, "
+            f"x/y/z spacing {sizes[0]}/{sizes[1]}/{sizes[2]} mm"
+        )
     three_d = [
         three_d_header,
-        " title = Public CT voxel 101x101x101 dose grid, 3 mm spacing",
+        f" title = {title}",
         " mesh = xyz",
         " x-type = 2",
-        f" xmin = {DOSE_GRID_TRANSVERSE_MIN_CM}",
-        f" xmax = {DOSE_GRID_TRANSVERSE_MAX_CM}",
-        f" nx = {DOSE_GRID_COUNT}",
+        f" xmin = {axes['x']['minimum_cm']}",
+        f" xmax = {axes['x']['maximum_cm']}",
+        f" nx = {axes['x']['bin_count']}",
         " y-type = 2",
-        f" ymin = {DOSE_GRID_TRANSVERSE_MIN_CM}",
-        f" ymax = {DOSE_GRID_TRANSVERSE_MAX_CM}",
-        f" ny = {DOSE_GRID_COUNT}",
+        f" ymin = {axes['y']['minimum_cm']}",
+        f" ymax = {axes['y']['maximum_cm']}",
+        f" ny = {axes['y']['bin_count']}",
         " z-type = 2",
-        f" zmin = {DOSE_GRID_MIN_CM}",
-        f" zmax = {DOSE_GRID_MAX_CM}",
-        f" nz = {DOSE_GRID_COUNT}",
+        f" zmin = {axes['z']['minimum_cm']}",
+        f" zmax = {axes['z']['maximum_cm']}",
+        f" nz = {axes['z']['bin_count']}",
         " unit = 0",
         " material = all",
         " output = dose",
@@ -700,6 +742,7 @@ def render_ct_runtime_input(
     batches: int = 10,
     omp_threads: int = DEFAULT_OMP_THREADS,
     epsout: float = 1,
+    calculation_config: NormalizedCalculationConfig | None = None,
 ) -> str:
     if maxcas_per_batch <= 0 or batches <= 0:
         raise CtCalibrationError("runtime maxcas and maxbch must be positive")
@@ -715,6 +758,7 @@ def render_ct_runtime_input(
         totfact_per_mu=totfact_per_mu,
         runtime_angles=True,
         epsout=epsout,
+        calculation_config=calculation_config,
     )
 
 

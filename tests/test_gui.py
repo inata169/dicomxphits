@@ -194,6 +194,7 @@ def test_pr3_cli_contract_exposes_rectangular_geometry_mode() -> None:
 
     assert "geometry_mode" in parser_actions
     assert "machine_config_path" in parser_actions
+    assert "calculation_config_path" in parser_actions
     assert "ct_datfiles_root" in parser_actions
     assert "ct_reference_dicom" in parser_actions
     assert "confirm_non_patient_phantom" in parser_actions
@@ -666,12 +667,14 @@ def test_downstream_stage_ignores_geometry_mode_and_machine_config(tmp_path: Pat
         config,
         geometry_mode=GEOMETRY_MODE_RECTANGULAR_3DCRT,
         machine_config_path=str(tmp_path / "missing machine config.json"),
+        calculation_config_path=str(tmp_path / "missing calculation config.json"),
     )
     summary_path = workspace / stage_by_key("run_segments").summary_relative_path
 
     def fake_runner(cmd, **kwargs):
         assert "--geometry-mode" not in cmd
         assert "--machine-config-path" not in cmd
+        assert "--calculation-config-path" not in cmd
         write_file(summary_path, json.dumps({"stage_status": "success"}))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -1371,6 +1374,66 @@ def test_rectangular_3dcrt_prepare_command_passes_machine_config_as_single_token
     assert command[command.index("--geometry-mode") + 1] == GEOMETRY_MODE_RECTANGULAR_3DCRT
     assert command[command.index("--machine-config-path") + 1] == str(machine_config.resolve())
     assert str(machine_config.resolve()) in command
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory"])
+def test_calculation_config_validation_fails_before_subprocess(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    calls: list[list[str]] = []
+    value = (
+        write_dir(tmp_path / "calculation-config-directory")
+        if kind == "directory"
+        else tmp_path / "missing calculation config.json"
+    )
+    config = replace(base_config(tmp_path), calculation_config_path=str(value))
+
+    with pytest.raises(GuiValidationError, match="existing regular file"):
+        run_stage(
+            config,
+            "prepare_workspace",
+            runner=lambda cmd, **kwargs: calls.append(cmd),
+        )
+
+    assert calls == []
+
+
+def test_prepare_command_passes_calculation_config_as_single_token(tmp_path: Path) -> None:
+    calculation_config = write_file(
+        tmp_path / "config dir" / "calculation config.json",
+        "{}",
+    )
+    config = replace(
+        base_config(tmp_path),
+        calculation_config_path=str(calculation_config),
+    )
+
+    command = build_stage_command(config, stage_by_key("prepare_workspace"))
+
+    assert command[command.index("--calculation-config-path") + 1] == str(
+        calculation_config.resolve()
+    )
+    assert command.count(str(calculation_config.resolve())) == 1
+
+
+def test_blank_calculation_config_is_omitted_and_not_persisted(tmp_path: Path) -> None:
+    config = replace(base_config(tmp_path), calculation_config_path="")
+    command = build_stage_command(config, stage_by_key("prepare_workspace"))
+    defaults_path = tmp_path / "dicomxphits.gui.local.json"
+
+    assert "--calculation-config-path" not in command
+    _save_gui_settings(
+        {
+            "geometry_mode": GEOMETRY_MODE_RECTANGULAR_3DCRT,
+            "calculation_config_path": "must-not-be-persisted.json",
+        },
+        {},
+        defaults_path,
+    )
+    saved = json.loads(defaults_path.read_text(encoding="utf-8"))
+    assert "calculation_config_path" not in saved
+    assert _default_values(defaults_path)["calculation_config_path"] == ""
 
 
 def test_geometry_mode_guidance_labels_validation_limits() -> None:

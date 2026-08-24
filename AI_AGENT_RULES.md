@@ -139,15 +139,16 @@ the required validation passes:
 - treat a reviewer severity label such as P1 as an indicator, not sufficient
   authority by itself: the reported defect must be verified against the code
   and approved scope;
-- allow at most one additional review-driven correction round, keep it minimal,
-  and make it on the same branch and pull request;
+- allow at most six additional review-driven correction rounds, keep each one
+  minimal, make them on the same branch and pull request, and stop immediately
+  when no verified merge-blocking defect remains;
 - treat robustness suggestions, refactors, optional coverage, stylistic
   preferences, and future capabilities as non-blocking for that pull request;
   and
 - do not create a follow-up branch, pull request, Issue, OpenSpec change,
   automation, or other work item unless a human explicitly requests it.
 
-If the final correction round reveals another possible blocker, report the
+If the sixth correction round reveals another possible blocker, report the
 evidence and stop for a human decision instead of starting a recursive review
 loop. A human decides whether to mark the pull request ready or merge it; an
 agent may report evidence and recommend that action but must not merge
