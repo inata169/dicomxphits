@@ -10,7 +10,10 @@
 - [ ] 1.3 Add the public example and closed JSON Schema for
   `dicomxphits_public_calculation_config_v1`.
 - [ ] 1.4 Add focused validation tests for valid, malformed, non-integral, and
-  resource-unsafe meshes without using real data or external tools.
+  resource-unsafe meshes, including oversized files and numeric tokens,
+  compact huge exponents rejected before decimal arithmetic, predicted
+  rendered-token overflow, and downstream binary64 incompatibility, without
+  using real data or external tools.
 
 ## 2. Workspace preparation and PHITS rendering
 

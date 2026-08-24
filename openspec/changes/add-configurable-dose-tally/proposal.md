@@ -31,8 +31,9 @@ edges such as `xmin = -15.15` or provide arbitrary PHITS tally syntax.
 - Preserve the exact existing 3D tally geometry when no calculation
   configuration is supplied.
 - Reject malformed, non-finite, non-positive, non-integral-grid, unknown, or
-  resource-unsafe configurations before creating or modifying a workspace or
-  launching PHITS.
+  resource-unsafe configurations, including bounded-file or numeric-rendering
+  violations and downstream binary64 incompatibility, before creating or
+  modifying a workspace or launching PHITS.
 - Load one effective calculation configuration per workspace preparation and
   render the same normalized 3D mesh into every active segment.
 - Record the effective calculation source, normalized mesh, derived PHITS
@@ -62,8 +63,8 @@ edges such as `xmin = -15.15` or provide arbitrary PHITS tally syntax.
 - Expected tests after approval: calculation-config validation, exact
   centre-to-edge conversion, default-render regression, workspace-wide mesh
   identity, resource limits, CLI/GUI handoff, and existing Sumtally/RTDOSE
-  geometry-consistency regression coverage using synthetic data and fake or
-  mock runners only.
+  geometry-consistency regression coverage, including compact huge-exponent
+  inputs, using synthetic data and fake or mock runners only.
 - Backward compatibility: omitting the calculation configuration retains the
   existing x/y/z centre ranges, `3 mm` voxel sizes, `101` bins per axis, and
   PHITS edges `[-15.15, 15.15]`, `[-15.15, 15.15]`, and

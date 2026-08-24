@@ -136,10 +136,28 @@ counts will be rendered from the validated result. Existing downstream tally
 parsing and its approved geometry comparison remain authoritative for actual
 outputs.
 
+Decimal syntax is bounded before any plain-decimal string is materialized. The
+calculation-config file must be no larger than 65,536 bytes, every JSON numeric
+token must contain no more than 64 ASCII characters, and the canonical
+plain-decimal representation of every source number and derived PHITS edge or
+spacing must be no longer than 64 ASCII characters. The implementation
+determines each canonical length from the lexical coefficient and exponent
+before decimal arithmetic or string expansion; it must not first calculate or
+expand a compact value such as `1e100000000` and then measure it.
+
+Every derived PHITS edge and spacing must also convert to a finite binary64
+value accepted by the current downstream tally parser. That conversion must
+preserve strict `minimum < maximum` ordering and positive spacing on every
+axis. These checks are compatibility and serialization guards, not permission
+to change the existing downstream parser or its geometry tolerance.
+
 This supports ordinary JSON decimal and exponent notation while rejecting
-non-JSON values such as NaN and Infinity. The schema and semantic validator
-both participate, but the semantic validator remains mandatory because JSON
-Schema alone cannot prove exact grid divisibility or safe voxel products.
+non-JSON values such as NaN and Infinity. Exponent notation is accepted only
+when its bounded canonical representation and binary64 result satisfy the same
+guards. The schema and semantic validator both participate, but the semantic
+validator remains mandatory because JSON Schema alone cannot prove exact grid
+divisibility, bounded rendering, downstream representability, or safe voxel
+products.
 
 ### 4. Validate fail-closed before workspace mutation
 
@@ -149,6 +167,11 @@ rejects:
 
 - an unreadable file, malformed JSON, wrong or missing schema version, missing
   field, unknown field, wrong vector length, boolean, or numeric string;
+- a file larger than 65,536 bytes or a JSON numeric token longer than 64 ASCII
+  characters;
+- a source number whose canonical plain-decimal representation would exceed 64
+  ASCII characters, determined from its lexical coefficient and exponent
+  before decimal arithmetic or expansion;
 - any non-finite value;
 - `center_min_mm[a] >= center_max_mm[a]`;
 - `voxel_size_mm[a] <= 0`;
@@ -156,7 +179,12 @@ rejects:
 - a derived count outside the supported positive PHITS integer range;
 - more than 1,000 bins on any axis; or
 - more than 10,000,000 total voxels, with checked multiplication used before
-  allocating or rendering mesh-sized data.
+  allocating or rendering mesh-sized data;
+- a derived canonical plain-decimal PHITS edge or spacing token longer than 64
+  ASCII characters, determined without materializing an oversized token; or
+- a derived edge or spacing that is non-finite, loses strict edge ordering, or
+  loses positive spacing when converted through the existing downstream
+  binary64 geometry representation.
 
 The per-axis and total limits are conservative public v1 guardrails rather
 than claims about the maximum capability of PHITS. They accept both the legacy
@@ -279,7 +307,9 @@ a new schema version or OpenSpec delta.
    including the symmetric 101-cube example.
 4. Reject malformed JSON, schema mismatches, unknown keys, wrong vector sizes,
    booleans, strings, non-finite values, reversed/equal ranges, non-positive
-   sizes, fractional grid steps, per-axis overflow, and total-voxel overflow.
+   sizes, fractional grid steps, oversized files or tokens, compact huge
+   exponents, downstream binary64 incompatibility, per-axis overflow, and
+   total-voxel overflow.
 5. Prove validation happens before any workspace artifact is created or
    modified.
 6. Prove every active segment receives one identical mesh and configuration
@@ -304,6 +334,10 @@ a new schema version or OpenSpec delta.
   normalized value, bind its digest, and keep actual-output equality checks.
 - **A huge grid consumes excessive memory, disk, or parser time.** Enforce
   checked per-axis and total-voxel limits before workspace mutation.
+- **A compact exponent or excessive precision expands into a huge PHITS
+  token.** Bound the source file, source numeric tokens, and predicted
+  canonical rendered tokens before materialization, then require downstream
+  binary64 compatibility.
 - **Configuration evidence masks changed external output.** Preserve actual
   PHITS/Sumtally output as downstream geometry authority.
 - **Changing 3D z sampling accidentally changes PDD.** Separate renderer inputs

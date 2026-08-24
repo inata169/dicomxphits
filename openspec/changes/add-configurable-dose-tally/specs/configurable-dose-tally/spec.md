@@ -80,6 +80,20 @@ MUST be checked before allocating or rendering mesh-sized data. A supplied
 invalid configuration MUST fail before any workspace artifact is created or
 modified and MUST NOT fall back wholly or partially to the default.
 
+Before parsing or rendering, the validator SHALL reject a calculation-config
+file larger than 65,536 bytes, any JSON numeric token longer than 64 ASCII
+characters, any source number whose canonical plain-decimal representation
+would exceed 64 ASCII characters, or any derived PHITS edge or spacing whose
+canonical plain-decimal token would exceed 64 ASCII characters. It MUST
+determine each source token's canonical length from its lexical coefficient
+and exponent before decimal arithmetic, and each derived token's length from
+bounded decimal metadata, without first materializing an oversized expansion.
+Every derived PHITS edge and spacing MUST convert to a finite binary64 value
+compatible with the existing downstream tally parser while preserving strict
+minimum-to-maximum ordering and positive spacing. Failure of any representation
+or compatibility guard MUST occur before workspace mutation or external
+execution.
+
 #### Scenario: Reversed or empty centre interval
 
 - **WHEN** any axis has its minimum centre greater than or equal to its maximum
@@ -103,6 +117,26 @@ modified and MUST NOT fall back wholly or partially to the default.
   10,000,000
 - **THEN** preparation rejects the mesh before workspace mutation or mesh-sized
   allocation
+
+#### Scenario: Compact exponent would expand excessively
+
+- **WHEN** a short JSON exponent value such as `1e100000000` would have a
+  canonical plain-decimal source representation longer than 64 ASCII
+  characters
+- **THEN** validation rejects it from its lexical coefficient and exponent
+  before decimal arithmetic or materializing the expanded token
+
+#### Scenario: Source representation is oversized
+
+- **WHEN** the calculation-config file exceeds 65,536 bytes or any numeric
+  token exceeds 64 ASCII characters
+- **THEN** validation rejects it before unbounded parsing or rendering
+
+#### Scenario: Derived geometry is incompatible with downstream binary64
+
+- **WHEN** a derived edge or spacing converts to a non-finite binary64 value or
+  binary64 conversion loses strict edge ordering or positive spacing
+- **THEN** preparation rejects the mesh before PHITS input generation
 
 ### Requirement: Legacy Default Geometry Preservation
 
