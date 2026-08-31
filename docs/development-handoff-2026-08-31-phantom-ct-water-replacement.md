@@ -103,6 +103,60 @@ correctly stopped both preflights. `--accept-qc-warnings` must not be used to
 bypass this failure. No derived CT directory, derived DICOM instance, or
 real-data QC report was created.
 
+## Late-session PHITS diagnostic-parser incident
+
+After this handoff was first written, the human operator reported a failure in
+the non-patient confirmation run for the earlier CT/accelerator-overlap fix in
+main commit `8b6f0e1`. Read-only inspection established that PHITS transport
+itself completed normally:
+
+- the process return code was zero;
+- all four batches and 8,000,000 source histories completed;
+- PHITS reported zero lost particles, zero geometry recoveries, and zero
+  unrecovered geometry errors;
+- stderr was empty; and
+- the PHITS-reported CPU time was approximately 8,394 seconds.
+
+The segment adapter nevertheless marked the run failed because the geometry-
+diagnostic parser rejected the actual PHITS 3.35 lost-particle line:
+
+```text
+Number of lost particles = 0 / nlost = 10000
+```
+
+`src/dicomxphits/phits_geometry_diagnostics.py` currently accepts only a line
+that ends immediately after the lost-particle count. The parser therefore
+reported `malformed PHITS geometry diagnostic: Number of lost particles` even
+though every reported geometry counter was zero. This is a post-processing
+parser regression introduced with the new fail-closed diagnostic gate; it is
+not evidence of a PHITS transport failure or a remaining CT/accelerator
+overlap. The generated workspace used the v5 CT/accelerator-disjoint geometry
+contract, and its PHITS geometry diagnostics were clean.
+
+The approximately 11.8 MB `deposit-target-3D.out` and its statistical-error
+companion remain in the Windows staging directory, together with EPS outputs.
+They were not promoted to the manifest-declared public output path because the
+diagnostic gate failed, and the segment execution summary remains `failed`.
+Do not manually copy these files into the public output path or edit the
+summary: that would bypass the provenance and manifest-binding checks.
+
+No parser correction was implemented in this branch. The next repository task
+for this independent incident is a minimal bug-fix branch from `main` that:
+
+1. accepts only the PHITS 3.35 `/ nlost = <nonnegative integer>` suffix on the
+   lost-particle diagnostic;
+2. preserves fail-closed rejection of duplicate, negative, nonnumeric,
+   incomplete, or otherwise trailing content;
+3. adds an exact-format regression test plus the existing adapter/recovery
+   checks; and
+4. determines, under a separately reviewed provenance-preserving procedure,
+   whether the retained staged tally can be promoted safely or whether the
+   segment must be rerun after the parser fix.
+
+Do not mix that parser fix into `add-phantom-ct-water-replacement`. Keep this
+phantom-derived-CT branch intact, and create the independent bug-fix branch
+from `main` only after explicit human approval to implement the correction.
+
 ## Required human preparation before resuming
 
 Only `Water_CC13_2cm` needs to be redrawn in Monaco. Leave the validated
@@ -189,11 +243,16 @@ so an in-tree pytest base directory can create an environment-induced failure.
 - The active OpenSpec delta has not been promoted or archived.
 - The branch has not been pushed, reviewed in a pull request, merged, or
   deleted.
+- The independent PHITS 3.35 geometry-diagnostic parser regression has been
+  diagnosed but not corrected; its retained staged tally has not been
+  promoted or used downstream.
 - Existing CT2PHITS selection, accelerator geometry, beam physics, dose, MU,
   normalization, and the public fixed-field 3D-CRT scope were not changed by
   this helper.
 
 The correct stopping state is an active, tested implementation with a
-real-data ROI-definition blocker. Resume from target-ROI correction and
-read-only preflight; do not restart implementation and do not treat the
-synthetic test result as real-data acceptance.
+real-data ROI-definition blocker, plus a separately diagnosed parser bug in
+the main-branch PHITS completion gate. Resume the parser work on its own branch
+only after approval, and resume this branch from target-ROI correction and
+read-only preflight. Do not restart the phantom helper implementation and do
+not treat the synthetic test result as real-data acceptance.
