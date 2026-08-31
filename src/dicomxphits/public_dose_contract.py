@@ -22,6 +22,9 @@ PUBLIC_MODEL_MACHINE_CONFIG_SHA256 = (
 PUBLIC_MODEL_CALIBRATION_EVIDENCE_SHA256 = (
     "0fdd11a51be3f487f180ed2fd5cffaad84d1943621ec86e76462fc1e8e65e587"
 )
+PUBLIC_MODEL_CALIBRATION_TRANSPORT_GEOMETRY_CONTRACT = (
+    "dicomxphits_iec_gantry_mlcx_collimator_ct_accelerator_geometry_v5"
+)
 
 
 class StalePublicDoseFactorError(ValueError):
@@ -40,6 +43,8 @@ def machine_config_sha256(machine_config: Mapping[str, Any]) -> str:
 
 def approved_public_model_calibration(
     machine_config: Mapping[str, Any],
+    *,
+    transport_geometry_contract: str,
 ) -> dict[str, Any]:
     actual_machine_hash = machine_config_sha256(machine_config)
     if actual_machine_hash != PUBLIC_MODEL_MACHINE_CONFIG_SHA256:
@@ -48,14 +53,35 @@ def approved_public_model_calibration(
             f"expected {PUBLIC_MODEL_MACHINE_CONFIG_SHA256}, "
             f"got {actual_machine_hash}"
         )
+    if (
+        transport_geometry_contract
+        != PUBLIC_MODEL_CALIBRATION_TRANSPORT_GEOMETRY_CONTRACT
+    ):
+        raise StalePublicDoseFactorError(
+            "approved totfact_per_MU is stale for this transport geometry "
+            "contract; expected "
+            f"{PUBLIC_MODEL_CALIBRATION_TRANSPORT_GEOMETRY_CONTRACT}, got "
+            f"{transport_geometry_contract}"
+        )
     return {
         "status": "human_accepted",
         "totfact_per_mu": PUBLIC_MODEL_TOTFACT_PER_MU_TEXT,
         "units": "source/MU",
         "machine_config_sha256": actual_machine_hash,
         "spectrum_sha256": PUBLIC_SPECTRUM_SHA256,
+        "transport_geometry_contract": transport_geometry_contract,
         "evidence_sha256": PUBLIC_MODEL_CALIBRATION_EVIDENCE_SHA256,
         "human_accepted_on": "2026-07-30",
+        "transport_topology_reacceptance": {
+            "status": "human_accepted",
+            "accepted_on": "2026-08-31",
+            "basis": (
+                "reference_calibration_geometry_disjoint_and_"
+                "transport_equivalent"
+            ),
+            "numerical_factor_changed": False,
+            "external_phits_comparison_performed": False,
+        },
         "accepted_batches": 84,
         "accepted_histories": 1_680_000_000,
     }

@@ -4,9 +4,11 @@ from typing import Any, Mapping
 
 
 GANTRY_GEOMETRY_CONTRACT_FIELD = "gantry_geometry_contract"
-PREVIOUS_GANTRY_GEOMETRY_CONTRACT = "dicomxphits_iec_gantry_mlcx_geometry_v3"
-CURRENT_GANTRY_GEOMETRY_CONTRACT = (
+PREVIOUS_GANTRY_GEOMETRY_CONTRACT = (
     "dicomxphits_iec_gantry_mlcx_collimator_geometry_v4"
+)
+CURRENT_GANTRY_GEOMETRY_CONTRACT = (
+    "dicomxphits_iec_gantry_mlcx_collimator_ct_accelerator_geometry_v5"
 )
 
 
@@ -31,6 +33,7 @@ def require_reusable_gantry_geometry_contract(
     if contract == CURRENT_GANTRY_GEOMETRY_CONTRACT:
         return CURRENT_GANTRY_GEOMETRY_CONTRACT
     raise GantryGeometryContractError(
-        "PHITS results do not identify the corrected collimator rotation; prepare "
-        "a new workspace and rerun PHITS before Sumtally or RTDOSE"
+        "PHITS results do not identify the current v5 collimator and "
+        "CT-accelerator topology contract; prepare a new workspace and rerun "
+        "PHITS before Sumtally or RTDOSE"
     )

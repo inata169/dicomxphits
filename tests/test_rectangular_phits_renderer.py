@@ -490,6 +490,36 @@ def test_runtime_collimator_geometry_has_independent_dicom_lps_anchors(
     assert actual_mlcy_axis_lps[1] == pytest.approx(0.0, abs=1.0e-10)
 
 
+@pytest.mark.parametrize(
+    ("gantry_deg", "collimator_deg"),
+    [
+        (0.0, 0.0),
+        (90.0, 0.0),
+        (45.0, 30.0),
+        (315.0, 90.0),
+    ],
+)
+def test_ct_wrapper_excludes_complete_transformed_accelerator_at_supported_angles(
+    gantry_deg,
+    collimator_deg,
+):
+    text = render_runtime(
+        jaw_mlc_geometry(
+            angles_deg={
+                "gantry": gantry_deg,
+                "collimator": collimator_deg,
+                "couch": 0.0,
+            }
+        )
+    )
+
+    assert "1201 0 -98 #2 fill=4000" in text
+    assert "2 0 11 -12 -13 fill=2 trcl=3" in text
+    assert text.index("1201 0 -98 #2 fill=4000") < text.index(
+        "2 0 11 -12 -13 fill=2 trcl=3"
+    )
+
+
 def test_runtime_collimator_positive_angle_preserves_asymmetric_feature_orientation():
     def transformed_feature_lps(collimator_deg):
         text = render_runtime(

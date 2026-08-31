@@ -17,6 +17,10 @@ from dicomxphits.gantry_geometry import (
     GantryGeometryContractError,
     require_reusable_gantry_geometry_contract,
 )
+from dicomxphits.phits_geometry_diagnostics import (
+    PhitsGeometryDiagnosticsError,
+    require_clean_phits_geometry_diagnostics,
+)
 from dicomxphits.prepare_3dcrt_workspace import (
     active_segments,
     validate_public_strict_3dcrt_gate,
@@ -291,6 +295,95 @@ def _validate_phits_digest_evidence(
         "Matching SHA-256 evidence for every PHITS segment output is unavailable; "
         "PHITS results cannot be reused safely."
     )
+
+
+def _validate_phits_geometry_diagnostic_evidence(
+    workspace_root: Path,
+    manifest: Mapping[str, Any],
+    segment_summary: Mapping[str, Any],
+) -> None:
+    raw_segments = segment_summary.get("segments")
+    if not isinstance(raw_segments, list):
+        raise WorkspaceRecoveryError(
+            "PHITS geometry diagnostic evidence is missing; PHITS results cannot "
+            "be reused safely."
+        )
+    manifest_object = dict(manifest)
+    if segment_summary.get("manifest_sha256") != manifest_sha256(manifest_object):
+        raise WorkspaceRecoveryError(
+            "PHITS geometry diagnostic evidence does not match the current "
+            "manifest; PHITS results cannot be reused safely."
+        )
+    expected_segments = {
+        str(segment.get("segment_id") or segment.get("segment_index") or "unknown"): segment
+        for segment in active_segments(manifest)
+    }
+    expected_ids = set(expected_segments)
+    observed: dict[str, Mapping[str, Any]] = {}
+    for item in raw_segments:
+        if not isinstance(item, Mapping):
+            continue
+        segment_id = str(item.get("segment_id") or "")
+        if segment_id not in expected_ids:
+            continue
+        if segment_id in observed:
+            raise WorkspaceRecoveryError(
+                "PHITS geometry diagnostic evidence is duplicated; PHITS results "
+                "cannot be reused safely."
+            )
+        if item.get("status") != "success":
+            raise WorkspaceRecoveryError(
+                "An active PHITS segment is not successful; PHITS results cannot "
+                "be reused safely."
+            )
+        expected_output = _workspace_path(
+            workspace_root,
+            str(expected_segments[segment_id].get("expected_output_path") or ""),
+        )
+        try:
+            recorded_output = rebind_workspace_path(
+                str(item.get("expected_output_path") or ""),
+                recorded_workspace_root=segment_summary.get("workspace_root"),
+                current_workspace_root=workspace_root,
+            )
+            recorded_phits_out = rebind_workspace_path(
+                str(item.get("phits_out_path") or ""),
+                recorded_workspace_root=segment_summary.get("workspace_root"),
+                current_workspace_root=workspace_root,
+            )
+        except WorkspaceRecoveryError as exc:
+            raise WorkspaceRecoveryError(
+                "PHITS geometry diagnostic evidence has an invalid artifact "
+                "binding; PHITS results cannot be reused safely."
+            ) from exc
+        if (
+            recorded_output != expected_output
+            or not expected_output.is_file()
+            or item.get("expected_output_sha256") != file_sha256(expected_output)
+            or not recorded_phits_out.is_file()
+            or item.get("phits_out_sha256") != file_sha256(recorded_phits_out)
+        ):
+            raise WorkspaceRecoveryError(
+                "PHITS geometry diagnostic evidence or recorded SHA-256 does "
+                "not match its segment artifacts; PHITS results cannot be reused "
+                "safely."
+            )
+        observed[segment_id] = item
+    if set(observed) != expected_ids:
+        raise WorkspaceRecoveryError(
+            "PHITS geometry diagnostic evidence is incomplete; PHITS results "
+            "cannot be reused safely."
+        )
+    try:
+        for item in observed.values():
+            require_clean_phits_geometry_diagnostics(
+                item.get("geometry_diagnostics")
+            )
+    except PhitsGeometryDiagnosticsError as exc:
+        raise WorkspaceRecoveryError(
+            "PHITS geometry diagnostic evidence is not clean; PHITS results "
+            "cannot be reused safely."
+        ) from exc
 
 
 def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
@@ -739,6 +832,15 @@ def inspect_existing_workspace(workspace_root: Path) -> WorkspaceRecoveryInspect
             raise WorkspaceRecoveryError(
                 "PHITS execution evidence is missing or unsuccessful; PHITS results cannot be reused."
             )
+        if not isinstance(segment_summary, Mapping):
+            raise WorkspaceRecoveryError(
+                "PHITS execution evidence is invalid; PHITS results cannot be reused."
+            )
+        _validate_phits_geometry_diagnostic_evidence(
+            root,
+            manifest,
+            segment_summary,
+        )
         _validate_phits_digest_evidence(root, manifest=manifest, outputs=outputs)
     except WorkspaceRecoveryError as exc:
         return WorkspaceRecoveryInspection(
