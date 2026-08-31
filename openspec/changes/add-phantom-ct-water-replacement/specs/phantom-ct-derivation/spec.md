@@ -100,7 +100,8 @@ slice whose Pixel Data is rewritten.
 ### Requirement: Fail-closed preprocessing QC
 
 The system SHALL calculate and report reference voxel counts and statistics,
-target thickness, target boundary contact, and target overlap with
+target principal extents and whole-layer dimensionality, target boundary
+contact, and target overlap with
 boundary-connected air-like pixels. Structural errors SHALL always fail. QC
 warnings SHALL prevent completed publication unless an explicit warning
 acknowledgement is supplied.
@@ -109,8 +110,8 @@ acknowledgement is supplied.
 
 - **WHEN** configured QC defaults identify too few reference voxels,
   non-water-like reference statistics, image-boundary contact,
-  boundary-connected air-like overlap, or target thickness outside the
-  documented expected range
+  boundary-connected air-like overlap, target thickness outside the documented
+  expected range, or other than exactly one thickness-like target extent
 - **THEN** the command reports every finding and stops without a completed
   derived series unless QC warnings were explicitly acknowledged
 

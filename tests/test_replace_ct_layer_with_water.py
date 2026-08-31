@@ -14,7 +14,11 @@ from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 
 from dicomxphits.replace_ct_layer_with_water import (
     PhantomCtDerivationError,
+    _boundary_connected,
+    _replacement_analysis,
     derive_phantom_ct,
+    load_ct_series,
+    load_rtstruct_masks,
 )
 
 
@@ -199,7 +203,8 @@ def _write_rtstruct(
     *,
     target_slices: tuple[int, ...] | None = None,
     reference_slices: tuple[int, ...] | None = None,
-    reference_bounds: tuple[float, float, float, float] = (5.0, 50.0, 36.0, 58.0),
+    target_bounds: tuple[float, float, float, float] = (10.0, 40.0, 10.0, 50.0),
+    reference_bounds: tuple[float, float, float, float] = (5.0, 50.0, 52.0, 60.0),
     referenced_series_uid: str | None = None,
     frame_uid: str | None = None,
 ) -> Path:
@@ -250,7 +255,7 @@ def _write_rtstruct(
     spacing = float(ct["spacing_mm"])
     roi_contours = []
     for roi_number, slice_indices, bounds in (
-        (1, target_slices, (10.0, 30.0, 10.0, 30.0)),
+        (1, target_slices, target_bounds),
         (2, reference_slices, reference_bounds),
     ):
         roi_contour = Dataset()
@@ -318,6 +323,70 @@ def test_confirmation_is_required_before_inputs_are_read(tmp_path: Path) -> None
     assert not (tmp_path / "output").exists()
 
 
+def test_boundary_connected_uses_four_connected_run_components() -> None:
+    mask = np.zeros((7, 7), dtype=bool)
+    mask[0, 0:3] = True
+    mask[1, 2:5] = True
+    mask[2, 4] = True
+    mask[4:6, 1:3] = True
+    mask[6, 6] = True
+    expected = np.zeros_like(mask)
+    expected[0, 0:3] = True
+    expected[1, 2:5] = True
+    expected[2, 4] = True
+    expected[6, 6] = True
+    np.testing.assert_array_equal(_boundary_connected(mask), expected)
+
+
+def test_target_thickness_uses_shortest_patient_coordinate_principal_extent(
+    tmp_path: Path,
+) -> None:
+    ct = _write_ct_series(tmp_path / "ct", slice_count=32)
+    rtstruct = _write_rtstruct(
+        tmp_path / "RTSTRUCT.dcm",
+        ct,
+        target_bounds=(10.0, 30.0, 10.0, 50.0),
+        reference_bounds=(5.0, 50.0, 52.0, 60.0),
+    )
+    series = load_ct_series(ct["root"])
+    target, reference = load_rtstruct_masks(
+        rtstruct,
+        series=series,
+        target_roi="Water_CC13_2cm",
+        reference_roi="Water_reference",
+    )
+    analysis, warnings, _replacement_hu = _replacement_analysis(
+        series, target, reference
+    )
+    assert analysis["target_stack_extent_mm"] == pytest.approx(160.0)
+    assert analysis["target_thickness_mm"] == pytest.approx(21.0)
+    assert not any("target occupied thickness" in warning for warning in warnings)
+
+
+def test_two_by_two_centimeter_rod_is_not_accepted_as_a_whole_layer(
+    tmp_path: Path,
+) -> None:
+    ct = _write_ct_series(tmp_path / "ct", slice_count=32)
+    rtstruct = _write_rtstruct(
+        tmp_path / "RTSTRUCT.dcm",
+        ct,
+        target_bounds=(10.0, 30.0, 10.0, 30.0),
+        reference_bounds=(5.0, 50.0, 52.0, 60.0),
+    )
+    series = load_ct_series(ct["root"])
+    target, reference = load_rtstruct_masks(
+        rtstruct,
+        series=series,
+        target_roi="Water_CC13_2cm",
+        reference_roi="Water_reference",
+    )
+    analysis, warnings, _replacement_hu = _replacement_analysis(
+        series, target, reference
+    )
+    assert analysis["target_thickness_range_dimension_count"] == 2
+    assert any("whole layer" in warning for warning in warnings)
+
+
 def test_success_replaces_target_only_and_updates_uids(tmp_path: Path) -> None:
     case = _case(tmp_path)
     source_hashes = {
@@ -354,7 +423,7 @@ def test_success_replaces_target_only_and_updates_uids(tmp_path: Path) -> None:
         source_array = source.pixel_array
         derived_array = derived.pixel_array
         target = np.zeros(source_array.shape, dtype=bool)
-        target[10:31, 10:31] = True
+        target[10:41, 10:51] = True
         np.testing.assert_array_equal(derived_array[~target], source_array[~target])
         assert np.all(derived_array[target] == int(case["ct"]["water_hu"][index]))
     assert len(new_series_uids) == 1
@@ -424,7 +493,7 @@ def test_bits_stored_high_bit_and_unused_bits_are_preserved(tmp_path: Path) -> N
     source_raw = np.frombuffer(source.PixelData, dtype="<u2").reshape(64, 64)
     derived_raw = np.frombuffer(derived.PixelData, dtype="<u2").reshape(64, 64)
     target = np.zeros((64, 64), dtype=bool)
-    target[10:31, 10:31] = True
+    target[10:41, 10:51] = True
     np.testing.assert_array_equal(derived_raw[~target], source_raw[~target])
     assert np.all((derived_raw[target] & 0x8007) == (source_raw[target] & 0x8007))
 
@@ -443,7 +512,7 @@ def test_qc_warning_requires_separate_acknowledgement(tmp_path: Path) -> None:
         tmp_path / "RTSTRUCT.dcm",
         ct,
         target_slices=(0,),
-        reference_bounds=(5.0, 10.0, 36.0, 40.0),
+        reference_bounds=(5.0, 10.0, 52.0, 56.0),
     )
     case = {"ct": ct, "rtstruct": rtstruct, "output": tmp_path / "derived"}
     with pytest.raises(PhantomCtDerivationError, match="QC warnings"):
@@ -494,6 +563,7 @@ def test_target_reference_overlap_is_rejected(tmp_path: Path) -> None:
     rtstruct = _write_rtstruct(
         tmp_path / "RTSTRUCT.dcm",
         ct,
+        target_bounds=(10.0, 40.0, 10.0, 50.0),
         reference_bounds=(10.0, 30.0, 10.0, 30.0),
     )
     case = {"ct": ct, "rtstruct": rtstruct, "output": tmp_path / "derived"}
@@ -544,7 +614,7 @@ def test_inverse_rescale_overflow_is_rejected(tmp_path: Path) -> None:
         ct,
         target_slices=(1,),
         reference_slices=(0,),
-        reference_bounds=(5.0, 50.0, 36.0, 58.0),
+        reference_bounds=(5.0, 50.0, 52.0, 60.0),
     )
     case = {"ct": ct, "rtstruct": rtstruct, "output": tmp_path / "derived"}
     with pytest.raises(PhantomCtDerivationError, match="stored-pixel range"):

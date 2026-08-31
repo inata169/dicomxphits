@@ -123,7 +123,12 @@ and require explicit acknowledgement for:
 - target contact with the image matrix boundary;
 - target intersection with same-slice boundary-connected pixels below
   -500 HU; or
-- occupied target thickness outside 15 to 25 mm.
+- the shortest patient-coordinate principal-axis extent of the occupied target
+  outside 15 to 25 mm. The CT stack-normal extent is reported separately and
+  is not assumed to be the layer thickness; or
+- other than exactly one principal extent in the 15 to 25 mm range. A whole
+  layer should be thin on one axis and extend across the phantom on the other
+  two; a roughly 2 cm x 2 cm rod therefore stops as a QC warning.
 
 These are preprocessing review gates, not treatment tolerances or scanner
 commissioning limits.

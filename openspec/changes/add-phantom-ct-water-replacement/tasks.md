@@ -41,16 +41,18 @@
 - [x] 5.1 Add synthetic DICOM tests for the requested transformation, geometry,
   UID, representation, preservation, fallback, output, and safety cases.
 - [x] 5.2 Run focused checks and all public checks required by `AGENTS.md`.
-  The repository Python 3.12 environment passed 16 focused synthetic tests and
-  the full suite passed with 935 tests and ten skips; compilation, public-tree,
+  The repository Python 3.12 environment passed 19 focused synthetic tests and
+  the full suite passed with 938 tests and ten skips; compilation, public-tree,
   OpenSpec, Ruff, and diff checks also passed.
 - [ ] 5.3 With separate human approval and explicit RTSTRUCT paths, run bounded
   local validation on the supplied non-patient Lung and Bone CT inputs and
   record results outside the repository; otherwise record it as unverified.
-  A bounded read-only preflight confirmed that both supplied CT series have
-  consistent conventional geometry and that each supplied RTSTRUCT references
-  its CT frame and series. Both RTSTRUCTs lack the separately defined whole-
-  layer target and clean-water reference ROIs, so mask/QC validation and
-  derivation remain unverified. No output was created.
+  A bounded read-only preflight confirmed consistent conventional geometry,
+  matching CT/RTSTRUCT references, and valid required ROI names for both
+  supplied exports. The clean-water references passed their HU-statistic gates,
+  but both target ROIs were approximately two-centimetre-square rods rather
+  than whole thin layers. The new dimensionality QC stopped both cases; target
+  redraw, mask/QC revalidation, and derivation remain incomplete. No output was
+  created.
 - [ ] 5.4 Promote the accepted delta, archive the completed change, and strictly
   validate the resulting OpenSpec tree.

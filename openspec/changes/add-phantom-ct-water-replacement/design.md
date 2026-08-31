@@ -124,8 +124,12 @@ water calibration:
   or 5th/95th percentile outside -200 to +200 HU is a QC warning;
 - any target-mask contact with the image matrix boundary, or target overlap
   with boundary-connected pixels below -500 HU, is a QC warning; and
-- occupied target thickness outside 15 to 25 mm along the stack normal is a QC
-  warning.
+- the shortest patient-coordinate principal-axis extent of the occupied target,
+  including voxel support, outside 15 to 25 mm is a QC warning. The separate
+  stack-normal extent is reported but is not assumed to be layer thickness;
+  and
+- a target with other than exactly one principal extent in the 15 to 25 mm
+  range is a QC warning because it is not shaped as one whole thin layer.
 
 The numeric values are recorded in the report and public documentation. They
 are preprocessing review gates, not treatment tolerances or scanner

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-from collections import deque
 import copy
 from dataclasses import dataclass
 from datetime import datetime
@@ -704,35 +703,113 @@ def _stats(values: np.ndarray) -> dict[str, float | int]:
 
 def _boundary_connected(mask: np.ndarray) -> np.ndarray:
     rows, columns = mask.shape
-    connected = np.zeros_like(mask, dtype=bool)
-    queue: deque[tuple[int, int]] = deque()
+    parents: list[int] = []
+    boundary_roots: list[bool] = []
+    runs_by_row: list[list[tuple[int, int, int]]] = []
+
+    def find(item: int) -> int:
+        root = item
+        while parents[root] != root:
+            root = parents[root]
+        while parents[item] != item:
+            parent = parents[item]
+            parents[item] = root
+            item = parent
+        return root
+
+    def union(first: int, second: int) -> None:
+        first_root = find(first)
+        second_root = find(second)
+        if first_root == second_root:
+            return
+        parents[second_root] = first_root
+        boundary_roots[first_root] = (
+            boundary_roots[first_root] or boundary_roots[second_root]
+        )
+
+    previous: list[tuple[int, int, int]] = []
     for row in range(rows):
-        for column in (0, columns - 1):
-            if mask[row, column] and not connected[row, column]:
-                connected[row, column] = True
-                queue.append((row, column))
-    for column in range(columns):
-        for row in (0, rows - 1):
-            if mask[row, column] and not connected[row, column]:
-                connected[row, column] = True
-                queue.append((row, column))
-    while queue:
-        row, column = queue.popleft()
-        for next_row, next_column in (
-            (row - 1, column),
-            (row + 1, column),
-            (row, column - 1),
-            (row, column + 1),
-        ):
-            if (
-                0 <= next_row < rows
-                and 0 <= next_column < columns
-                and mask[next_row, next_column]
-                and not connected[next_row, next_column]
+        padded = np.empty(columns + 2, dtype=np.int8)
+        padded[0] = 0
+        padded[-1] = 0
+        padded[1:-1] = mask[row]
+        transitions = np.diff(padded)
+        starts = np.flatnonzero(transitions == 1)
+        ends = np.flatnonzero(transitions == -1) - 1
+        current: list[tuple[int, int, int]] = []
+        for start, end in zip(starts.tolist(), ends.tolist(), strict=True):
+            identifier = len(parents)
+            parents.append(identifier)
+            boundary_roots.append(
+                row in {0, rows - 1} or start == 0 or end == columns - 1
+            )
+            current.append((start, end, identifier))
+        previous_index = 0
+        for start, end, identifier in current:
+            while (
+                previous_index < len(previous)
+                and previous[previous_index][1] < start
             ):
-                connected[next_row, next_column] = True
-                queue.append((next_row, next_column))
+                previous_index += 1
+            candidate_index = previous_index
+            while (
+                candidate_index < len(previous)
+                and previous[candidate_index][0] <= end
+            ):
+                union(identifier, previous[candidate_index][2])
+                candidate_index += 1
+        runs_by_row.append(current)
+        previous = current
+
+    connected = np.zeros_like(mask, dtype=bool)
+    for row, runs in enumerate(runs_by_row):
+        for start, end, identifier in runs:
+            root = find(identifier)
+            if boundary_roots[root]:
+                connected[row, start : end + 1] = True
     return connected
+
+
+def _target_principal_extents_mm(
+    series: CtSeries, target_mask: np.ndarray
+) -> tuple[float, float, float]:
+    coordinate_parts: list[np.ndarray] = []
+    for index, mask in enumerate(target_mask):
+        rows, columns = np.nonzero(mask)
+        if rows.size == 0:
+            continue
+        coordinates = (
+            series.slices[index].position[None, :]
+            + columns[:, None]
+            * series.column_spacing_mm
+            * series.row_direction[None, :]
+            + rows[:, None]
+            * series.row_spacing_mm
+            * series.column_direction[None, :]
+        )
+        coordinate_parts.append(coordinates)
+    if not coordinate_parts:
+        raise PhantomCtDerivationError("target mask contains no voxel centres")
+    coordinates = np.concatenate(coordinate_parts, axis=0)
+    centered = coordinates - np.mean(coordinates, axis=0)
+    covariance = centered.T @ centered / coordinates.shape[0]
+    _eigenvalues, principal_axes = np.linalg.eigh(covariance)
+    projections = coordinates @ principal_axes
+    extents: list[float] = []
+    for axis_index in range(3):
+        axis = principal_axes[:, axis_index]
+        voxel_support = (
+            abs(float(np.dot(axis, series.row_direction)))
+            * series.column_spacing_mm
+            + abs(float(np.dot(axis, series.column_direction)))
+            * series.row_spacing_mm
+            + abs(float(np.dot(axis, series.normal_direction)))
+            * series.slice_spacing_mm
+        )
+        extents.append(
+            float(np.ptp(projections[:, axis_index])) + voxel_support
+        )
+    return tuple(sorted(extents))  # type: ignore[return-value]
 
 
 def _replacement_analysis(
@@ -783,9 +860,15 @@ def _replacement_analysis(
         else:
             replacement_hu.append(per_slice_reference[index])
     occupied = np.flatnonzero(np.any(target_mask, axis=(1, 2)))
-    target_thickness_mm = (
+    target_stack_extent_mm = (
         float(series.slices[int(occupied[-1])].distance_mm - series.slices[int(occupied[0])].distance_mm)
         + series.slice_spacing_mm
+    )
+    target_principal_extents_mm = _target_principal_extents_mm(series, target_mask)
+    target_thickness_mm = target_principal_extents_mm[0]
+    target_thickness_range_dimension_count = sum(
+        TARGET_THICKNESS_MIN_MM <= extent <= TARGET_THICKNESS_MAX_MM
+        for extent in target_principal_extents_mm
     )
     voxel_volume_mm3 = (
         series.row_spacing_mm * series.column_spacing_mm * series.slice_spacing_mm
@@ -826,6 +909,13 @@ def _replacement_analysis(
             f"target occupied thickness {target_thickness_mm:.3f} mm is outside "
             f"{TARGET_THICKNESS_MIN_MM:g} to {TARGET_THICKNESS_MAX_MM:g} mm"
         )
+    if target_thickness_range_dimension_count != 1:
+        warnings.append(
+            "target ROI has "
+            f"{target_thickness_range_dimension_count} principal extents within "
+            f"{TARGET_THICKNESS_MIN_MM:g} to {TARGET_THICKNESS_MAX_MM:g} mm; "
+            "a whole layer is expected to have exactly one thickness-like extent"
+        )
     analysis = {
         "reference_statistics": reference_stats,
         "target_before_statistics": target_before_stats,
@@ -836,6 +926,11 @@ def _replacement_analysis(
         "reference_volume_cm3": reference_count * voxel_volume_mm3 / 1000.0,
         "voxel_volume_mm3": voxel_volume_mm3,
         "target_thickness_mm": target_thickness_mm,
+        "target_principal_extents_mm": list(target_principal_extents_mm),
+        "target_thickness_range_dimension_count": (
+            target_thickness_range_dimension_count
+        ),
+        "target_stack_extent_mm": target_stack_extent_mm,
         "target_boundary_contact": boundary_contact,
         "target_boundary_connected_air_voxel_count": outside_air_count,
         "fallback_slice_indices": fallback_indices,
