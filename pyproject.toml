@@ -33,6 +33,7 @@ dicomxphits-prepare-rtdose = "dicomxphits.prepare_rtdose:prepare_main"
 dicomxphits-run-rtdose = "dicomxphits.prepare_rtdose:run_main"
 dicomxphits-fix-rtdose-coordinates = "dicomxphits.fix_coordinates:main"
 dicomxphits-run-gpr-compare = "dicomxphits.run_gpr_compare:main"
+dicomxphits-replace-ct-layer-with-water = "dicomxphits.replace_ct_layer_with_water:main"
 dicomxphits-gui = "dicomxphits.gui:main"
 
 [tool.pytest.ini_options]

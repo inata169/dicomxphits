@@ -30,6 +30,10 @@ Choose the path that matches your purpose:
 - **CLI users and maintainers** — use the
   [CLI and Technical Reference](docs/cli-reference.md) for complete commands,
   provenance gates, dose semantics, coordinate handling, and recovery rules.
+- **Non-patient phantom CT derivation** — use the
+  [Phantom CT Water Replacement Guide](docs/phantom-ct-water-replacement.md)
+  to create a new calculation-only CT series from explicit target and clean-
+  water RTSTRUCT ROIs without overwriting the source CT.
 - **Contributors** — use the
   [development guidance](docs/development.md) and current specifications under
   `openspec/specs/`.

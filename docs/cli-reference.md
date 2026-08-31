@@ -8,6 +8,31 @@ The real-tool examples below use Windows PowerShell and placeholder paths
 outside the repository. They require separately obtained licensed tools and an
 explicitly confirmed non-patient phantom; they are not Dev Container commands.
 
+## Non-Patient Phantom CT Water Replacement
+
+Create a calculation-only derived CT series from an explicit whole-layer ROI
+and a separate clean-water reference ROI:
+
+```powershell
+dicomxphits-replace-ct-layer-with-water `
+  --ct-dir "C:\outside-repo\phantom\source-ct" `
+  --rtstruct "C:\outside-repo\phantom\RTSTRUCT.dcm" `
+  --target-roi "Water_CC13_2cm" `
+  --reference-roi "Water_reference" `
+  --output-dir "C:\outside-repo\phantom\derived-water-ct" `
+  --confirm-non-patient-phantom
+```
+
+The source CT and RTSTRUCT remain unchanged. The output is a new CT series with
+new series and instance UIDs, JSON/text QC reports, and a comparison PNG. The
+command fails closed on structural ambiguity and stops on QC warnings unless
+the operator separately supplies `--accept-qc-warnings` after review. The
+original RTSTRUCT is not rewritten and continues to reference the source CT.
+
+See the complete ROI, pixel representation, QC, Monaco reassociation, and
+CT2PHITS boundary in the
+[Phantom CT Water Replacement Guide](phantom-ct-water-replacement.md).
+
 ## Prepare Workspace Adapter
 
 The workspace adapter prepares the v1.0.x starting workspace:
