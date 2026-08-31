@@ -157,6 +157,23 @@ Do not mix that parser fix into `add-phantom-ct-water-replacement`. Keep this
 phantom-derived-CT branch intact, and create the independent bug-fix branch
 from `main` only after explicit human approval to implement the correction.
 
+### Subsequent parser incident resolution
+
+The independent parser correction was completed in pull request #57 and
+normally merged into `main` as merge commit `87c61d9` on 2026-09-01. The
+bug-fix branch was deleted after merge. The correction was kept separate from
+this branch and did not change PHITS physics, the CT wrapper, accelerator
+geometry, dose, MU, or absolute-dose calibration.
+
+The reported SumTally failure was a cascading gate failure, not a separate
+calculation error: the parser rejection prevented the staged PHITS tally from
+being promoted to its manifest-declared public output path, so
+`generate_sumtally` could not find the required public `deposit-target-3D.out`.
+The disposition of the retained staging outputs remains undecided. Do not copy,
+move, delete, or promote them manually, and do not edit the failed summary.
+Either rerunning PHITS or attempting a provenance-preserving recovery of those
+outputs requires a separate human approval and reviewed procedure.
+
 ## Required human preparation before resuming
 
 Only `Water_CC13_2cm` needs to be redrawn in Monaco. Leave the validated
@@ -243,16 +260,17 @@ so an in-tree pytest base directory can create an environment-induced failure.
 - The active OpenSpec delta has not been promoted or archived.
 - The branch has not been pushed, reviewed in a pull request, merged, or
   deleted.
-- The independent PHITS 3.35 geometry-diagnostic parser regression has been
-  diagnosed but not corrected; its retained staged tally has not been
-  promoted or used downstream.
+- The independent PHITS 3.35 geometry-diagnostic parser regression was fixed
+  and merged through pull request #57; its retained staged tally has not been
+  promoted or used downstream, and its disposition remains undecided.
 - Existing CT2PHITS selection, accelerator geometry, beam physics, dose, MU,
   normalization, and the public fixed-field 3D-CRT scope were not changed by
   this helper.
 
 The correct stopping state is an active, tested implementation with a
-real-data ROI-definition blocker, plus a separately diagnosed parser bug in
-the main-branch PHITS completion gate. Resume the parser work on its own branch
-only after approval, and resume this branch from target-ROI correction and
-read-only preflight. Do not restart the phantom helper implementation and do
-not treat the synthetic test result as real-data acceptance.
+real-data ROI-definition blocker, plus a parser correction merged separately
+into `main` and an unresolved decision about the retained staging outputs.
+Resume this branch from target-ROI correction and read-only preflight. Treat
+any PHITS rerun or provenance-preserving output recovery as separate work that
+requires human approval. Do not restart the phantom helper implementation and
+do not treat the synthetic test result as real-data acceptance.
