@@ -63,6 +63,14 @@ def test_nonzero_phits_geometry_diagnostic_is_not_clean(
         CLEAN_SUMMARY + "Number of lost particles = 0\n",
         CLEAN_SUMMARY.replace("Number of geometry recovering : 0", "Number of geometry recovering = -1"),
         CLEAN_SUMMARY.replace("Number of unrecovered errors     0", "Number of unrecovered errors = NaN"),
+        CLEAN_SUMMARY.replace(
+            "Number of lost particles = 0",
+            "Number of lost particles = 0 = 2",
+        ),
+        CLEAN_SUMMARY.replace(
+            "Number of lost particles = 0",
+            "Number of lost particles = 0 1",
+        ),
     ],
 )
 def test_missing_duplicate_or_malformed_geometry_summary_fails(text: str) -> None:

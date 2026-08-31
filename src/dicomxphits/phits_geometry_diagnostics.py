@@ -16,7 +16,7 @@ GEOMETRY_DIAGNOSTIC_LABELS = {
 _COUNT_PATTERNS = {
     key: re.compile(
         rf"^\s*{re.escape(label)}\s*(?:=|:)?\s*"
-        r"([0-9]{1,20})(?![0-9])(?:\s.*)?$",
+        r"([0-9]{1,20})\s*$",
         re.IGNORECASE,
     )
     for key, label in GEOMETRY_DIAGNOSTIC_LABELS.items()
