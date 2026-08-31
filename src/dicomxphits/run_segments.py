@@ -146,8 +146,7 @@ def collect_root_outputs(
             )
         phits_target = output_dir / ROOT_PHITS_OUT
         guard.prepare(phits_target)
-        if not phits_target.exists():
-            guard.copy_file(phits_source, phits_target, overwrite=False)
+        guard.copy_file(phits_source, phits_target)
         collected["phits_out_path"] = str(phits_target)
     return collected
 

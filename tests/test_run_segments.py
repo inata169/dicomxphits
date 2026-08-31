@@ -24,6 +24,7 @@ from dicomxphits.run_segments import (
     run_segments,
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError
+from dicomxphits.sumtally_inputs import file_sha256
 
 
 CLEAN_PHITS_GEOMETRY_SUMMARY = """\
@@ -211,6 +212,44 @@ def test_run_segments_records_success_summary_and_collects_root_outputs(tmp_path
     assert Path(summary["segments"][0]["phits_out_path"]).is_file()
     assert summary["segments"][1]["status"] == "skipped"
     assert read_summary(workspace)["status"] == "success"
+
+
+def test_clean_rerun_replaces_stale_segment_phits_diagnostic(tmp_path):
+    workspace, manifest = write_workspace(tmp_path)
+    expected = workspace / manifest["segments"][0]["expected_output_path"]
+    nonclean_summary = CLEAN_PHITS_GEOMETRY_SUMMARY.replace(
+        "Number of geometry recovering = 0",
+        "Number of geometry recovering = 1",
+    )
+
+    failed = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(
+            workspace,
+            [expected],
+            phits_summary=nonclean_summary,
+        ),
+    )
+    stale_phits_out = Path(failed["segments"][0]["phits_out_path"])
+    assert failed["status"] == "failed"
+    assert stale_phits_out.read_text(encoding="utf-8") == nonclean_summary
+
+    succeeded = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(workspace, [expected]),
+    )
+    current_segment = succeeded["segments"][0]
+
+    assert succeeded["status"] == "success"
+    assert stale_phits_out.read_text(encoding="utf-8") == (
+        CLEAN_PHITS_GEOMETRY_SUMMARY
+    )
+    assert current_segment["geometry_diagnostics"]["status"] == "clean"
+    assert current_segment["phits_out_sha256"] == file_sha256(stale_phits_out)
 
 
 @pytest.mark.parametrize(
