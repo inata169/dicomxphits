@@ -16,7 +16,13 @@ GEOMETRY_DIAGNOSTIC_LABELS = {
 _COUNT_PATTERNS = {
     key: re.compile(
         rf"^\s*{re.escape(label)}\s*(?:=|:)?\s*"
-        r"([0-9]{1,20})\s*$",
+        r"([0-9]{1,20})"
+        + (
+            r"(?:\s+/\s+nlost\s+=\s+[0-9]{1,20})?"
+            if key == "lost_particles"
+            else ""
+        )
+        + r"\s*$",
         re.IGNORECASE,
     )
     for key, label in GEOMETRY_DIAGNOSTIC_LABELS.items()

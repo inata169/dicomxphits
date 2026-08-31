@@ -28,7 +28,7 @@ from dicomxphits.sumtally_inputs import file_sha256
 
 
 CLEAN_PHITS_GEOMETRY_SUMMARY = """\
-Number of lost particles = 0
+Number of lost particles     =     0 / nlost =    10000
 Number of geometry recovering = 0
 Number of unrecovered errors = 0
 """
@@ -256,8 +256,8 @@ def test_clean_rerun_replaces_stale_segment_phits_diagnostic(tmp_path):
     "phits_summary",
     [
         CLEAN_PHITS_GEOMETRY_SUMMARY.replace(
-            "Number of lost particles = 0",
-            "Number of lost particles = 1",
+            "Number of lost particles     =     0 / nlost =    10000",
+            "Number of lost particles     =     1 / nlost =    10000",
         ),
         CLEAN_PHITS_GEOMETRY_SUMMARY.replace(
             "Number of geometry recovering = 0",
