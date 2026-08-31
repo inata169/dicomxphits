@@ -47,8 +47,10 @@
 - [ ] 5.3 With separate human approval and explicit RTSTRUCT paths, run bounded
   local validation on the supplied non-patient Lung and Bone CT inputs and
   record results outside the repository; otherwise record it as unverified.
-  The CT folders were only aggregated by file count and total size without
-  opening DICOM content. Matching RTSTRUCT paths have not yet been supplied, so
-  real-data preflight and derivation remain unverified.
+  A bounded read-only preflight confirmed that both supplied CT series have
+  consistent conventional geometry and that each supplied RTSTRUCT references
+  its CT frame and series. Both RTSTRUCTs lack the separately defined whole-
+  layer target and clean-water reference ROIs, so mask/QC validation and
+  derivation remain unverified. No output was created.
 - [ ] 5.4 Promote the accepted delta, archive the completed change, and strictly
   validate the resulting OpenSpec tree.
