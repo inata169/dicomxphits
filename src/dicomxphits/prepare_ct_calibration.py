@@ -571,7 +571,7 @@ def _render_gui_chassis_input(
         "[ Cell ]",
         " 9999 -1 999 $ outer void",
         " 1200 2 -1.20e-3 -999 #1201 #2 $ Air in main space",
-        " 1201 0 -98 fill=4000 $ CT phantom wrapper in main space",
+        " 1201 0 -98 #2 fill=4000 $ CT phantom wrapper excluding accelerator",
         " 2 0 11 -12 -13 fill=2 trcl=3 $ accelerator region",
         " 998 0 97 trcl=500 u=4000 $ Air layer outside CT voxel fill",
         " 997 0 -97 trcl=500 fill=5000 u=4000 $ CT voxel phantom fill",

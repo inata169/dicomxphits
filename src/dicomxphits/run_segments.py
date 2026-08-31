@@ -19,7 +19,13 @@ from dicomxphits.prepare_3dcrt_workspace import (
 from dicomxphits.gantry_geometry import (
     require_reusable_gantry_geometry_contract,
 )
+from dicomxphits.phits_geometry_diagnostics import (
+    PhitsGeometryDiagnosticsError,
+    invalid_phits_geometry_diagnostics,
+    parse_phits_geometry_diagnostics_file,
+)
 from dicomxphits.safe_output import UnsafeWorkspacePathError, WorkspaceOutputGuard
+from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
 
 SUMMARY_RELATIVE_PATH = Path("analysis") / "segment_execution_summary.json"
@@ -106,6 +112,7 @@ def blank_segment_summary(segment: dict[str, Any], *, status: str, reason: str |
         "return_code": None,
         "stdout_log_path": None,
         "stderr_log_path": None,
+        "geometry_diagnostics": None,
         "status": status,
         "reason": reason,
     }
@@ -139,8 +146,7 @@ def collect_root_outputs(
             )
         phits_target = output_dir / ROOT_PHITS_OUT
         guard.prepare(phits_target)
-        if not phits_target.exists():
-            guard.copy_file(phits_source, phits_target, overwrite=False)
+        guard.copy_file(phits_source, phits_target)
         collected["phits_out_path"] = str(phits_target)
     return collected
 
@@ -366,6 +372,14 @@ def run_one_segment(
                 shell=False,
                 env=environment,
             )
+            staged_phits_out = execution_root / ROOT_PHITS_OUT
+            try:
+                geometry_diagnostics = parse_phits_geometry_diagnostics_file(
+                    staged_phits_out
+                )
+            except PhitsGeometryDiagnosticsError as exc:
+                geometry_diagnostics = invalid_phits_geometry_diagnostics(str(exc))
+            geometry_clean = geometry_diagnostics.get("status") == "clean"
             staged_expected_output = (
                 execution_root
                 / expected_output.resolve().relative_to(workspace_root.resolve())
@@ -381,6 +395,7 @@ def run_one_segment(
                 result.returncode == 0
                 and staged_expected_output.is_file()
                 and staged_expected_error_output.is_file()
+                and geometry_clean
             ):
                 non_expected_outputs = [
                     output
@@ -409,11 +424,32 @@ def run_one_segment(
                 output_dir,
                 guard=guard,
             )
+            geometry_diagnostics["source_path"] = collected["phits_out_path"]
         finally:
             guard.rmtree(execution_root, missing_ok=True)
 
     output_exists = expected_output.is_file()
-    status = "success" if result.returncode == 0 and output_exists else "failed"
+    status = (
+        "success"
+        if result.returncode == 0 and output_exists and geometry_clean
+        else "failed"
+    )
+    reason = None
+    if status == "failed":
+        if result.returncode != 0:
+            reason = f"PHITS returned nonzero exit code {result.returncode}"
+        elif not geometry_clean:
+            reason = str(
+                geometry_diagnostics.get("reason")
+                or "PHITS reported nonzero geometry diagnostics"
+            )
+        elif not output_exists:
+            reason = "PHITS did not produce all required segment outputs"
+    phits_out_path = (
+        Path(collected["phits_out_path"])
+        if collected["phits_out_path"] is not None
+        else None
+    )
     return {
         "segment_id": str(segment.get("segment_id") or segment.get("segment_index") or "unknown"),
         "phits_input_path": str(phits_input),
@@ -422,9 +458,19 @@ def run_one_segment(
         "stdout_log_path": str(stdout_path),
         "stderr_log_path": str(stderr_path),
         "status": status,
+        "reason": reason,
         "expected_output_exists": output_exists,
+        "expected_output_sha256": (
+            file_sha256(expected_output) if output_exists else None
+        ),
+        "geometry_diagnostics": geometry_diagnostics,
         "batch_out_path": collected["batch_out_path"],
         "phits_out_path": collected["phits_out_path"],
+        "phits_out_sha256": (
+            file_sha256(phits_out_path)
+            if phits_out_path is not None and phits_out_path.is_file()
+            else None
+        ),
     }
 
 
@@ -434,17 +480,19 @@ def build_summary(
     status: str,
     segments: list[dict[str, Any]],
     command_argv: list[str] | None,
+    manifest_digest: str | None = None,
     failure_reason: str | None = None,
 ) -> dict[str, Any]:
     succeeded = sum(1 for segment in segments if segment.get("status") == "success")
     failed = sum(1 for segment in segments if segment.get("status") in {"failed", "gate_failed"})
     skipped = sum(1 for segment in segments if segment.get("status") == "skipped")
     return {
-        "schema_version": "dicomxphits_public_segment_execution_v1",
+        "schema_version": "dicomxphits_public_segment_execution_v2",
         "stage": "run_segments",
         "status": status,
         "stage_status": status,
         "workspace_root": str(workspace_root),
+        "manifest_sha256": manifest_digest,
         "command": {"argv": command_argv or sys.argv},
         "segment_count": len(segments),
         "succeeded": succeeded,
@@ -464,9 +512,11 @@ def run_segments(
 ) -> dict[str, Any]:
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
+    manifest_digest: str | None = None
     try:
         require_execution_paths(paths)
         manifest, _manifest_path = load_manifest(workspace_root)
+        manifest_digest = manifest_sha256(manifest)
         require_reusable_gantry_geometry_contract(manifest)
         raw_segments = manifest.get("segments")
         if not isinstance(raw_segments, list):
@@ -529,6 +579,7 @@ def run_segments(
             status=overall,
             segments=segment_summaries,
             command_argv=command_argv,
+            manifest_digest=manifest_digest,
         )
         write_json(summary_file, summary, case_root=workspace_root)
         return summary
@@ -542,6 +593,7 @@ def run_segments(
             status="gate_failed",
             segments=segment_summaries,
             command_argv=command_argv,
+            manifest_digest=manifest_digest,
             failure_reason=str(exc),
         )
         write_json(summary_file, summary, case_root=workspace_root)

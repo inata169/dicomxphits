@@ -525,7 +525,10 @@ def generate_rectangular_phits_workspace(
         machine_config = load_machine_config(machine_config_path)
         machine_config_source = "user_supplied"
     calibration = (
-        approved_public_model_calibration(machine_config)
+        approved_public_model_calibration(
+            machine_config,
+            transport_geometry_contract=CURRENT_GANTRY_GEOMETRY_CONTRACT,
+        )
         if apply_approved_totfact
         else None
     )
@@ -732,7 +735,10 @@ def prepare_public_3dcrt_workspace(
             else load_machine_config(machine_config_path)
         )
         if apply_approved_totfact:
-            approved_public_model_calibration(preflight_machine_config)
+            approved_public_model_calibration(
+                preflight_machine_config,
+                transport_geometry_contract=CURRENT_GANTRY_GEOMETRY_CONTRACT,
+            )
 
     with tempfile.TemporaryDirectory(prefix="dicomxphits-ct-assets-") as temp_dir:
         ct_preparation = prepare_ct2phits_assets(

@@ -20,6 +20,9 @@ from dicomxphits.gantry_geometry import (
     PREVIOUS_GANTRY_GEOMETRY_CONTRACT,
 )
 from dicomxphits.gui import GuiConfig, StageResult, run_workspace_recovery
+from dicomxphits.phits_geometry_diagnostics import (
+    GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+)
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 from dicomxphits.workspace_recovery import (
     FULL_DOWNSTREAM_SEQUENCE,
@@ -125,9 +128,11 @@ def write_recoverable_workspace(
         workspace / segment["expected_output_path"],
         "synthetic PHITS tally",
     )
-    write_file(
-        workspace / "analysis" / "segment_execution_summary.json",
-        json.dumps({"stage_status": "success"}),
+    phits_out = write_file(
+        output.parent / "phits.out",
+        "Number of lost particles = 0\n"
+        "Number of geometry recovering = 0\n"
+        "Number of unrecovered errors = 0\n",
     )
     recorded_root = old_root or str(workspace.resolve())
     recorded_output = (
@@ -135,6 +140,41 @@ def write_recoverable_workspace(
         if old_root is None
         else old_root.rstrip("\\/")
         + "\\segments\\seg_001\\deposit-target-3D.out"
+    )
+    recorded_phits_out = (
+        str(phits_out.resolve())
+        if old_root is None
+        else old_root.rstrip("\\/") + "\\segments\\seg_001\\phits.out"
+    )
+    write_file(
+        workspace / "analysis" / "segment_execution_summary.json",
+        json.dumps(
+            {
+                "schema_version": "dicomxphits_public_segment_execution_v2",
+                "stage_status": "success",
+                "workspace_root": recorded_root,
+                "manifest_sha256": manifest_sha256(manifest),
+                "segments": [
+                    {
+                        "segment_id": "seg_001",
+                        "status": "success",
+                        "expected_output_path": recorded_output,
+                        "expected_output_sha256": file_sha256(output),
+                        "phits_out_path": recorded_phits_out,
+                        "phits_out_sha256": file_sha256(phits_out),
+                        "geometry_diagnostics": {
+                            "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+                            "status": "clean",
+                            "counts": {
+                                "lost_particles": 0,
+                                "geometry_recovering": 0,
+                                "unrecovered_errors": 0,
+                            },
+                        },
+                    }
+                ],
+            }
+        ),
     )
     write_file(
         workspace / "analysis" / "sumtally_execution_summary.json",
@@ -166,7 +206,7 @@ def test_old_nonzero_gantry_transport_is_not_reusable(tmp_path: Path) -> None:
     assert "rerun PHITS" in inspection.message
 
 
-def test_legacy_zero_angle_transport_is_not_reusable_under_v4(tmp_path: Path) -> None:
+def test_legacy_zero_angle_transport_is_not_reusable_under_v5(tmp_path: Path) -> None:
     workspace = write_recoverable_workspace(
         tmp_path,
         gantry_angle_deg=0.0,
@@ -180,7 +220,7 @@ def test_legacy_zero_angle_transport_is_not_reusable_under_v4(tmp_path: Path) ->
     assert "rerun PHITS" in inspection.message
 
 
-def test_v3_nonzero_collimator_transport_is_not_reusable(tmp_path: Path) -> None:
+def test_v4_nonzero_collimator_transport_is_not_reusable(tmp_path: Path) -> None:
     workspace = write_recoverable_workspace(
         tmp_path,
         gantry_angle_deg=0.0,
@@ -195,7 +235,7 @@ def test_v3_nonzero_collimator_transport_is_not_reusable(tmp_path: Path) -> None
     assert "rerun PHITS" in inspection.message
 
 
-def test_v3_zero_collimator_transport_is_not_reusable(
+def test_v4_zero_collimator_transport_is_not_reusable(
     tmp_path: Path,
 ) -> None:
     workspace = write_recoverable_workspace(
@@ -225,7 +265,7 @@ def test_v3_zero_collimator_transport_is_not_reusable(
         },
     ],
 )
-def test_v3_contract_rejects_nonzero_gantry_transport(
+def test_v4_contract_rejects_nonzero_gantry_transport(
     tmp_path: Path,
     resolved_mlc_positions_mm: dict[str, list[float]] | None,
 ) -> None:
@@ -241,6 +281,38 @@ def test_v3_contract_rejects_nonzero_gantry_transport(
     assert inspection.state == RECOVERY_INVALID
     assert inspection.phits_reusable is False
     assert "rerun PHITS" in inspection.message
+
+
+@pytest.mark.parametrize(
+    "diagnostics",
+    [
+        None,
+        {
+            "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+            "status": "error",
+            "counts": {
+                "lost_particles": 0,
+                "geometry_recovering": 1,
+                "unrecovered_errors": 0,
+            },
+        },
+    ],
+)
+def test_missing_or_nonclean_geometry_diagnostics_block_phits_reuse(
+    tmp_path: Path,
+    diagnostics: dict[str, object] | None,
+) -> None:
+    workspace = write_recoverable_workspace(tmp_path)
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["segments"][0]["geometry_diagnostics"] = diagnostics
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "diagnostic evidence" in inspection.message
 
 
 def test_legacy_zero_gantry_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> None:
@@ -387,6 +459,36 @@ def test_changed_segment_output_blocks_phits_reuse(tmp_path: Path) -> None:
     assert inspection.state == RECOVERY_INVALID
     assert inspection.phits_reusable is False
     assert "SHA-256" in inspection.message
+
+
+def test_changed_phits_geometry_summary_blocks_phits_reuse(tmp_path: Path) -> None:
+    workspace = write_recoverable_workspace(tmp_path)
+    write_file(
+        workspace / "segments" / "seg_001" / "phits.out",
+        "Number of lost particles = 0\n"
+        "Number of geometry recovering = 1\n"
+        "Number of unrecovered errors = 0\n",
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "SHA-256" in inspection.message
+
+
+def test_geometry_diagnostics_must_bind_current_manifest(tmp_path: Path) -> None:
+    workspace = write_recoverable_workspace(tmp_path)
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["manifest_sha256"] = "0" * 64
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "current manifest" in inspection.message
 
 
 def test_missing_segment_output_blocks_phits_reuse(tmp_path: Path) -> None:

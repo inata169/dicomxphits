@@ -371,10 +371,14 @@ the public research default. The model-specific
 `totfact_per_MU = 8.7608E+11 source/MU` was derived from the approved public CT
 reference calculation and accepted on 2026-07-30. The default runtime writes
 that exact value into PHITS inputs only after the machine-model identity
-matches the calibrated public default; a changed model is rejected as a stale
-factor before output is created. This education and research calibration
-carries no clinical commissioning, vendor certification, or universal
-clinical-beam claim.
+and accepted transport-topology identity match the calibrated public default;
+a changed model or stale pre-v5 topology binding is rejected before output is
+created. The unchanged numerical factor was reaccepted for corrected v5
+topology on 2026-08-31 after human review of repository-safe evidence that the
+reference calibration geometry was non-overlapping and transport-equivalent.
+No external PHITS dose comparison was performed for that reacceptance. This
+education and research calibration carries no clinical commissioning, vendor
+certification, or universal clinical-beam claim.
 
 ## External Tool Paths
 

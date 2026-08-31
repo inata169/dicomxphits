@@ -126,12 +126,13 @@ preserve the evidence and do not perform manual deletion.
 
 The reviewed post-release `main` baseline contains the MLCX patient-axis
 reflection correction from pull request #44 and the collimator-direction
-correction from pull request #47. Prepared-workspace geometry provenance is
-now `dicomxphits_iec_gantry_mlcx_collimator_geometry_v4`, and all pre-v4 PHITS
-transport evidence is rejected. Neither correction is contained in the
-`v1.0.2` tag or its formerly published offline ZIP. The v1.0.2 tag and
-historical artifact record remain bound to the exact release commit and
-manifest recorded above.
+correction from pull request #47. The active CT/accelerator topology correction
+advances newly prepared geometry provenance to
+`dicomxphits_iec_gantry_mlcx_collimator_ct_accelerator_geometry_v5`. All v4 and
+older PHITS transport is stale for v5 reuse, and active segment success also
+requires zero lost-particle, geometry-recovering, and unrecovered-error counts.
+The historical v1.0.2 and v1.0.3 tag and artifact records remain bound to their
+exact release commits and manifests.
 
 The RTDOSE provenance correction is complete. It binds PLAN-dose acceptance to
 the frozen RT Plan, complete treatment delivery, canonical segment manifest,

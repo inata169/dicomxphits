@@ -126,7 +126,7 @@ def test_default_packages_use_64_batches_on_each_pc(tmp_path: Path) -> None:
     assert "fill=0:3 0:2 0:1" in input_a
     assert "ct_chassis = gui_validated_ct2phits_air_universe" in input_a
     assert "1200 2 -1.20e-3 -999 #1201 #2" in input_a
-    assert "1201 0 -98 fill=4000" in input_a
+    assert "1201 0 -98 #2 fill=4000" in input_a
     assert "998 0 97 trcl=500 u=4000" in input_a
     assert "997 0 -97 trcl=500 fill=5000 u=4000" in input_a
     assert "901 0 -901 fill=1 trcl=2 u=2" in input_a

@@ -147,12 +147,24 @@ Sumtally Generate and Sumtally Run before rerunning RTDOSE Prepare and Run.
 
 Existing segment PHITS outputs remain reusable without PHITS transport only
 when their manifest records the current
-`dicomxphits_iec_gantry_mlcx_collimator_geometry_v4` contract. Transport
-evidence with v3 or older, missing, mixed, or ambiguous geometry provenance
-requires a newly prepared workspace and PHITS, Sumtally, and RTDOSE
-recalculation regardless of recorded gantry, collimator, or MLC values.
+`dicomxphits_iec_gantry_mlcx_collimator_ct_accelerator_geometry_v5` contract
+and every active segment records unambiguous zero values for PHITS Category-I
+`Number of lost particles`, `Number of geometry recovering`, and
+`Number of unrecovered errors`. Transport evidence with v4 or older, missing,
+mixed, or ambiguous geometry provenance or geometry diagnostics requires a
+newly prepared workspace and PHITS, Sumtally, and RTDOSE recalculation
+regardless of recorded gantry, collimator, MLC, field, or CT FOV values.
 Mirroring or relabeling only the final DICOM is not a repair for transport
 performed with an obsolete geometry convention.
+
+The v5 renderer excludes the complete transformed accelerator cell from the CT
+wrapper. It does not crop the CT, apply an FOV threshold, change SAD/SSD, or
+narrow the circumscribed source cone. The unchanged public
+`8.7608E+11 source/MU` factor was explicitly reaccepted for v5 on 2026-08-31
+from human-reviewed repository-safe evidence that the reference calibration
+geometry was non-overlapping and transport-equivalent. That reacceptance did
+not include an external PHITS dose comparison. A pre-v5 factor binding remains
+stale and is rejected.
 
 For a workspace with stale or factor-one weighted-average evidence, reopen it
 with **Open existing case…** and select **Create DICOM RT Dose**. The contextual
