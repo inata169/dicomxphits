@@ -130,7 +130,7 @@ def write_recoverable_workspace(
     )
     phits_out = write_file(
         output.parent / "phits.out",
-        "Number of lost particles = 0\n"
+        "Number of lost particles     =     0 / nlost =    10000\n"
         "Number of geometry recovering = 0\n"
         "Number of unrecovered errors = 0\n",
     )
