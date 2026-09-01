@@ -726,6 +726,26 @@ def test_rtstruct_file_meta_sop_identity_mismatch_is_rejected(
     assert not case["output"].exists()
 
 
+def test_selected_roi_number_must_be_unique(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    rtstruct = pydicom.dcmread(case["rtstruct"])
+    duplicate = Dataset()
+    duplicate.ROINumber = rtstruct.StructureSetROISequence[0].ROINumber
+    duplicate.ReferencedFrameOfReferenceUID = rtstruct.StructureSetROISequence[
+        0
+    ].ReferencedFrameOfReferenceUID
+    duplicate.ROIName = "Different_name_same_number"
+    duplicate.ROIGenerationAlgorithm = "MANUAL"
+    rtstruct.StructureSetROISequence.append(duplicate)
+    _save_dataset(rtstruct, case["rtstruct"])
+
+    with pytest.raises(
+        PhantomCtDerivationError, match="ROI number must occur exactly once"
+    ):
+        _derive(case)
+    assert not case["output"].exists()
+
+
 def test_target_reference_overlap_is_rejected(tmp_path: Path) -> None:
     ct = _write_ct_series(tmp_path / "ct")
     rtstruct = _write_rtstruct(

@@ -535,9 +535,10 @@ def _referenced_series_instance_uids(
 
 
 def _roi_number(rtstruct: Dataset, *, name: str, frame_uid: str) -> int:
+    roi_items = tuple(getattr(rtstruct, "StructureSetROISequence", ()))
     matches = [
         item
-        for item in getattr(rtstruct, "StructureSetROISequence", ())
+        for item in roi_items
         if str(getattr(item, "ROIName", "") or "") == name
     ]
     if len(matches) != 1:
@@ -548,9 +549,22 @@ def _roi_number(rtstruct: Dataset, *, name: str, frame_uid: str) -> int:
     if str(getattr(item, "ReferencedFrameOfReferenceUID", "") or "") != frame_uid:
         raise PhantomCtDerivationError(f"RTSTRUCT ROI frame does not match CT: {name!r}")
     try:
-        return int(item.ROINumber)
+        roi_number = int(item.ROINumber)
     except (AttributeError, TypeError, ValueError) as exc:
         raise PhantomCtDerivationError(f"RTSTRUCT ROI number is invalid: {name!r}") from exc
+    occurrences = 0
+    for candidate in roi_items:
+        try:
+            candidate_number = int(candidate.ROINumber)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if candidate_number == roi_number:
+            occurrences += 1
+    if occurrences != 1:
+        raise PhantomCtDerivationError(
+            f"RTSTRUCT ROI number must occur exactly once: {roi_number}"
+        )
+    return roi_number
 
 
 def _roi_contours(rtstruct: Dataset, *, roi_number: int, name: str) -> Sequence[Dataset]:
