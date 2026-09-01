@@ -661,6 +661,28 @@ def test_output_below_resolved_ct_root_is_rejected(tmp_path: Path) -> None:
     assert not nested_output.exists()
 
 
+def test_derive_parses_the_resolved_rtstruct_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _case(tmp_path)
+    actual_rtstruct = Path(case["rtstruct"]).resolve()
+    unused = actual_rtstruct.parent / "unused"
+    unused.mkdir()
+    noncanonical_rtstruct = unused / ".." / actual_rtstruct.name
+
+    def capture_path(rtstruct_path: Path, **kwargs: object):
+        assert Path(rtstruct_path) == actual_rtstruct
+        return load_rtstruct_masks(rtstruct_path, **kwargs)
+
+    monkeypatch.setattr(
+        "dicomxphits.replace_ct_layer_with_water.load_rtstruct_masks",
+        capture_path,
+    )
+    result = _derive(case, rtstruct=noncanonical_rtstruct)
+
+    assert result.output_dir == case["output"]
+
+
 def test_rtstruct_series_reference_mismatch_is_rejected(tmp_path: Path) -> None:
     ct = _write_ct_series(tmp_path / "ct")
     rtstruct = _write_rtstruct(

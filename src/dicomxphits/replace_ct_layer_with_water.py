@@ -1322,7 +1322,7 @@ def derive_phantom_ct(
     rtstruct_resolved = Path(rtstruct).resolve()
     rtstruct_sha256 = _sha256(rtstruct_resolved)
     target_mask, reference_mask = load_rtstruct_masks(
-        rtstruct,
+        rtstruct_resolved,
         series=series,
         target_roi=target_roi,
         reference_roi=reference_roi,
