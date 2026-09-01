@@ -1143,8 +1143,15 @@ def _derived_dataset(
     dataset.PixelData = pixel_data
     dataset.SeriesInstanceUID = new_series_uid
     dataset.SOPInstanceUID = new_sop_uid
-    if "InstanceCreatorUID" in dataset:
-        del dataset.InstanceCreatorUID
+    for keyword in (
+        "InstanceCreatorUID",
+        "SOPInstanceStatus",
+        "SOPAuthorizationDateTime",
+        "SOPAuthorizationComment",
+        "AuthorizationEquipmentCertificationNumber",
+    ):
+        if keyword in dataset:
+            del dataset[keyword]
     dataset.file_meta.MediaStorageSOPClassUID = source_class_uid
     dataset.file_meta.MediaStorageSOPInstanceUID = new_sop_uid
     for keyword in ("ImplementationClassUID", "ImplementationVersionName"):

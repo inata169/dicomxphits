@@ -907,6 +907,27 @@ def test_derived_instance_uses_writer_implementation_identity(tmp_path: Path) ->
         assert str(derived.file_meta.ImplementationVersionName) != source_version_name
 
 
+def test_derived_instance_removes_source_sop_authorization(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    source_authorization = {
+        "SOPInstanceStatus": "ORIGINAL",
+        "SOPAuthorizationDateTime": "20260831120000+0900",
+        "SOPAuthorizationComment": "Authorized source instance",
+        "AuthorizationEquipmentCertificationNumber": "SOURCE-EQUIPMENT",
+    }
+    for path in case["ct"]["paths"]:
+        dataset = pydicom.dcmread(path)
+        for keyword, value in source_authorization.items():
+            setattr(dataset, keyword, value)
+        _save_dataset(dataset, path)
+
+    result = _derive(case)
+    for path in result.dicom_files:
+        derived = pydicom.dcmread(path)
+        for keyword in source_authorization:
+            assert keyword not in derived
+
+
 def test_derived_dataset_removes_stale_pixel_extrema(tmp_path: Path) -> None:
     case = _case(tmp_path)
     for path in case["ct"]["paths"]:
