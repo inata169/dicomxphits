@@ -796,7 +796,7 @@ def _slice_hu(ct_slice: CtSlice) -> np.ndarray:
     return ct_slice.stored_values.astype(np.float64) * ct_slice.slope + ct_slice.intercept
 
 
-def _pixel_padding_mask(ct_slice: CtSlice) -> np.ndarray:
+def _pixel_padding_bounds(ct_slice: CtSlice) -> tuple[int, int] | None:
     dataset = ct_slice.dataset
     has_value = "PixelPaddingValue" in dataset
     has_limit = "PixelPaddingRangeLimit" in dataset
@@ -805,7 +805,7 @@ def _pixel_padding_mask(ct_slice: CtSlice) -> np.ndarray:
             "CT PixelPaddingRangeLimit requires PixelPaddingValue"
         )
     if not has_value:
-        return np.zeros_like(ct_slice.stored_values, dtype=bool)
+        return None
     try:
         value = int(dataset.PixelPaddingValue)
         limit = int(dataset.PixelPaddingRangeLimit) if has_limit else value
@@ -821,7 +821,14 @@ def _pixel_padding_mask(ct_slice: CtSlice) -> np.ndarray:
         raise PhantomCtDerivationError(
             "CT pixel padding attributes are outside the declared stored-pixel range"
         )
-    lower, upper = sorted((value, limit))
+    return tuple(sorted((value, limit)))
+
+
+def _pixel_padding_mask(ct_slice: CtSlice) -> np.ndarray:
+    bounds = _pixel_padding_bounds(ct_slice)
+    if bounds is None:
+        return np.zeros_like(ct_slice.stored_values, dtype=bool)
+    lower, upper = bounds
     return (ct_slice.stored_values >= lower) & (ct_slice.stored_values <= upper)
 
 
@@ -1100,6 +1107,11 @@ def _encode_replacement(
         raise PhantomCtDerivationError(
             "inverse-rescaled water value is outside the declared stored-pixel range "
             f"for source SOP {ct_slice.source_sop_uid}"
+        )
+    padding_bounds = _pixel_padding_bounds(ct_slice)
+    if padding_bounds is not None and padding_bounds[0] <= stored <= padding_bounds[1]:
+        raise PhantomCtDerivationError(
+            "inverse-rescaled water value encodes as CT pixel padding"
         )
     containers = ct_slice.containers.copy()
     code = stored & pixel_format.stored_mask

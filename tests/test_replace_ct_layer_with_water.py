@@ -585,6 +585,36 @@ def test_pixel_padding_values_in_rois_are_rejected(
     assert not case["output"].exists()
 
 
+def test_replacement_that_encodes_as_pixel_padding_is_rejected(
+    tmp_path: Path,
+) -> None:
+    ct = _write_ct_series(
+        tmp_path / "ct",
+        slopes=(1.0, 1.0, 1.0, 1.0),
+        intercepts=(0.0, 20.0, 0.0, 0.0),
+        water_hu=(20.0, 100.0, 20.0, 20.0),
+    )
+    rtstruct = _write_rtstruct(
+        tmp_path / "RTSTRUCT.dcm",
+        ct,
+        target_slices=(1,),
+        reference_slices=(0,),
+    )
+    target_path = ct["paths"][1]
+    dataset = pydicom.dcmread(target_path)
+    assert not np.any(dataset.pixel_array == 0)
+    dataset.add_new(0x00280120, "SS", -1)
+    dataset.add_new(0x00280121, "SS", 1)
+    _save_dataset(dataset, target_path)
+    case = {"ct": ct, "rtstruct": rtstruct, "output": tmp_path / "derived"}
+
+    with pytest.raises(
+        PhantomCtDerivationError, match="encodes as CT pixel padding"
+    ):
+        _derive(case, accept_qc_warnings=True)
+    assert not case["output"].exists()
+
+
 def test_existing_and_overlapping_output_paths_are_rejected(tmp_path: Path) -> None:
     case = _case(tmp_path)
     case["output"].mkdir()
