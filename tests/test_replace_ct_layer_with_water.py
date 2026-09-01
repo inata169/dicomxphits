@@ -548,6 +548,29 @@ def test_existing_and_overlapping_output_paths_are_rejected(tmp_path: Path) -> N
         _derive(case, output_dir=nested_output)
 
 
+def test_output_created_during_preflight_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = _case(tmp_path)
+    sentinel = case["output"] / "sentinel.txt"
+
+    def create_competing_output(*args: object, **kwargs: object):
+        result = _replacement_analysis(*args, **kwargs)
+        case["output"].mkdir()
+        sentinel.write_text("preserve", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        "dicomxphits.replace_ct_layer_with_water._replacement_analysis",
+        create_competing_output,
+    )
+    with pytest.raises(PhantomCtDerivationError, match="already exists"):
+        _derive(case)
+
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert set(case["output"].iterdir()) == {sentinel}
+
+
 def test_output_below_resolved_ct_root_is_rejected(tmp_path: Path) -> None:
     actual_parent = tmp_path / "actual"
     actual_parent.mkdir()
@@ -598,6 +621,42 @@ def test_rtstruct_series_reference_mismatch_is_rejected(tmp_path: Path) -> None:
     )
     case = {"ct": ct, "rtstruct": rtstruct, "output": tmp_path / "derived"}
     with pytest.raises(PhantomCtDerivationError, match="does not reference"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
+def test_rtstruct_series_must_be_nested_in_selected_frame(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    rtstruct = pydicom.dcmread(case["rtstruct"])
+    selected_frame = rtstruct.ReferencedFrameOfReferenceSequence[0]
+    mismatched_frame = Dataset()
+    mismatched_frame.FrameOfReferenceUID = _uid()
+    mismatched_frame.RTReferencedStudySequence = selected_frame.RTReferencedStudySequence
+    del selected_frame.RTReferencedStudySequence
+    rtstruct.ReferencedFrameOfReferenceSequence.append(mismatched_frame)
+    _save_dataset(rtstruct, case["rtstruct"])
+
+    with pytest.raises(PhantomCtDerivationError, match="frame hierarchy"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
+def test_contour_image_must_be_listed_in_selected_frame_series(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+    rtstruct = pydicom.dcmread(case["rtstruct"])
+    referenced_series = (
+        rtstruct.ReferencedFrameOfReferenceSequence[0]
+        .RTReferencedStudySequence[0]
+        .RTReferencedSeriesSequence[0]
+    )
+    referenced_series.ContourImageSequence = list(
+        referenced_series.ContourImageSequence[1:]
+    )
+    _save_dataset(rtstruct, case["rtstruct"])
+
+    with pytest.raises(PhantomCtDerivationError, match="frame/series hierarchy"):
         _derive(case)
     assert not case["output"].exists()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import copy
 from dataclasses import dataclass
 from datetime import datetime
@@ -471,15 +472,43 @@ def load_ct_series(
     )
 
 
-def _referenced_series_uids(rtstruct: Dataset) -> set[str]:
-    result: set[str] = set()
+def _referenced_series_instance_uids(
+    rtstruct: Dataset,
+    *,
+    frame_uid: str,
+    series_uid: str,
+    selected_sop_uids: set[str],
+) -> set[str]:
+    matches: list[Dataset] = []
     for frame in getattr(rtstruct, "ReferencedFrameOfReferenceSequence", ()):
+        if str(getattr(frame, "FrameOfReferenceUID", "") or "") != frame_uid:
+            continue
         for study in getattr(frame, "RTReferencedStudySequence", ()):
-            for series in getattr(study, "RTReferencedSeriesSequence", ()):
-                uid = str(getattr(series, "SeriesInstanceUID", "") or "")
-                if uid:
-                    result.add(uid)
-    return result
+            for referenced_series in getattr(study, "RTReferencedSeriesSequence", ()):
+                uid = str(
+                    getattr(referenced_series, "SeriesInstanceUID", "") or ""
+                )
+                if uid == series_uid:
+                    matches.append(referenced_series)
+    if len(matches) != 1:
+        raise PhantomCtDerivationError(
+            "RTSTRUCT does not reference exactly one selected CT series within "
+            "the selected CT frame hierarchy"
+        )
+    referenced_sop_uids: set[str] = set()
+    for reference in getattr(matches[0], "ContourImageSequence", ()):
+        sop_uid = str(getattr(reference, "ReferencedSOPInstanceUID", "") or "")
+        if not sop_uid or sop_uid not in selected_sop_uids:
+            raise PhantomCtDerivationError(
+                "RTSTRUCT frame/series hierarchy references an image outside "
+                "the selected CT series"
+            )
+        referenced_sop_uids.add(sop_uid)
+    if not referenced_sop_uids:
+        raise PhantomCtDerivationError(
+            "RTSTRUCT selected frame/series hierarchy references no CT images"
+        )
+    return referenced_sop_uids
 
 
 def _roi_number(rtstruct: Dataset, *, name: str, frame_uid: str) -> int:
@@ -561,6 +590,7 @@ def _rasterize_roi(
     rtstruct: Dataset,
     *,
     series: CtSeries,
+    hierarchy_sop_uids: set[str],
     roi_number: int,
     roi_name: str,
 ) -> np.ndarray:
@@ -587,6 +617,11 @@ def _rasterize_roi(
         if sop_uid not in sop_to_index:
             raise PhantomCtDerivationError(
                 f"RTSTRUCT contour references a CT image outside the selected series: {roi_name!r}"
+            )
+        if sop_uid not in hierarchy_sop_uids:
+            raise PhantomCtDerivationError(
+                "RTSTRUCT contour image is not referenced within the selected "
+                f"frame/series hierarchy: {roi_name!r}"
             )
         try:
             points = np.asarray(
@@ -655,14 +690,12 @@ def load_rtstruct_masks(
         raise PhantomCtDerivationError(f"RTSTRUCT is not readable: {rtstruct_path}") from exc
     if str(getattr(rtstruct, "Modality", "") or "") != "RTSTRUCT":
         raise PhantomCtDerivationError("the supplied structure file is not an RTSTRUCT")
-    frame_uids = {
-        str(getattr(item, "FrameOfReferenceUID", "") or "")
-        for item in getattr(rtstruct, "ReferencedFrameOfReferenceSequence", ())
-    }
-    if series.frame_uid not in frame_uids:
-        raise PhantomCtDerivationError("RTSTRUCT does not reference the selected CT frame")
-    if series.series_uid not in _referenced_series_uids(rtstruct):
-        raise PhantomCtDerivationError("RTSTRUCT does not reference the selected CT series")
+    hierarchy_sop_uids = _referenced_series_instance_uids(
+        rtstruct,
+        frame_uid=series.frame_uid,
+        series_uid=series.series_uid,
+        selected_sop_uids={item.source_sop_uid for item in series.slices},
+    )
     if not target_roi or not reference_roi or target_roi == reference_roi:
         raise PhantomCtDerivationError("target and reference ROI names must be nonempty and distinct")
     target_number = _roi_number(rtstruct, name=target_roi, frame_uid=series.frame_uid)
@@ -672,12 +705,14 @@ def load_rtstruct_masks(
     target_mask = _rasterize_roi(
         rtstruct,
         series=series,
+        hierarchy_sop_uids=hierarchy_sop_uids,
         roi_number=target_number,
         roi_name=target_roi,
     )
     reference_mask = _rasterize_roi(
         rtstruct,
         series=series,
+        hierarchy_sop_uids=hierarchy_sop_uids,
         roi_number=reference_number,
         roi_name=reference_roi,
     )
@@ -1255,7 +1290,18 @@ def derive_phantom_ct(
     png_path = output / "qc-comparison.png"
     marker = output / "INCOMPLETE.txt"
 
-    with WorkspaceOutputGuard(output, create_root=True) as guard:
+    with ExitStack() as stack:
+        parent_guard = stack.enter_context(
+            WorkspaceOutputGuard(output.parent, create_root=True)
+        )
+        parent_guard.prepare(output)
+        try:
+            output.mkdir()
+        except FileExistsError as exc:
+            raise PhantomCtDerivationError(
+                f"output directory already exists: {output_dir}"
+            ) from exc
+        guard = stack.enter_context(WorkspaceOutputGuard(output))
         guard.write_text(
             marker,
             "This derived CT output is incomplete and must not be used.\n",
