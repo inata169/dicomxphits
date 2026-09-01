@@ -367,6 +367,11 @@ def load_ct_series(
             raise PhantomCtDerivationError(
                 f"CT rescale values must be finite and slope must be nonzero: {path.name}"
             )
+        rescale_type = str(getattr(dataset, "RescaleType", "") or "").strip()
+        if rescale_type and rescale_type.upper() != "HU":
+            raise PhantomCtDerivationError(
+                f"CT RescaleType must be HU when present: {path.name}"
+            )
         pixel_format, raw = _validate_pixel_format(
             dataset, rows=rows, columns=columns, path=path
         )
@@ -1060,6 +1065,12 @@ def _derived_dataset(
     dataset.SOPInstanceUID = new_sop_uid
     dataset.file_meta.MediaStorageSOPClassUID = source_class_uid
     dataset.file_meta.MediaStorageSOPInstanceUID = new_sop_uid
+    for keyword in ("ImplementationClassUID", "ImplementationVersionName"):
+        if keyword in dataset.file_meta:
+            del dataset.file_meta[keyword]
+    for keyword in ("SmallestImagePixelValue", "LargestImagePixelValue"):
+        if keyword in dataset:
+            del dataset[keyword]
     dataset.ImageType = ["DERIVED", "SECONDARY", "WATER_REPLACED"]
     source_description = str(getattr(dataset, "SeriesDescription", "") or "CT")
     suffix = " [WATER DERIVED]"

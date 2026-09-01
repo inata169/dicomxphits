@@ -743,6 +743,54 @@ def test_source_file_meta_sop_identity_mismatch_is_rejected(
     assert not case["output"].exists()
 
 
+def test_explicit_non_hu_rescale_type_is_rejected(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    first_path = case["ct"]["paths"][0]
+    dataset = pydicom.dcmread(first_path)
+    dataset.RescaleType = "US"
+    _save_dataset(dataset, first_path)
+
+    with pytest.raises(PhantomCtDerivationError, match="RescaleType must be HU"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
+def test_derived_file_meta_uses_writer_implementation_identity(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    source_implementation_uid = "1.2.826.0.1.3680043.10.999"
+    source_version_name = "SOURCE_WRITER"
+    for path in case["ct"]["paths"]:
+        dataset = pydicom.dcmread(path)
+        dataset.file_meta.ImplementationClassUID = source_implementation_uid
+        dataset.file_meta.ImplementationVersionName = source_version_name
+        _save_dataset(dataset, path)
+
+    result = _derive(case)
+    for path in result.dicom_files:
+        derived = pydicom.dcmread(path)
+        assert str(derived.file_meta.ImplementationClassUID) != source_implementation_uid
+        assert str(derived.file_meta.ImplementationVersionName) != source_version_name
+
+
+def test_derived_dataset_removes_stale_pixel_extrema(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    for path in case["ct"]["paths"]:
+        dataset = pydicom.dcmread(path)
+        dataset.add_new(
+            0x00280106, "SS", int(np.min(dataset.pixel_array))
+        )
+        dataset.add_new(
+            0x00280107, "SS", int(np.max(dataset.pixel_array))
+        )
+        _save_dataset(dataset, path)
+
+    result = _derive(case)
+    for path in result.dicom_files:
+        derived = pydicom.dcmread(path)
+        assert "SmallestImagePixelValue" not in derived
+        assert "LargestImagePixelValue" not in derived
+
+
 def test_inverse_rescale_overflow_is_rejected(tmp_path: Path) -> None:
     ct = _write_ct_series(
         tmp_path / "ct",
