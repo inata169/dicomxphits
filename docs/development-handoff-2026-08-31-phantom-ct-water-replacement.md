@@ -1,7 +1,8 @@
 # Development handoff - 2026-08-31 phantom CT water replacement
 
 This handoff records the current state of the non-patient phantom CT water-
-replacement work at the end of the 2026-08-31 development session.
+replacement work at the end of the 2026-08-31 development session, updated
+through the 2026-09-01 closeout and operational follow-up.
 `dicomxphits` remains education and research software for the documented
 fixed-field 3D-CRT workflow. This work does not establish clinical validity,
 commissioning, patient QA, vendor certification, or general dose accuracy.
@@ -12,19 +13,13 @@ repository.
 
 ## Repository state
 
-Development was completed on branch `add-phantom-ct-water-replacement`. The
-branch is based on main commit `8b6f0e1` and includes these implementation and
-handoff commits before final closeout:
+Development was completed and reviewed in pull request #58. It was normally
+merged into `main` as merge commit `725aa18` on 2026-09-01, without a force
+push or tag change, and the merged feature branch was deleted. The final Codex
+review of commit `23f41cb` reported no major issue, and all four required
+Ubuntu and Windows CI jobs passed before merge.
 
-- `8d461b7 Add phantom CT water replacement tool`
-- `6a7b6ec Record phantom CT preflight blocker`
-- `d38e700 Validate whole-layer phantom ROI geometry`
-- `c806071 Document phantom CT water replacement handoff`
-- `e581dad Record PHITS diagnostic parser incident`
-- `9125089 Record PHITS parser fix outcome`
-
-The branch initially had no configured upstream or pull request. Its accepted
-OpenSpec delta is now promoted to
+The accepted OpenSpec delta is promoted to
 `openspec/specs/phantom-ct-derivation/spec.md`, and all fifteen tasks are
 complete in the archived change at
 `openspec/changes/archive/2026-09-01-add-phantom-ct-water-replacement/`.
@@ -127,8 +122,40 @@ calculation error: the parser rejection prevented the required PHITS output
 from reaching its manifest-declared public location, so the SumTally gate could
 not find it. The disposition of retained external staging outputs remains
 undecided. Do not copy, move, delete, or promote them manually, and do not edit
-the failed summary. Either rerunning PHITS or attempting provenance-preserving
-output recovery requires separate human approval and a reviewed procedure.
+the failed summary.
+
+The operator later gave separate approval for a new external research run in a
+new workspace. That operation did not recover, promote, or otherwise alter the
+retained staging output from the original failed workspace. Local DICOM,
+PHITS, Sumtally, phits2dicom, and comparison artifacts remain outside the
+repository and are intentionally not recorded here. The original staging
+disposition therefore remains unresolved; any future recovery, deletion, or
+other handling still requires a separate human decision and reviewed
+procedure.
+
+## 2026-09-01 GUI operational handoff
+
+The external follow-up exposed several usability limitations without changing
+repository code or public behavior:
+
+- opening a workspace that lacks one required public PHITS output correctly
+  fails reuse inspection, but existing-case mode then disables the expensive
+  stages needed to rerun PHITS;
+- standard tool-profile mode derives a deterministic CT2PHITS output path and
+  keeps that field read-only, so it does not directly offer a retry suffix;
+- `Allow overwrite of downstream stage summaries` relaxes the GUI's summary-
+  existence gate, but Workspace Prepare still correctly refuses to overwrite
+  an existing generated `phits.inp`; and
+- reusing a validated CT2PHITS handoff for a newly prepared 3D-CRT workspace
+  requires the advanced handoff controls, which is not obvious from the
+  failed-workspace path.
+
+The fail-closed guards prevented an existing PHITS input from being
+overwritten. The supported operational route was to preserve the failed
+workspace, select a new external 3D-CRT workspace, reuse the already validated
+CT2PHITS handoff, and apply the documented runtime controls during Workspace
+Prepare. These observations are possible future UX work only. No Issue,
+OpenSpec change, implementation branch, or follow-up pull request was created.
 
 ## Completed human verification and OpenSpec closeout
 
@@ -177,7 +204,7 @@ Final closeout validation on 2026-09-01 passed:
 19 passed
 
 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp <outside-repository-ASCII-temp>
-938 passed, 10 skipped
+973 passed, 10 skipped in 101.33s
 
 .venv\Scripts\python.exe -m compileall src
 passed
@@ -191,6 +218,31 @@ openspec.cmd validate --all --strict --no-interactive
 git diff --check
 passed
 ```
+
+The 2026-09-01 end-of-day handoff refresh passed:
+
+```text
+.venv\Scripts\python.exe -m compileall src
+passed
+
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp <outside-repository-temp-directory>
+973 passed, 10 skipped in 99.20s
+
+.venv\Scripts\python.exe tools\verify_public_tree.py
+passed (275 tracked files checked)
+
+openspec.cmd validate --all --strict --no-interactive
+13 passed, 0 failed
+
+git diff --check
+passed
+```
+
+The first full-test attempt could not create its repository-external temporary
+directory under the sandbox permission profile and stopped with setup-time
+permission errors. The same command passed after the required external-temp
+write was explicitly approved; no test failure from repository code was
+observed.
 
 The OpenSpec CLI does not directly validate an archived change by archive name.
 The archived delta therefore received a manual structural review confirming one
@@ -207,22 +259,25 @@ so an in-tree pytest base directory can create an environment-induced failure.
 
 - The derived non-patient CT series and their accepted QC evidence remain
   outside the repository; no real path, UID, DICOM, or QC artifact is tracked.
-- No CT2PHITS, PHITS, Sumtally, RTDOSE, absolute-dose, or GPR validation has
-  been run for this change.
+- No local external-tool output, DICOM RT Dose, dose comparison, or GPR
+  evidence is committed or treated as repository acceptance evidence. A
+  separately approved external research workflow remains outside this
+  handoff's tracked artifacts and claims.
 - No clinical commissioning, patient-QA, vendor-certification, or general dose-
   accuracy conclusion was made from the bounded phantom validation.
-- The branch has not been pushed, reviewed in a pull request, merged, or
-  deleted.
+- Pull request #58 is reviewed, merged, and its feature branch is deleted.
 - The independent PHITS 3.35 geometry-diagnostic parser regression was fixed
   and merged through pull request #57; its retained staged tally has not been
   promoted or used downstream, and its disposition remains undecided.
+- The GUI usability limitations observed during failed-workspace retry were
+  not changed or filed as follow-up work.
 - Existing CT2PHITS selection, accelerator geometry, beam physics, dose, MU,
   normalization, and the public fixed-field 3D-CRT scope were not changed by
   this helper.
 
-The correct stopping state is a completed and archived phantom CT derivation
-change with synthetic tests, bounded external Lung/Bone validation, and human
-Monaco verification complete. Downstream transport and dose stages remain
-unrun and require separately approved scope. The independent parser correction
-is merged into `main`, while disposition of its retained staging outputs
-remains unresolved and requires a separate human decision.
+The correct stopping state is `main` at merge commit `725aa18`, with the
+phantom CT derivation change completed, reviewed, merged, and archived; the
+independent parser correction from pull request #57 also merged; all protected
+external artifacts remaining outside the repository; the original retained
+staging disposition unresolved; and the observed GUI retry usability work
+explicitly deferred unless a human requests a separate scoped change.
