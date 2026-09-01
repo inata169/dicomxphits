@@ -705,6 +705,26 @@ def load_rtstruct_masks(
         raise PhantomCtDerivationError(f"RTSTRUCT is not readable: {rtstruct_path}") from exc
     if str(getattr(rtstruct, "Modality", "") or "") != "RTSTRUCT":
         raise PhantomCtDerivationError("the supplied structure file is not an RTSTRUCT")
+    sop_class_uid = str(getattr(rtstruct, "SOPClassUID", "") or "")
+    sop_uid = str(getattr(rtstruct, "SOPInstanceUID", "") or "")
+    if sop_class_uid != str(pydicom.uid.RTStructureSetStorage):
+        raise PhantomCtDerivationError(
+            "RTSTRUCT must use RT Structure Set Storage SOP Class"
+        )
+    file_meta_class_uid = str(
+        getattr(rtstruct.file_meta, "MediaStorageSOPClassUID", "") or ""
+    )
+    file_meta_sop_uid = str(
+        getattr(rtstruct.file_meta, "MediaStorageSOPInstanceUID", "") or ""
+    )
+    if (
+        not sop_uid
+        or file_meta_class_uid != sop_class_uid
+        or file_meta_sop_uid != sop_uid
+    ):
+        raise PhantomCtDerivationError(
+            "RTSTRUCT file-meta SOP identity does not match the dataset"
+        )
     hierarchy_sop_uids = _referenced_series_instance_uids(
         rtstruct,
         frame_uid=series.frame_uid,

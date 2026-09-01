@@ -661,6 +661,44 @@ def test_contour_image_must_be_listed_in_selected_frame_series(
     assert not case["output"].exists()
 
 
+def test_rtstruct_requires_structure_set_storage_sop_class(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    rtstruct = pydicom.dcmread(case["rtstruct"])
+    rtstruct.SOPClassUID = pydicom.uid.MRImageStorage
+    rtstruct.file_meta.MediaStorageSOPClassUID = pydicom.uid.MRImageStorage
+    _save_dataset(rtstruct, case["rtstruct"])
+
+    with pytest.raises(PhantomCtDerivationError, match="RT Structure Set Storage"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
+@pytest.mark.parametrize(
+    "file_meta_attribute",
+    (
+        "MediaStorageSOPClassUID",
+        "MediaStorageSOPInstanceUID",
+    ),
+)
+def test_rtstruct_file_meta_sop_identity_mismatch_is_rejected(
+    tmp_path: Path,
+    file_meta_attribute: str,
+) -> None:
+    case = _case(tmp_path)
+    rtstruct_path = case["rtstruct"]
+    rtstruct = pydicom.dcmread(rtstruct_path)
+    original = str(getattr(rtstruct.file_meta, file_meta_attribute)).encode("ascii")
+    replacement = bytearray(original)
+    replacement[-1] = ord("0") if replacement[-1] != ord("0") else ord("1")
+    raw = rtstruct_path.read_bytes()
+    assert raw.count(original) >= 2
+    rtstruct_path.write_bytes(raw.replace(original, bytes(replacement), 1))
+
+    with pytest.raises(PhantomCtDerivationError, match="file-meta SOP identity"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
 def test_target_reference_overlap_is_rejected(tmp_path: Path) -> None:
     ct = _write_ct_series(tmp_path / "ct")
     rtstruct = _write_rtstruct(
