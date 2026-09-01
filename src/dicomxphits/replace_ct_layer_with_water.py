@@ -1120,6 +1120,8 @@ def _report_text(report: dict[str, Any]) -> str:
 
 
 def _paths_overlap(first: Path, second: Path) -> bool:
+    first = first.resolve(strict=False)
+    second = second.resolve(strict=False)
     try:
         os.path.commonpath((first, second))
     except ValueError:

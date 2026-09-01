@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -545,6 +546,49 @@ def test_existing_and_overlapping_output_paths_are_rejected(tmp_path: Path) -> N
     nested_output = case["ct"]["root"] / "derived"
     with pytest.raises(PhantomCtDerivationError, match="must not equal"):
         _derive(case, output_dir=nested_output)
+
+
+def test_output_below_resolved_ct_root_is_rejected(tmp_path: Path) -> None:
+    actual_parent = tmp_path / "actual"
+    actual_parent.mkdir()
+    case = _case(actual_parent)
+    linked_parent = tmp_path / "linked"
+    try:
+        linked_parent.symlink_to(actual_parent, target_is_directory=True)
+    except OSError as symlink_error:
+        if sys.platform != "win32":
+            pytest.skip(f"directory symlink creation is unavailable: {symlink_error}")
+        trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        result = subprocess.run(
+            [
+                str(trusted_cmd),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(linked_parent),
+                str(actual_parent),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            pytest.skip(
+                "directory link creation is unavailable: "
+                f"{symlink_error}; {result.stdout}{result.stderr}"
+            )
+
+    nested_output = case["ct"]["root"] / "derived"
+    with pytest.raises(PhantomCtDerivationError, match="must not equal"):
+        _derive(
+            case,
+            ct_dir=linked_parent / "ct",
+            output_dir=nested_output,
+        )
+    assert not nested_output.exists()
 
 
 def test_rtstruct_series_reference_mismatch_is_rejected(tmp_path: Path) -> None:
