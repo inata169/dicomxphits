@@ -849,6 +849,26 @@ def test_compressed_pixel_data_is_rejected_without_output(tmp_path: Path) -> Non
     assert not case["output"].exists()
 
 
+@pytest.mark.parametrize("modality", (None, "MR"))
+def test_ct_storage_requires_ct_modality(
+    tmp_path: Path, modality: str | None
+) -> None:
+    case = _case(tmp_path)
+    last_path = case["ct"]["paths"][-1]
+    dataset = pydicom.dcmread(last_path)
+    if modality is None:
+        del dataset.Modality
+    else:
+        dataset.Modality = modality
+    _save_dataset(dataset, last_path)
+
+    with pytest.raises(
+        PhantomCtDerivationError, match="CT Image Storage Modality must be CT"
+    ):
+        _derive(case)
+    assert not case["output"].exists()
+
+
 @pytest.mark.parametrize(
     "file_meta_attribute",
     (

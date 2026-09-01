@@ -259,7 +259,13 @@ def _read_ct_datasets(root: Path) -> dict[str, list[tuple[Path, Dataset, str]]]:
             raise PhantomCtDerivationError(
                 f"CT input changed while it was being read: {path.name}"
             )
-        if str(getattr(dataset, "Modality", "") or "") != "CT":
+        modality = str(getattr(dataset, "Modality", "") or "")
+        sop_class_uid = str(getattr(dataset, "SOPClassUID", "") or "")
+        if sop_class_uid == str(pydicom.uid.CTImageStorage) and modality != "CT":
+            raise PhantomCtDerivationError(
+                f"CT Image Storage Modality must be CT: {path.name}"
+            )
+        if modality != "CT":
             continue
         uid = str(getattr(dataset, "SeriesInstanceUID", "") or "")
         if not uid:
