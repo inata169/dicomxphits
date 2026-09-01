@@ -328,6 +328,16 @@ def load_ct_series(
             raise PhantomCtDerivationError(
                 f"CT Study, FrameOfReference, and SOP Instance UIDs are required: {path.name}"
             )
+        file_meta_class_uid = str(
+            getattr(dataset.file_meta, "MediaStorageSOPClassUID", "") or ""
+        )
+        file_meta_sop_uid = str(
+            getattr(dataset.file_meta, "MediaStorageSOPInstanceUID", "") or ""
+        )
+        if file_meta_class_uid != sop_class_uid or file_meta_sop_uid != sop_uid:
+            raise PhantomCtDerivationError(
+                f"CT file-meta SOP identity does not match the dataset: {path.name}"
+            )
         if sop_uid in sop_uids:
             raise PhantomCtDerivationError("selected CT contains duplicate SOPInstanceUID values")
         sop_uids.add(sop_uid)

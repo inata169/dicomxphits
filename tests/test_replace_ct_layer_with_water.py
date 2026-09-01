@@ -717,6 +717,32 @@ def test_compressed_pixel_data_is_rejected_without_output(tmp_path: Path) -> Non
     assert not case["output"].exists()
 
 
+@pytest.mark.parametrize(
+    "file_meta_attribute",
+    (
+        "MediaStorageSOPClassUID",
+        "MediaStorageSOPInstanceUID",
+    ),
+)
+def test_source_file_meta_sop_identity_mismatch_is_rejected(
+    tmp_path: Path,
+    file_meta_attribute: str,
+) -> None:
+    case = _case(tmp_path)
+    first_path = case["ct"]["paths"][0]
+    dataset = pydicom.dcmread(first_path)
+    original = str(getattr(dataset.file_meta, file_meta_attribute)).encode("ascii")
+    replacement = bytearray(original)
+    replacement[-1] = ord("0") if replacement[-1] != ord("0") else ord("1")
+    raw = first_path.read_bytes()
+    assert raw.count(original) >= 2
+    first_path.write_bytes(raw.replace(original, bytes(replacement), 1))
+
+    with pytest.raises(PhantomCtDerivationError, match="file-meta SOP identity"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
 def test_inverse_rescale_overflow_is_rejected(tmp_path: Path) -> None:
     ct = _write_ct_series(
         tmp_path / "ct",
