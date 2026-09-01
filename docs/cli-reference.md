@@ -13,6 +13,10 @@ explicitly confirmed non-patient phantom; they are not Dev Container commands.
 Create a calculation-only derived CT series from an explicit whole-layer ROI
 and a separate clean-water reference ROI:
 
+This is an independent, manually invoked CLI. It is not a GUI action and is
+not called automatically by the guided workflow or any CT2PHITS, workspace,
+PHITS, Sumtally, or RTDOSE stage.
+
 ```powershell
 dicomxphits-replace-ct-layer-with-water `
   --ct-dir "C:\outside-repo\phantom\source-ct" `

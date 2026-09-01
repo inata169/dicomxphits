@@ -6,6 +6,11 @@ is limited to education and research with a confirmed non-patient phantom. It
 is not a patient-data tool, clinical commissioning procedure, patient QA
 method, or substitute for CT/TPS verification.
 
+This helper is a standalone, explicitly invoked CLI. It is not exposed in the
+guided desktop GUI and is not run automatically by CT2PHITS, workspace
+preparation, PHITS, Sumtally, or RTDOSE stages. Those workflows do not modify a
+CT series through this helper.
+
 ## Intended Lung and Bone transformations
 
 The same operation supports these generic physical-stack intentions:

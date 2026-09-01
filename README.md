@@ -32,8 +32,9 @@ Choose the path that matches your purpose:
   provenance gates, dose semantics, coordinate handling, and recovery rules.
 - **Non-patient phantom CT derivation** — use the
   [Phantom CT Water Replacement Guide](docs/phantom-ct-water-replacement.md)
-  to create a new calculation-only CT series from explicit target and clean-
-  water RTSTRUCT ROIs without overwriting the source CT.
+  for the standalone, explicitly invoked CLI that creates a new calculation-
+  only CT series from target and clean-water RTSTRUCT ROIs without overwriting
+  the source CT. It is not exposed in the GUI or run by the guided workflow.
 - **Contributors** — use the
   [development guidance](docs/development.md) and current specifications under
   `openspec/specs/`.
