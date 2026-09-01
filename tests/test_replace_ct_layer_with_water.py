@@ -901,6 +901,41 @@ def test_compressed_pixel_data_is_rejected_without_output(tmp_path: Path) -> Non
     assert not case["output"].exists()
 
 
+def test_zero_number_of_frames_is_rejected(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    first_path = case["ct"]["paths"][0]
+    dataset = pydicom.dcmread(first_path)
+    dataset.NumberOfFrames = 0
+    _save_dataset(dataset, first_path)
+
+    with pytest.raises(PhantomCtDerivationError, match="multi-frame CT"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
+@pytest.mark.parametrize(
+    ("keyword", "payload"),
+    (
+        ("FloatPixelData", np.asarray([0.0], dtype="<f4").tobytes()),
+        ("DoubleFloatPixelData", np.asarray([0.0], dtype="<f8").tobytes()),
+    ),
+)
+def test_alternate_floating_point_pixel_data_is_rejected(
+    tmp_path: Path, keyword: str, payload: bytes
+) -> None:
+    case = _case(tmp_path)
+    first_path = case["ct"]["paths"][0]
+    dataset = pydicom.dcmread(first_path)
+    setattr(dataset, keyword, payload)
+    _save_dataset(dataset, first_path)
+
+    with pytest.raises(
+        PhantomCtDerivationError, match="floating-point CT pixel data"
+    ):
+        _derive(case)
+    assert not case["output"].exists()
+
+
 @pytest.mark.parametrize("modality", (None, "MR"))
 def test_ct_storage_requires_ct_modality(
     tmp_path: Path, modality: str | None

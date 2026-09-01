@@ -194,7 +194,15 @@ def _validate_pixel_format(dataset: Dataset, *, rows: int, columns: int, path: P
         raise PhantomCtDerivationError(
             f"CT PixelData must use a native uncompressed transfer syntax: {path.name}"
         )
-    if int(getattr(dataset, "NumberOfFrames", 1) or 1) != 1:
+    try:
+        number_of_frames = (
+            int(dataset.NumberOfFrames) if "NumberOfFrames" in dataset else 1
+        )
+    except (TypeError, ValueError) as exc:
+        raise PhantomCtDerivationError(
+            f"CT NumberOfFrames must be exactly one: {path.name}"
+        ) from exc
+    if number_of_frames != 1:
         raise PhantomCtDerivationError(f"multi-frame CT is not supported: {path.name}")
     if int(getattr(dataset, "SamplesPerPixel", 0) or 0) != 1:
         raise PhantomCtDerivationError(f"CT SamplesPerPixel must be 1: {path.name}")
@@ -224,6 +232,10 @@ def _validate_pixel_format(dataset: Dataset, *, rows: int, columns: int, path: P
         raise PhantomCtDerivationError(f"CT HighBit is invalid: {path.name}")
     if pixel_representation not in {0, 1}:
         raise PhantomCtDerivationError(f"CT PixelRepresentation is invalid: {path.name}")
+    if "FloatPixelData" in dataset or "DoubleFloatPixelData" in dataset:
+        raise PhantomCtDerivationError(
+            f"floating-point CT pixel data is not supported: {path.name}"
+        )
     if "PixelData" not in dataset:
         raise PhantomCtDerivationError(f"CT PixelData is missing: {path.name}")
     raw = bytes(dataset.PixelData)
