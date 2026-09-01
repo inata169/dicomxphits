@@ -538,6 +538,53 @@ def test_boundary_connected_air_in_target_is_a_recorded_qc_warning(
     assert report["qc"]["target_boundary_connected_air_voxel_count"] > 0
 
 
+@pytest.mark.parametrize(
+    (
+        "roi_name",
+        "coordinate",
+        "padding_sample",
+        "padding_value",
+        "padding_limit",
+    ),
+    (
+        pytest.param("target", (15, 15), 60, 60, None, id="target-value"),
+        pytest.param("reference", (10, 55), 45, 40, 50, id="reference-range"),
+    ),
+)
+def test_pixel_padding_values_in_rois_are_rejected(
+    tmp_path: Path,
+    roi_name: str,
+    coordinate: tuple[int, int],
+    padding_sample: int,
+    padding_value: int,
+    padding_limit: int | None,
+) -> None:
+    case = _case(tmp_path)
+    first_path = case["ct"]["paths"][0]
+    dataset = pydicom.dcmread(first_path)
+    stored = dataset.pixel_array.astype(np.int32)
+    stored[coordinate] = padding_sample
+    padding_vr = "SS" if int(dataset.PixelRepresentation) else "US"
+    dataset.add_new(0x00280120, padding_vr, padding_value)
+    if padding_limit is not None:
+        dataset.add_new(0x00280121, padding_vr, padding_limit)
+    dataset.PixelData = _encode_stored(
+        stored,
+        bits_allocated=int(dataset.BitsAllocated),
+        bits_stored=int(dataset.BitsStored),
+        high_bit=int(dataset.HighBit),
+        pixel_representation=int(dataset.PixelRepresentation),
+    )
+    _save_dataset(dataset, first_path)
+
+    with pytest.raises(
+        PhantomCtDerivationError,
+        match=rf"{roi_name} ROI contains CT pixel padding values",
+    ):
+        _derive(case, accept_qc_warnings=True)
+    assert not case["output"].exists()
+
+
 def test_existing_and_overlapping_output_paths_are_rejected(tmp_path: Path) -> None:
     case = _case(tmp_path)
     case["output"].mkdir()

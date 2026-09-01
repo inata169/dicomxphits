@@ -790,6 +790,35 @@ def _slice_hu(ct_slice: CtSlice) -> np.ndarray:
     return ct_slice.stored_values.astype(np.float64) * ct_slice.slope + ct_slice.intercept
 
 
+def _pixel_padding_mask(ct_slice: CtSlice) -> np.ndarray:
+    dataset = ct_slice.dataset
+    has_value = "PixelPaddingValue" in dataset
+    has_limit = "PixelPaddingRangeLimit" in dataset
+    if has_limit and not has_value:
+        raise PhantomCtDerivationError(
+            "CT PixelPaddingRangeLimit requires PixelPaddingValue"
+        )
+    if not has_value:
+        return np.zeros_like(ct_slice.stored_values, dtype=bool)
+    try:
+        value = int(dataset.PixelPaddingValue)
+        limit = int(dataset.PixelPaddingRangeLimit) if has_limit else value
+    except (TypeError, ValueError) as exc:
+        raise PhantomCtDerivationError(
+            "CT pixel padding attributes must be integers"
+        ) from exc
+    pixel_format = ct_slice.pixel_format
+    if not (
+        pixel_format.minimum <= value <= pixel_format.maximum
+        and pixel_format.minimum <= limit <= pixel_format.maximum
+    ):
+        raise PhantomCtDerivationError(
+            "CT pixel padding attributes are outside the declared stored-pixel range"
+        )
+    lower, upper = sorted((value, limit))
+    return (ct_slice.stored_values >= lower) & (ct_slice.stored_values <= upper)
+
+
 def _stats(values: np.ndarray) -> dict[str, float | int]:
     if values.size == 0:
         raise PhantomCtDerivationError("cannot calculate statistics for an empty ROI")
@@ -927,6 +956,15 @@ def _replacement_analysis(
     outside_air_count = 0
     boundary_contact = False
     for index, ct_slice in enumerate(series.slices):
+        padding_mask = _pixel_padding_mask(ct_slice)
+        for roi_name, roi_mask in (
+            ("target", target_mask[index]),
+            ("reference", reference_mask[index]),
+        ):
+            if np.any(padding_mask & roi_mask):
+                raise PhantomCtDerivationError(
+                    f"{roi_name} ROI contains CT pixel padding values"
+                )
         hu = _slice_hu(ct_slice)
         reference_values = hu[reference_mask[index]]
         target_values = hu[target_mask[index]]
