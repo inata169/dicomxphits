@@ -755,12 +755,14 @@ def test_explicit_non_hu_rescale_type_is_rejected(tmp_path: Path) -> None:
     assert not case["output"].exists()
 
 
-def test_derived_file_meta_uses_writer_implementation_identity(tmp_path: Path) -> None:
+def test_derived_instance_uses_writer_implementation_identity(tmp_path: Path) -> None:
     case = _case(tmp_path)
     source_implementation_uid = "1.2.826.0.1.3680043.10.999"
+    source_instance_creator_uid = "1.2.826.0.1.3680043.10.998"
     source_version_name = "SOURCE_WRITER"
     for path in case["ct"]["paths"]:
         dataset = pydicom.dcmread(path)
+        dataset.InstanceCreatorUID = source_instance_creator_uid
         dataset.file_meta.ImplementationClassUID = source_implementation_uid
         dataset.file_meta.ImplementationVersionName = source_version_name
         _save_dataset(dataset, path)
@@ -768,6 +770,7 @@ def test_derived_file_meta_uses_writer_implementation_identity(tmp_path: Path) -
     result = _derive(case)
     for path in result.dicom_files:
         derived = pydicom.dcmread(path)
+        assert "InstanceCreatorUID" not in derived
         assert str(derived.file_meta.ImplementationClassUID) != source_implementation_uid
         assert str(derived.file_meta.ImplementationVersionName) != source_version_name
 
