@@ -661,6 +661,33 @@ def test_contour_image_must_be_listed_in_selected_frame_series(
     assert not case["output"].exists()
 
 
+@pytest.mark.parametrize(
+    "referenced_sop_class_uid",
+    (None, pydicom.uid.MRImageStorage),
+)
+def test_hierarchy_image_reference_requires_ct_sop_class(
+    tmp_path: Path,
+    referenced_sop_class_uid: str | None,
+) -> None:
+    case = _case(tmp_path)
+    rtstruct = pydicom.dcmread(case["rtstruct"])
+    reference = (
+        rtstruct.ReferencedFrameOfReferenceSequence[0]
+        .RTReferencedStudySequence[0]
+        .RTReferencedSeriesSequence[0]
+        .ContourImageSequence[0]
+    )
+    if referenced_sop_class_uid is None:
+        del reference.ReferencedSOPClassUID
+    else:
+        reference.ReferencedSOPClassUID = referenced_sop_class_uid
+    _save_dataset(rtstruct, case["rtstruct"])
+
+    with pytest.raises(PhantomCtDerivationError, match="CT Image Storage"):
+        _derive(case)
+    assert not case["output"].exists()
+
+
 def test_rtstruct_requires_structure_set_storage_sop_class(tmp_path: Path) -> None:
     case = _case(tmp_path)
     rtstruct = pydicom.dcmread(case["rtstruct"])

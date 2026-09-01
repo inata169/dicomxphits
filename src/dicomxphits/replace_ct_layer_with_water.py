@@ -512,6 +512,14 @@ def _referenced_series_instance_uids(
         )
     referenced_sop_uids: set[str] = set()
     for reference in getattr(matches[0], "ContourImageSequence", ()):
+        sop_class_uid = str(
+            getattr(reference, "ReferencedSOPClassUID", "") or ""
+        )
+        if sop_class_uid != str(pydicom.uid.CTImageStorage):
+            raise PhantomCtDerivationError(
+                "RTSTRUCT frame/series hierarchy image references must use "
+                "conventional CT Image Storage"
+            )
         sop_uid = str(getattr(reference, "ReferencedSOPInstanceUID", "") or "")
         if not sop_uid or sop_uid not in selected_sop_uids:
             raise PhantomCtDerivationError(
