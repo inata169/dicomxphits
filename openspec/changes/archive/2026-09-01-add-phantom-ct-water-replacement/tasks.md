@@ -44,15 +44,23 @@
   The repository Python 3.12 environment passed 19 focused synthetic tests and
   the full suite passed with 938 tests and ten skips; compilation, public-tree,
   OpenSpec, Ruff, and diff checks also passed.
-- [ ] 5.3 With separate human approval and explicit RTSTRUCT paths, run bounded
+- [x] 5.3 With separate human approval and explicit RTSTRUCT paths, run bounded
   local validation on the supplied non-patient Lung and Bone CT inputs and
   record results outside the repository; otherwise record it as unverified.
-  A bounded read-only preflight confirmed consistent conventional geometry,
-  matching CT/RTSTRUCT references, and valid required ROI names for both
-  supplied exports. The clean-water references passed their HU-statistic gates,
-  but both target ROIs were approximately two-centimetre-square rods rather
-  than whole thin layers. The new dimensionality QC stopped both cases; target
-  redraw, mask/QC revalidation, and derivation remain incomplete. No output was
-  created.
-- [ ] 5.4 Promote the accepted delta, archive the completed change, and strictly
-  validate the resulting OpenSpec tree.
+  Initial preflight correctly rejected rod-shaped targets. After the operator
+  redrew each target as a whole layer, separately approved read-only preflights
+  passed reference binding, topology, dimensionality, mask, water-statistic,
+  boundary, and fallback checks without warnings. Separately approved derived
+  outputs were written only to new external directories and passed source-hash,
+  target-only byte-preservation, post-write reread, JSON/text/PNG QC, and
+  incomplete-marker checks without warning acknowledgement. The operator then
+  confirmed the required Monaco reassociation, geometry, structure, plan, and
+  visual checks on both non-patient phantoms on 2026-09-01. Real paths, UIDs,
+  DICOM, and QC artifacts remain outside the repository.
+- [x] 5.4 Promote the accepted delta, archive the completed change, and strictly
+  validate the resulting OpenSpec tree. The accepted specification was
+  promoted and the change was archived on 2026-09-01. Strict validation of all
+  current specifications passed after archive. The CLI does not directly
+  validate an archived change by archive name, so the archived delta received
+  a manual structural review confirming one delta header, seven requirements,
+  twelve scenarios, and no unchecked tasks.

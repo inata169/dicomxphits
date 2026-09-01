@@ -12,24 +12,22 @@ repository.
 
 ## Repository state
 
-Development is paused on branch `add-phantom-ct-water-replacement`. The branch
-is based on main commit `8b6f0e1` and has these implementation commits:
+Development was completed on branch `add-phantom-ct-water-replacement`. The
+branch is based on main commit `8b6f0e1` and includes these implementation and
+handoff commits before final closeout:
 
 - `8d461b7 Add phantom CT water replacement tool`
 - `6a7b6ec Record phantom CT preflight blocker`
 - `d38e700 Validate whole-layer phantom ROI geometry`
+- `c806071 Document phantom CT water replacement handoff`
+- `e581dad Record PHITS diagnostic parser incident`
+- `9125089 Record PHITS parser fix outcome`
 
-The branch has no configured upstream and no pull request has been opened.
-It must remain a feature branch until the active OpenSpec change is complete.
-Do not merge it, delete it, or archive the OpenSpec change in its present
-state.
-
-The active change is
-`openspec/changes/add-phantom-ct-water-replacement/`. Thirteen of its fifteen
-tasks are complete. Task 5.3 remains incomplete because the supplied real-data
-target ROIs failed the whole-layer geometry gate. Task 5.4 remains incomplete
-because promotion and archive are only allowed after successful bounded
-real-data validation and completion of the approved acceptance criteria.
+The branch initially had no configured upstream or pull request. Its accepted
+OpenSpec delta is now promoted to
+`openspec/specs/phantom-ct-derivation/spec.md`, and all fifteen tasks are
+complete in the archived change at
+`openspec/changes/archive/2026-09-01-add-phantom-ct-water-replacement/`.
 
 ## Implemented capability
 
@@ -74,7 +72,7 @@ rod that happens to be about 2 cm wide.
 User-facing operation and safety boundaries are documented in
 `docs/phantom-ct-water-replacement.md` and `docs/cli-reference.md`.
 
-## Real-data preflight completed outside the repository
+## Real-data validation completed outside the repository
 
 The supplied anonymized non-patient Lung and Bone datasets were inspected only
 through bounded, local, read-only preflight runs. Earlier exports were rejected
@@ -83,25 +81,38 @@ mismatched CT/RTSTRUCT references. A later batch export of CT, RTSTRUCT,
 RTPLAN, and RTDOSE provided coherent frame, series, and SOP references for both
 phantoms.
 
-The `Water_reference` ROI passed its water-statistics gates in both cases:
+The first whole-layer preflight attempt correctly rejected both target ROIs as
+approximately two-centimetre-square rods rather than whole thin layers. The
+operator subsequently redrew each `Water_CC13_2cm` ROI as a complete phantom
+layer and exported coherent new batches. The final `Water_reference` ROI passed
+its water-statistics gates in both cases:
 
 | Phantom | Median | Mean | Standard deviation | Reference voxels | Fallback slices |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Lung | 0 HU | about -0.82 HU | about 12.13 HU | about 1,402,158 | 2 |
-| Bone | 3 HU | about 2.13 HU | about 14.81 HU | about 1,415,397 | 2 |
+| Lung | 0 HU | about -0.82 HU | about 12.13 HU | about 1,402,158 | 0 |
+| Bone | 3 HU | about 2.13 HU | about 14.81 HU | about 1,415,397 | 1 |
 
-The target ROI did not represent a whole 2 cm layer:
+The redrawn target ROIs passed the whole-layer dimensionality gate:
 
 | Phantom | Principal physical extents | Approximate target volume |
 | --- | --- | ---: |
-| Lung | 19.53 x 19.94 x 160.07 mm | 60.27 cm3 |
-| Bone | 18.55 x 18.55 x 160.00 mm | 55.08 cm3 |
+| Lung | 18.96 x 157.60 x 159.24 mm | 459.96 cm3 |
+| Bone | 18.59 x 181.15 x 181.51 mm | 468.65 cm3 |
 
-Each target is therefore approximately a 2 cm by 2 cm rod extending through
-about 16 cm, with two thickness-like dimensions. The dimensionality gate
-correctly stopped both preflights. `--accept-qc-warnings` must not be used to
-bypass this failure. No derived CT directory, derived DICOM instance, or
-real-data QC report was created.
+Each final target has exactly one principal extent in the documented 15-25 mm
+range, does not touch the image boundary, and does not intersect boundary-
+connected air-like pixels. Both read-only preflights completed without QC
+warnings or warning acknowledgement.
+
+After separate human approvals, the helper created the Lung and Bone derived
+series only in new external directories. Both completed without warnings and
+passed source-CT and RTSTRUCT hash rechecks, outside-target allocated-byte
+preservation, post-write reread, incomplete-marker, JSON/text report, and PNG
+checks. The operator then confirmed Monaco reassociation, CT geometry and slice
+order, phantom and structure alignment, target coverage, water replacement,
+target-exterior preservation, and plan position for both non-patient phantoms
+on 2026-09-01. Real paths, UIDs, DICOM, and QC artifacts remain outside the
+repository.
 
 ## Late-session PHITS diagnostic-parser incident
 
@@ -174,50 +185,18 @@ move, delete, or promote them manually, and do not edit the failed summary.
 Either rerunning PHITS or attempting a provenance-preserving recovery of those
 outputs requires a separate human approval and reviewed procedure.
 
-## Required human preparation before resuming
+## Completed human verification and OpenSpec closeout
 
-Only `Water_CC13_2cm` needs to be redrawn in Monaco. Leave the validated
-`Water_reference` ROI unchanged.
+The operator completed the planned Monaco reassociation and visual checks for
+both derived series and reported them acceptable on 2026-09-01. This completes
+the bounded real-data acceptance criterion for the helper; it does not
+authorize CT2PHITS, PHITS, Sumtally, RTDOSE creation, absolute-dose assessment,
+or GPR comparison.
 
-The replacement target must be a whole phantom layer:
-
-- keep its thickness in the physical stacking direction at approximately
-  2 cm;
-- expand both in-plane directions to the external phantom boundary while
-  excluding external air;
-- include the chamber, cavity, wall, electrode, cable, and associated artifact
-  inside that layer; and
-- contour every CT slice spanned by the physical layer.
-
-Export CT, RTSTRUCT, RTPLAN, and RTDOSE together in one anonymization/export
-operation to a new empty external directory for each phantom. Do not
-independently anonymize or copy the objects afterward, because that can break
-the DICOM reference graph.
-
-## Exact restart sequence
-
-1. Read `AI_AGENT_RULES.md`, `AGENTS.md`, and `openspec/AGENTS.md`, then confirm
-   the repository root, branch, status, history, remote, and tags.
-2. Confirm the active OpenSpec change still has tasks 5.3 and 5.4 unchecked.
-3. Obtain the operator's new batch-export paths and explicit approval for a
-   bounded read-only preflight on the two non-patient datasets.
-4. Run preflight only. Verify reference consistency, target topology, target
-   dimensionality, mask coverage, water statistics, slice fallback, and every
-   warning. Do not use `--accept-qc-warnings` to make an invalid target pass.
-5. Report the preflight evidence. If both cases pass, obtain a separate human
-   approval before writing derived CT objects into new, empty output
-   directories.
-6. After derivation, inspect the generated QC JSON, text, and PNG evidence and
-   perform the planned human Monaco reassociation/visual check. Existing source
-   CT and RTSTRUCT objects must remain unchanged.
-7. CT2PHITS, PHITS, Sumtally, RTDOSE creation, absolute-dose assessment, and
-   GPR comparison are later workflow stages. They require their own explicit
-   scope and must not be inferred from approval to derive the CT.
-8. Once the approved acceptance criteria and required checks are complete,
-   mark task 5.3 complete, promote the accepted delta into `openspec/specs/`,
-   archive the change under the date-prefixed archive name, complete task 5.4,
-   and strictly validate the resulting OpenSpec tree before review and pull
-   request work.
+Task 5.3 was completed with identity-safe evidence only. The accepted delta was
+promoted to `openspec/specs/phantom-ct-derivation/spec.md`, and the completed
+change was archived under
+`openspec/changes/archive/2026-09-01-add-phantom-ct-water-replacement/`.
 
 ## Validation evidence
 
@@ -246,18 +225,47 @@ git diff --check
 passed
 ```
 
+Final closeout validation on 2026-09-01 passed:
+
+```text
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp <outside-repository-ASCII-temp> tests\test_replace_ct_layer_with_water.py
+19 passed
+
+.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider --basetemp <outside-repository-ASCII-temp>
+938 passed, 10 skipped
+
+.venv\Scripts\python.exe -m compileall src
+passed
+
+.venv\Scripts\python.exe tools\verify_public_tree.py
+passed
+
+openspec.cmd validate --all --strict --no-interactive
+13 passed, 0 failed
+
+git diff --check
+passed
+```
+
+The OpenSpec CLI does not directly validate an archived change by archive name.
+The archived delta therefore received a manual structural review confirming one
+delta header, seven requirements, twelve scenarios, and no unchecked tasks.
+Ruff was not rerun during closeout because the current virtual environment does
+not contain a Ruff executable; the implementation revision's earlier passing
+Ruff evidence remains recorded above.
+
 Use a temporary directory outside the repository for full pytest runs. Some
 GUI safety tests intentionally detect untracked in-repository temporary files,
 so an in-tree pytest base directory can create an environment-induced failure.
 
 ## Unverified and deliberately not done
 
-- No derived real-data CT has been created.
-- No real-data QC artifact has been accepted.
-- No derived CT has been imported or reassociated in Monaco.
+- The derived non-patient CT series and their accepted QC evidence remain
+  outside the repository; no real path, UID, DICOM, or QC artifact is tracked.
 - No CT2PHITS, PHITS, Sumtally, RTDOSE, absolute-dose, or GPR validation has
   been run for this change.
-- The active OpenSpec delta has not been promoted or archived.
+- No clinical commissioning, patient-QA, vendor-certification, or general dose-
+  accuracy conclusion was made from the bounded phantom validation.
 - The branch has not been pushed, reviewed in a pull request, merged, or
   deleted.
 - The independent PHITS 3.35 geometry-diagnostic parser regression was fixed
@@ -267,10 +275,9 @@ so an in-tree pytest base directory can create an environment-induced failure.
   normalization, and the public fixed-field 3D-CRT scope were not changed by
   this helper.
 
-The correct stopping state is an active, tested implementation with a
-real-data ROI-definition blocker, plus a parser correction merged separately
-into `main` and an unresolved decision about the retained staging outputs.
-Resume this branch from target-ROI correction and read-only preflight. Treat
-any PHITS rerun or provenance-preserving output recovery as separate work that
-requires human approval. Do not restart the phantom helper implementation and
-do not treat the synthetic test result as real-data acceptance.
+The correct stopping state is a completed and archived phantom CT derivation
+change with synthetic tests, bounded external Lung/Bone validation, and human
+Monaco verification complete. Downstream transport and dose stages remain
+unrun and require separately approved scope. The independent parser correction
+is merged into `main`, while disposition of its retained staging outputs
+remains unresolved and requires a separate human decision.
