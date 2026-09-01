@@ -615,6 +615,22 @@ def test_target_reference_overlap_is_rejected(tmp_path: Path) -> None:
         _derive(case)
 
 
+def test_zero_area_closed_planar_contour_is_rejected(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    rtstruct = pydicom.dcmread(case["rtstruct"])
+    contour = rtstruct.ROIContourSequence[0].ContourSequence[0]
+    points = np.asarray(contour.ContourData, dtype=np.float64).reshape(-1, 3)
+    contour.NumberOfContourPoints = 3
+    contour.ContourData = np.concatenate(
+        (points[0], (points[0] + points[2]) / 2.0, points[2])
+    ).tolist()
+    _save_dataset(rtstruct, case["rtstruct"])
+
+    with pytest.raises(PhantomCtDerivationError, match="nonzero area"):
+        _derive(case, accept_qc_warnings=True)
+    assert not case["output"].exists()
+
+
 def test_target_layer_with_missing_internal_contour_slice_is_rejected(
     tmp_path: Path,
 ) -> None:

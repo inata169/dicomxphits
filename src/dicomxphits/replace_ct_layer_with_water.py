@@ -611,6 +611,18 @@ def _rasterize_roi(
             )
         column_values = (relative @ series.row_direction) / series.column_spacing_mm
         row_values = (relative @ series.column_direction) / series.row_spacing_mm
+        column_offsets = column_values - column_values[0]
+        row_offsets = row_values - row_values[0]
+        twice_area = abs(
+            float(
+                np.dot(column_offsets, np.roll(row_offsets, -1))
+                - np.dot(row_offsets, np.roll(column_offsets, -1))
+            )
+        )
+        if twice_area <= 1.0e-9:
+            raise PhantomCtDerivationError(
+                f"RTSTRUCT contour must enclose a nonzero area: {roi_name!r}"
+            )
         polygon = _polygon_mask(
             series.rows, series.columns, row_values, column_values
         )
