@@ -275,8 +275,10 @@ so an in-tree pytest base directory can create an environment-induced failure.
   normalization, and the public fixed-field 3D-CRT scope were not changed by
   this helper.
 
-The correct stopping state is `main` at merge commit `725aa18`, with the
-phantom CT derivation change completed, reviewed, merged, and archived; the
+The correct stopping state is `main` after this documentation pull request is
+merged. Commit `725aa18` is the phantom CT feature's merge baseline, not the
+post-handoff revision. The phantom CT derivation change is completed, reviewed,
+merged, and archived; the
 independent parser correction from pull request #57 also merged; all protected
 external artifacts remaining outside the repository; the original retained
 staging disposition unresolved; and the observed GUI retry usability work
