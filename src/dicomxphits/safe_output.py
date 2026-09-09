@@ -160,10 +160,12 @@ def _open_locked_windows_directory(path: Path) -> int:
 class WorkspaceOutputGuard:
     """Validate and lock path components for one or more output mutations."""
 
-    def __init__(self, case_root: Path, *, create_root: bool = False) -> None:
+    def __init__(self, case_root: Path, *, create_root: bool = False, read_only: bool = False) -> None:
         self.case_root = _normalized_absolute(case_root)
         self.create_root = create_root
+        self.read_only = read_only
         self._windows_handles: dict[str, int] = {}
+        self._execution_lease = None
 
     def __enter__(self) -> WorkspaceOutputGuard:
         try:
@@ -173,12 +175,21 @@ class WorkspaceOutputGuard:
                         f"Case root does not exist: {self.case_root}"
                     )
             self._hold_case_root_hierarchy(create_missing=self.create_root)
+            from dicomxphits.workspace_execution import LOCK_NAME, WorkspaceExecutionLease
+
+            if not self.read_only:
+                self.prepare(self.case_root / LOCK_NAME)
+                self._execution_lease = WorkspaceExecutionLease(self.case_root)
+                self._execution_lease.__enter__()
             return self
         except Exception:
             self._close_held_directories()
             raise
 
     def __exit__(self, _exc_type: object, _exc: object, _traceback: object) -> None:
+        if self._execution_lease is not None:
+            self._execution_lease.__exit__(_exc_type, _exc, _traceback)
+            self._execution_lease = None
         self._close_held_directories()
 
     def _close_held_directories(self) -> None:
@@ -282,6 +293,10 @@ class WorkspaceOutputGuard:
     ) -> Path:
         """Prepare a file output and reject existing non-regular targets."""
 
+        from dicomxphits.workspace_execution import LOCK_NAME
+        if self.read_only or _normalized_absolute(target) == self.case_root / LOCK_NAME:
+            raise UnsafeWorkspacePathError("Cannot mutate a read-only guard or execution lock")
+
         target = self.prepare(target, create_parents=create_parents)
         if _lexists(target) and not target.is_file():
             raise UnsafeWorkspacePathError(
@@ -290,6 +305,8 @@ class WorkspaceOutputGuard:
         return target
 
     def mkdir(self, path: Path) -> Path:
+        if self.read_only:
+            raise UnsafeWorkspacePathError("Cannot mutate a read-only guard")
         marker = path / ".dicomxphits-directory-boundary"
         self.prepare(marker, create_parents=True)
         self._hold_directory(_normalized_absolute(path))
@@ -439,6 +456,9 @@ class WorkspaceOutputGuard:
         return self.write_text(path, text, overwrite=overwrite)
 
     def unlink(self, path: Path, *, missing_ok: bool = False) -> None:
+        from dicomxphits.workspace_execution import LOCK_NAME
+        if self.read_only or _normalized_absolute(path) == self.case_root / LOCK_NAME:
+            raise UnsafeWorkspacePathError("Cannot remove execution ownership evidence")
         target = self.prepare(path)
         if not _lexists(target):
             if missing_ok:
@@ -447,6 +467,8 @@ class WorkspaceOutputGuard:
         target.unlink()
 
     def rmtree(self, path: Path, *, missing_ok: bool = False) -> None:
+        if self.read_only:
+            raise UnsafeWorkspacePathError("Cannot mutate a read-only guard")
         target = self.prepare(path)
         if not _lexists(target):
             if missing_ok:
@@ -476,5 +498,5 @@ class WorkspaceOutputGuard:
 def validate_workspace_output_path(case_root: Path, target: Path) -> Path:
     """Validate one existing-or-future output path without mutating it."""
 
-    with WorkspaceOutputGuard(case_root) as guard:
+    with WorkspaceOutputGuard(case_root, read_only=True) as guard:
         return guard.prepare(target)

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -34,8 +35,9 @@ from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 SUMMARY_RELATIVE_PATH = Path("analysis") / "segment_execution_summary.json"
 SEGMENT_EXECUTION_SCHEMA_V2 = "dicomxphits_public_segment_execution_v2"
 SEGMENT_EXECUTION_SCHEMA_V3 = "dicomxphits_public_segment_execution_v3"
+SEGMENT_EXECUTION_SCHEMA_V4 = "dicomxphits_public_segment_execution_v4"
 SEGMENT_EXECUTION_SCHEMAS = frozenset(
-    {SEGMENT_EXECUTION_SCHEMA_V2, SEGMENT_EXECUTION_SCHEMA_V3}
+    {SEGMENT_EXECUTION_SCHEMA_V2, SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}
 )
 SEGMENT_PROGRESS_STATUSES = frozenset(
     {"pending", "running", "success", "failed", "gate_failed", "skipped"}
@@ -338,6 +340,9 @@ def validate_segment_execution_summary(
         value not in {"success", "skipped"} for value in observed_statuses
     ):
         raise ValueError("Successful PHITS progress contains incomplete segments")
+    if schema == SEGMENT_EXECUTION_SCHEMA_V4:
+        from dicomxphits.segment_retry import validate_v4
+        validate_v4(summary)
     return schema
 
 
@@ -540,6 +545,7 @@ def run_one_segment(
     segment: dict[str, Any],
     phits_executable_path: str,
     runner=subprocess.run,
+    input_binding: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     phits_input = resolve_workspace_file(
         workspace_root,
@@ -571,6 +577,10 @@ def run_one_segment(
             guard=guard,
         )
         try:
+            if input_binding is not None:
+                for evidence in input_binding:
+                    if file_sha256(execution_root / evidence["path"]) != evidence["sha256"]:
+                        raise ValueError("Staged input changed after execution preflight")
             error_outputs = [
                 phits_error_output_path(output) for output in declared_outputs
             ]
@@ -753,7 +763,38 @@ def run_segments(
     utc_now: Callable[[], datetime] = _default_utc_now,
     run_id_factory: Callable[[], str] = _default_run_id,
     summary_writer: Callable[[Path, dict[str, Any]], None] | None = None,
+    run_incomplete: bool = False,
+    expected_summary_sha256: str | None = None,
 ) -> dict[str, Any]:
+    from dicomxphits.segment_retry import plan_incomplete
+    from dicomxphits.workspace_execution import WorkspaceExecutionLease
+
+    root = workspace_root.expanduser().resolve()
+    # Rejected retry preflight must not replace the previous execution summary.
+    if run_incomplete:
+        with WorkspaceExecutionLease(root, create=False) as lease:
+            plan = plan_incomplete(root, paths, expected_summary_sha256=expected_summary_sha256)
+            if not plan["scheduled"]:
+                return plan["summary"]
+            with lease.invocation():
+                return _run_segments_locked(workspace_root=root, paths=paths,
+                    command_argv=command_argv, runner=lease.run if runner is subprocess.run else runner,
+                    monotonic_clock=monotonic_clock, utc_now=utc_now,
+                    run_id_factory=run_id_factory, summary_writer=summary_writer, retry_plan=plan)
+    with WorkspaceOutputGuard(root):
+        with WorkspaceExecutionLease(root) as lease:
+            with lease.invocation():
+                return _run_segments_locked(workspace_root=root, paths=paths,
+                    command_argv=command_argv, runner=lease.run if runner is subprocess.run else runner,
+                    monotonic_clock=monotonic_clock, utc_now=utc_now,
+                    run_id_factory=run_id_factory, summary_writer=summary_writer)
+
+
+def _run_segments_locked(
+    *, workspace_root, paths, command_argv, runner, monotonic_clock, utc_now,
+    run_id_factory, summary_writer, retry_plan=None,
+):
+    from dicomxphits.segment_retry import capture_binding, result_evidence, validate_binding, validate_results
     workspace_root = workspace_root.expanduser().resolve()
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
@@ -764,6 +805,8 @@ def run_segments(
     started_tick = float(monotonic_clock())
     started_at = _utc_text(utc_now())
     current_segment: dict[str, Any] | None = None
+    execution_binding = None
+    parent_attempt = None
 
     def persist(status: str, *, failure_reason: str | None = None) -> dict[str, Any]:
         summary = build_summary(
@@ -779,6 +822,9 @@ def run_segments(
             manifest_digest=manifest_digest,
             failure_reason=failure_reason,
         )
+        summary.update(schema_version=SEGMENT_EXECUTION_SCHEMA_V4,
+            execution_binding=execution_binding, parent_attempt=parent_attempt,
+            retained_active_segment_count=sum(bool(s.get("retained")) for s in segment_summaries))
         validate_segment_execution_summary(summary, require_success=False)
         if summary_writer is None:
             write_json(summary_file, summary, case_root=workspace_root)
@@ -823,6 +869,20 @@ def run_segments(
                     )
                 )
 
+        for item in segment_summaries:
+            item.update(retained=False, producer_run_id=None)
+        if retry_plan is not None:
+            if run_id == retry_plan["summary"]["run_id"]:
+                raise ValueError("Retry must use a fresh invocation identifier")
+            for index, old in enumerate(retry_plan["summary"]["segments"]):
+                if old["status"] == "success":
+                    segment_summaries[index] = {**deepcopy(old), "retained": True}
+            active_segments = [(i, s) for i, s in active_segments if not segment_summaries[i]["retained"]]
+
+        execution_binding = capture_binding(workspace_root, manifest, paths)
+        if retry_plan is not None and execution_binding != retry_plan["summary"]["execution_binding"]:
+            raise ValueError("Execution conditions changed after retry preview")
+        contracts = {s["segment_id"]: s for s in execution_binding["segments"]}
         with WorkspaceOutputGuard(workspace_root) as guard:
             guard.prepare_file_target(summary_file, create_parents=True)
             for _summary_index, segment in active_segments:
@@ -853,8 +913,22 @@ def run_segments(
                 ):
                     guard.prepare_file_target(output, create_parents=True)
 
+            if retry_plan is not None:
+                guard.mkdir(workspace_root / "analysis" / "segment_attempt_history")
+                history = guard.make_staging_directory(
+                    workspace_root / "analysis" / "segment_attempt_history", prefix="attempt-")
+                preserved = history / "summary.json"
+                guard.copy_file(summary_file, preserved, overwrite=False)
+                if file_sha256(preserved) != retry_plan["source_sha256"]:
+                    raise ValueError("Retry source changed before preservation")
+                parent_attempt = {"path": preserved.relative_to(workspace_root).as_posix(),
+                    "sha256": retry_plan["source_sha256"]}
+
         persist("running")
         for summary_index, segment in active_segments:
+            validate_binding(workspace_root, manifest, execution_binding, paths)
+            validate_results(workspace_root, {"execution_binding": execution_binding,
+                "segments": segment_summaries})
             segment_started_tick = float(monotonic_clock())
             segment_started_at = _utc_text(utc_now())
             prior = segment_summaries[summary_index]
@@ -878,7 +952,12 @@ def run_segments(
                 segment=segment,
                 phits_executable_path=paths.phits_executable_path,
                 runner=runner,
+                input_binding=contracts[prior["segment_id"]]["inputs"],
             )
+            validate_binding(workspace_root, manifest, execution_binding, paths)
+            result.update(retained=False, producer_run_id=run_id)
+            if result["status"] == "success":
+                result["output_evidence"] = result_evidence(workspace_root, contracts[prior["segment_id"]])
             finished_tick = float(monotonic_clock())
             segment_summaries[summary_index] = {
                 **result,
@@ -904,8 +983,14 @@ def run_segments(
             )
             else "failed"
         )
+        if overall == "success":
+            validate_binding(workspace_root, manifest, execution_binding, paths)
+            validate_results(workspace_root, {"execution_binding": execution_binding,
+                "segments": segment_summaries})
         return persist(overall)
     except Exception as exc:
+        if retry_plan is not None and parent_attempt is None:
+            raise
         current_segment = None
         for segment in segment_summaries:
             if segment.get("status") in {"pending", "running"}:
@@ -939,6 +1024,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--phits-root-folder", default=None)
     parser.add_argument("--phits-executable-path", default=None)
     parser.add_argument("--phits2dicom-executable-path", default=None)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--plan-incomplete", action="store_true")
+    mode.add_argument("--run-incomplete", action="store_true")
+    parser.add_argument("--expected-summary-sha256", default=None)
     return parser
 
 
@@ -946,10 +1035,17 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     workspace_root = Path(args.workspace_root)
     try:
+        if args.plan_incomplete:
+            from dicomxphits.segment_retry import plan_incomplete
+            plan = plan_incomplete(workspace_root, paths_from_args(args))
+            print(json.dumps({k: v for k, v in plan.items() if k != "summary"}, ensure_ascii=False))
+            return 0
         summary = run_segments(
             workspace_root=workspace_root,
             paths=paths_from_args(args),
             command_argv=sys.argv if argv is None else ["dicomxphits-run-segments", *argv],
+            run_incomplete=args.run_incomplete,
+            expected_summary_sha256=args.expected_summary_sha256,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

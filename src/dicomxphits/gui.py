@@ -47,6 +47,7 @@ from dicomxphits.rtdose_plan_references import (
 )
 from dicomxphits.run_segments import (
     SEGMENT_EXECUTION_SCHEMA_V3,
+    SEGMENT_EXECUTION_SCHEMA_V4,
     validate_segment_execution_summary,
 )
 from dicomxphits.workspace_recovery import (
@@ -163,6 +164,7 @@ class GuiConfig:
     maxbch: int | str = DEFAULT_SEGMENT_MAXBCH
     omp_threads: int | str = DEFAULT_SEGMENT_OMP_THREADS
     calculation_config_path: str = ""
+    retry_source_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -483,6 +485,7 @@ def validate_stage(
         spec.fail_on_existing_summary
         and summary_path.exists()
         and not config.allow_overwrite
+        and not (spec.key == "run_segments" and config.retry_source_sha256)
     ):
         existing_summary = read_summary(summary_path)
         if spec.key == "prepare_rtdose":
@@ -585,6 +588,10 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
                 str(_resolved_path(config, "phits_executable_path")),
             ]
         )
+        if config.phits_root_folder.strip() and _resolved_path(config, "phits_root_folder").is_dir():
+            command.extend(["--phits-root-folder", str(_resolved_path(config, "phits_root_folder"))])
+        if config.retry_source_sha256:
+            command.extend(["--run-incomplete", "--expected-summary-sha256", config.retry_source_sha256])
     elif spec.key == "generate_sumtally":
         command.extend(
             [
@@ -642,7 +649,7 @@ def segment_progress_run_id(summary: Mapping[str, object] | None) -> str | None:
         schema = validate_segment_execution_summary(summary, require_success=False)
     except ValueError:
         return None
-    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}:
         return None
     run_id = summary.get("run_id")
     return str(run_id) if isinstance(run_id, str) else None
@@ -804,6 +811,7 @@ def estimate_segment_remaining_seconds(
         for item in raw_segments
         if isinstance(item, Mapping)
         and item.get("status") == "success"
+        and not item.get("retained", False)
         and isinstance(item.get("duration_seconds"), (int, float))
         and not isinstance(item.get("duration_seconds"), bool)
     ]
@@ -849,7 +857,7 @@ def format_segment_progress(
         schema = validate_segment_execution_summary(summary, require_success=False)
     except ValueError:
         return None
-    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}:
         return None
     status = str(summary.get("stage_status"))
     completed = int(summary["completed_active_segment_count"])
@@ -861,6 +869,9 @@ def format_segment_progress(
         else max(float(summary["elapsed_seconds"]), live_elapsed_seconds)
     )
     elapsed_text = _format_progress_duration(elapsed)
+    if schema == SEGMENT_EXECUTION_SCHEMA_V4:
+        retained = int(summary["retained_active_segment_count"])
+        elapsed_text += f"; retained {retained}, newly completed {completed - retained}"
     if status == "running" and not process_active:
         return (
             f"Interrupted / incomplete — validated {completed}/{total} active segments; "
@@ -918,7 +929,7 @@ def format_existing_segment_progress(
         schema = validate_segment_execution_summary(summary, require_success=False)
     except (TypeError, ValueError):
         schema = None
-    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}:
         return (
             "Segment progress unavailable for this workspace. "
             "No version-3 completion state is displayed."
@@ -944,6 +955,33 @@ def format_existing_segment_progress(
             "No version-3 completion state is displayed."
         )
     return display
+
+
+def progress_workspace_matches(selected_root: str, summary_path: Path | None) -> bool:
+    if not selected_root.strip() or summary_path is None:
+        return False
+    try:
+        return Path(selected_root).expanduser().resolve() == summary_path.parent.parent.resolve()
+    except (OSError, ValueError):
+        return False
+
+
+def incomplete_plan_for_config(config: GuiConfig) -> dict:
+    from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
+    from dicomxphits.segment_retry import plan_incomplete
+    return plan_incomplete(Path(config.workspace_root), ExternalToolPaths(
+        config.phits_root_folder, config.phits_executable_path, None))
+
+
+def incomplete_plan_text(plan: Mapping[str, object]) -> str:
+    def identifiers(key):
+        return ", ".join(str(value) for value in plan[key]) or "none"
+    return (f"Workspace: {plan['workspace_root']}\n\n"
+        f"Keep verified completed segments: {identifiers('retained')}\n"
+        f"Run incomplete segments: {identifiers('scheduled')}\n"
+        f"Skipped: {identifiers('skipped')}\n\n"
+        "Incomplete segments restart from the beginning. Retained outputs stay unchanged.\n"
+        "Execution rechecks this preview before starting. Continue?")
 
 
 def summary_succeeded(summary: Mapping[str, object] | None) -> bool:
@@ -1984,6 +2022,7 @@ def _build_gui() -> int:
     phits_progress_anchor_monotonic = 0.0
     phits_progress_validation_summary: Mapping[str, object] | None = None
     phits_progress_validation_accepted = False
+    workspace_selection_controls = []
 
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
@@ -1998,7 +2037,15 @@ def _build_gui() -> int:
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
         for stage_key, button in action_buttons.items():
-            if stage_key == "recover_rtdose":
+            if stage_key == "retry_segments":
+                candidate = read_summary(Path(values["workspace_root"].get()) / "analysis/segment_execution_summary.json")
+                enabled = bool(not busy and tool_profile_resolution.ready_for_stage("run_segments")
+                    and isinstance(candidate, Mapping)
+                    and candidate.get("schema_version") == SEGMENT_EXECUTION_SCHEMA_V4
+                    and isinstance(candidate.get("execution_binding"), Mapping)
+                    and not candidate["execution_binding"].get("retry_unavailable", ["missing"])
+                    and candidate.get("stage_status") != "success")
+            elif stage_key == "recover_rtdose":
                 sequence = (
                     recovery_inspection.stage_sequence
                     if recovery_inspection is not None
@@ -2418,6 +2465,8 @@ def _build_gui() -> int:
             command = lambda: browse_file(name, after_select=after_select)
         button = ttk.Button(parent, text="Browse…", command=command)
         button.grid(row=row, column=2, pady=(6, 2), sticky="ew")
+        if name == "workspace_root":
+            workspace_selection_controls.extend([entry, button])
         if readonly:
             button.state(["disabled"])
         if helper:
@@ -2534,6 +2583,8 @@ def _build_gui() -> int:
         refresh_action_button_states()
 
     def browse_existing_workspace() -> None:
+        if execution_guard.active_stage is not None:
+            return
         selected = filedialog.askdirectory(
             initialdir=str(
                 browse_initial_directory(
@@ -2986,11 +3037,13 @@ def _build_gui() -> int:
         style="Surface.TLabel",
         wraplength=760,
     ).grid(row=1, column=0, padx=(0, 12), pady=(5, 0), sticky="w")
-    ttk.Button(
+    existing_case_open_button = ttk.Button(
         existing_case_frame,
         text="Open existing case…",
         command=browse_existing_workspace,
-    ).grid(row=0, column=1, rowspan=2, sticky="e")
+    )
+    existing_case_open_button.grid(row=0, column=1, rowspan=2, sticky="e")
+    workspace_selection_controls.append(existing_case_open_button)
     ttk.Label(
         existing_case_frame,
         text=(
@@ -3300,6 +3353,8 @@ def _build_gui() -> int:
             execution_guard.finish()
         else:
             execution_guard.begin(stage_key)
+        for control in workspace_selection_controls:
+            control.state(["disabled"] if stage_key else ["!disabled"])
         refresh_action_button_states()
         global_status.set(
             f"Running {stage_by_key(stage_key).label}…" if stage_key else "Ready"
@@ -3316,6 +3371,9 @@ def _build_gui() -> int:
             execution_guard.active_stage != "run_segments"
             or phits_progress_summary_path is None
         ):
+            return
+        if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+            phits_progress_status.set("Workspace selection changed; previous invocation progress is not displayed.")
             return
         summary = read_summary(phits_progress_summary_path)
         workspace_root = phits_progress_summary_path.parent.parent
@@ -3357,6 +3415,8 @@ def _build_gui() -> int:
 
     def finish_phits_progress(summary: Mapping[str, object] | None = None) -> None:
         nonlocal phits_progress_run_id
+        if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+            return
         if summary is None and phits_progress_summary_path is not None:
             summary = read_summary(phits_progress_summary_path)
         workspace_root = (
@@ -3387,6 +3447,10 @@ def _build_gui() -> int:
 
     def finish_stage_error(spec: StageSpec, message: str, *, validation: bool) -> None:
         if spec.key == "run_segments" and execution_guard.active_stage == "run_segments":
+            if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+                append("Previous workspace invocation failed; inspect that workspace for details.", "error")
+                set_busy(None)
+                return
             finish_phits_progress()
         rtdose_state = current_rtdose_state()
         nav_status[stage_to_nav[spec.key]].set(
@@ -3414,6 +3478,10 @@ def _build_gui() -> int:
 
     def finish_stage_success(spec: StageSpec, result: StageResult) -> None:
         status = _stage_status(result)
+        if spec.key == "run_segments" and not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+            append("Previous workspace invocation ended; inspect the selected workspace for its status.")
+            set_busy(None)
+            return
         if spec.key == "run_segments":
             finish_phits_progress(result.summary)
         success = result.return_code == 0 and status in {
@@ -3476,7 +3544,7 @@ def _build_gui() -> int:
             append("RTDOSE is prepared. Next: click Run RTDOSE.", "info")
             rtdose_run_button.focus_set()
 
-    def start_stage(stage_key: str) -> None:
+    def start_stage(stage_key: str, *, retry_plan: dict | None = None) -> None:
         nonlocal phits_progress_run_id
         nonlocal phits_progress_prior_run_id
         nonlocal phits_progress_summary_path
@@ -3496,6 +3564,11 @@ def _build_gui() -> int:
             finish_stage_error(spec, message, validation=True)
             return
         config = config_from_entries()
+        if retry_plan is not None:
+            if Path(config.workspace_root).expanduser().resolve() != Path(retry_plan["workspace_root"]):
+                messagebox.showerror("Run incomplete segments", "Workspace selection changed; create a new preview.")
+                return
+            config = replace(config, retry_source_sha256=retry_plan["source_sha256"])
         try:
             if spec.key == "prepare_workspace":
                 validate_prepare_handoff_selection(
@@ -3537,6 +3610,37 @@ def _build_gui() -> int:
                 return
             root.after(0, lambda: finish_stage_success(spec, result))
 
+        threading.Thread(target=worker, daemon=True).start()
+
+    def start_incomplete_preview() -> None:
+        if execution_guard.active_stage is not None:
+            return
+        config = config_from_entries()
+        set_busy("run_segments")
+        global_status.set("Checking incomplete segment evidence…")
+
+        def show_plan(plan):
+            set_busy(None)
+            if Path(values["workspace_root"].get()).expanduser().resolve() != Path(plan["workspace_root"]):
+                messagebox.showerror("Run incomplete segments", "Workspace selection changed; create a new preview.")
+                return
+            if not plan["scheduled"]:
+                messagebox.showinfo("Run incomplete segments", "All active segments are verified. Use the downstream workflow.")
+                return
+            if messagebox.askyesno("Run incomplete segments", incomplete_plan_text(plan)):
+                start_stage("run_segments", retry_plan=plan)
+
+        def failed(message):
+            set_busy(None)
+            messagebox.showerror("Run incomplete segments", message)
+
+        def worker():
+            try:
+                plan = incomplete_plan_for_config(config)
+            except Exception as exc:
+                root.after(0, lambda message=str(exc): failed(message))
+                return
+            root.after(0, lambda: show_plan(plan))
         threading.Thread(target=worker, daemon=True).start()
 
     def start_workspace_rtdose_recovery() -> None:
@@ -3675,6 +3779,9 @@ def _build_gui() -> int:
     )
     phits_button.grid(row=5, column=2, pady=(10, 0), sticky="e")
     action_buttons["run_segments"] = phits_button
+    retry_button = ttk.Button(phits_frame, text="Run incomplete segments…", command=start_incomplete_preview)
+    retry_button.grid(row=6, column=2, pady=(8, 0), sticky="e")
+    action_buttons["retry_segments"] = retry_button
 
     sumtally_actions = ttk.Frame(
         sumtally_page, style="Surface.TFrame", padding=(18, 12)

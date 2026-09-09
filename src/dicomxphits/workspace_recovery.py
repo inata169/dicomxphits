@@ -34,6 +34,7 @@ from dicomxphits.rtdose_plan_references import (
 from dicomxphits.run_segments import (
     SEGMENT_EXECUTION_SCHEMA_V2,
     SEGMENT_EXECUTION_SCHEMA_V3,
+    SEGMENT_EXECUTION_SCHEMA_V4,
     validate_segment_execution_summary,
 )
 from dicomxphits.safe_output import WorkspaceOutputGuard
@@ -441,7 +442,7 @@ def validate_segment_progress_for_workspace(
         raise WorkspaceRecoveryError(
             f"PHITS segment progress is not acceptable: {exc}"
         ) from exc
-    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}:
         raise WorkspaceRecoveryError("PHITS segment progress is not version 3")
 
     root = workspace_root.expanduser().resolve()
@@ -539,6 +540,10 @@ def validate_segment_progress_for_workspace(
                 raise WorkspaceRecoveryError(
                     "PHITS segment progress lacks clean geometry evidence"
                 ) from exc
+    if schema == SEGMENT_EXECUTION_SCHEMA_V4:
+        from dicomxphits.segment_retry import validate_parent, validate_results
+        validate_results(root, segment_summary)
+        validate_parent(root, segment_summary)
 
 
 def validate_segment_execution_for_downstream(
@@ -580,6 +585,11 @@ def validate_segment_execution_for_downstream(
         validated_summary,
         allow_external_manifest_outputs=allow_external_manifest_outputs,
     )
+    if schema == SEGMENT_EXECUTION_SCHEMA_V4:
+        from dicomxphits.segment_retry import validate_binding, validate_parent, validate_results
+        validate_binding(workspace_root, manifest, segment_summary["execution_binding"], local_only=True)
+        validate_results(workspace_root, segment_summary)
+        validate_parent(workspace_root, segment_summary)
 
 
 def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
