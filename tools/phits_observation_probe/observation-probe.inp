@@ -1,0 +1,57 @@
+$OMP = 2
+[ Title ]
+Synthetic output-format probe only - not a clinical or beam-model calculation
+
+[ Parameters ]
+ icntl = 0
+ maxcas = 10000
+ maxbch = 10
+ infl:{libpath.inp}
+
+[ Source ]
+ s-type = 1
+ proj = photon
+ x0 = 0.0
+ y0 = 0.0
+ z0 = -2.0
+ z1 = -2.0
+ r0 = 0.0
+ dir = 1.0
+ e0 = 1.0
+
+[ Material ]
+ mat[1] 1001 2 8016 1
+
+[ Surface ]
+ 1 rpp -1.5 1.5 -1.5 1.5 -1.5 1.5
+ 2 rpp -3.0 3.0 -3.0 3.0 -3.0 3.0
+
+[ Cell ]
+ 1 1 -1.0 -1
+ 2 0 1 -2
+ 3 -1 2
+
+[ T-Deposit ]
+ title = Synthetic 3x3x3 water dose format probe
+ mesh = xyz
+ x-type = 2
+ xmin = -1.5
+ xmax = 1.5
+ nx = 3
+ y-type = 2
+ ymin = -1.5
+ ymax = 1.5
+ ny = 3
+ z-type = 2
+ zmin = -1.5
+ zmax = 1.5
+ nz = 3
+ unit = 0
+ material = all
+ output = dose
+ axis = xy
+ file = deposit-target-3D.out
+ part = all
+ epsout = 1
+
+[ End ]

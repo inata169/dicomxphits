@@ -4,8 +4,10 @@
 
 This document is a plan only. The human authorized its preparation, not a real
 PHITS launch, installation discovery, inspection of external data, or creation
-of an external workspace. No command below has been run. No executable input
-or capture helper is delivered by this documentation change.
+of an external workspace. No real command below has been run. The human later
+authorized preparation of the input and collector only; the project-authored
+kit is now at `tools/phits_observation_probe/`, with fake-child tests. Actual
+paths, frozen private plan and real execution approval remain outstanding.
 
 This is the evidence-acquisition prerequisite for task 2.1, not a change to
 public physics or a new clinical workflow. The synthetic transport model below
@@ -56,7 +58,7 @@ Sumtally, phits2dicom, GPR, dose conversion or convergence decision is involved.
 Leave time/seed settings at the reviewed fresh-run defaults and record their
 effective values when available; do not claim bitwise OpenMP reproducibility.
 
-These are proposed deck requirements, not a syntax-validated PHITS input.
+These are deck requirements, not a claim of PHITS-validated input syntax.
 Before execution approval, author and review the complete deck, library binding
 and collector, including source/surface syntax and every output destination.
 Do not substitute the pytest fake-runner workspace: it contains synthetic

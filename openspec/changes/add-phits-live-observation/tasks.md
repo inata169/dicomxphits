@@ -70,7 +70,9 @@ The human authorized preparation of a minimal synthetic verification plan.
 See [verification-plan.md](verification-plan.md) for the single-run envelope,
 private-path and artifact approval gates, read-only capture, resource limits,
 inconclusive outcomes and acceptance matrix. This does not authorize real PHITS
-execution. No input deck, collector or external workspace has been created.
+execution. At the plan-only checkpoint no input deck, collector or external
+workspace had been created; the preparation-only update below supersedes that
+artifact status without granting real execution permission.
 Task 2.1 remains incomplete pending sufficient target-version evidence.
 
 Plan-only validation (2026-09-09): focused `test_segment_stop.py` passed
@@ -80,3 +82,28 @@ Plan-only validation (2026-09-09): focused `test_segment_stop.py` passed
 files), `openspec.cmd validate --all --strict` (16 items) and Git diff checks
 passed. These results validate the unchanged public code and document structure,
 not the proposed real-PHITS input, collector, output grammar or live behavior.
+
+## Preparation-only kit
+
+The human approved authoring the test input and collector without launching
+PHITS. Added `tools/phits_observation_probe/observation-probe.inp`, `collect.py`,
+and `README.md`, plus `tests/test_phits_observation_probe.py`. This is the
+isolated diagnostic kit, not implementation of the production observer/parser.
+The input follows the proposed water/source/27-cell/100000-history envelope;
+its real PHITS acceptance is unverified. The collector defaults to check-only,
+requires a separately approved private plan digest for execution, rejects
+existing destinations and mismatched artifact hashes, preserves inherited
+ownership and drains both streams without automatic termination or retry.
+No installed PHITS, external workspace or real output was inspected or run.
+
+Focused synthetic validation: 16 passed / 1 skipped. Related probe/stop tests
+before the final two test additions: 47 passed / 1 skipped. The skipped test
+requires symlink creation privilege. Temporary Python children, not PHITS,
+verified capture, byte caps, stdout/stderr draining and lease exclusion; the
+Windows execution-entry test substitutes a fake collector and forbids Popen.
+Compilation of `src` and `tools/phits_observation_probe` passed. Final full
+pytest passed (1094 passed / 11 skipped), public-tree audit passed (312 tracked
+files), OpenSpec strict passed (16 items), and Git diff checks passed. The CLI
+help command was also checked without accessing any installation. Task 2.1
+and production implementation remain incomplete;
+do not promote or archive this change based on preparation-kit tests.
