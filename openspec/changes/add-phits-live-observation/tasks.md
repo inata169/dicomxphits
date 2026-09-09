@@ -63,3 +63,20 @@ distribution, real output or external workspace was inspected. No new execution
 permission is inferred. A minimal synthetic verification plan may be proposed
 to the human; this note does not authorize its execution. Do not fabricate a
 3.35 fixture by replacing the version string in an older example.
+
+## Proposed evidence acquisition
+
+The human authorized preparation of a minimal synthetic verification plan.
+See [verification-plan.md](verification-plan.md) for the single-run envelope,
+private-path and artifact approval gates, read-only capture, resource limits,
+inconclusive outcomes and acceptance matrix. This does not authorize real PHITS
+execution. No input deck, collector or external workspace has been created.
+Task 2.1 remains incomplete pending sufficient target-version evidence.
+
+Plan-only validation (2026-09-09): focused `test_segment_stop.py` passed
+(33 passed); full `python -m pytest -q -p no:cacheprovider --basetemp
+<outside-repository-temp-directory>` passed (1078 passed / 10 skipped).
+`python -m compileall src`, `python tools/verify_public_tree.py` (308 tracked
+files), `openspec.cmd validate --all --strict` (16 items) and Git diff checks
+passed. These results validate the unchanged public code and document structure,
+not the proposed real-PHITS input, collector, output grammar or live behavior.
