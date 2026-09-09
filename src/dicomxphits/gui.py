@@ -923,31 +923,25 @@ def format_existing_segment_progress(
             "Segment progress unavailable for this workspace. "
             "No version-3 completion state is displayed."
         )
-    try:
-        validate_segment_progress_for_workspace(workspace_root, summary)
-    except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
-        if summary.get("stage_status") == "success":
+    if summary.get("stage_status") == "success":
+        if not segment_execution_summary_authorizes_sumtally(workspace_root, summary):
             return (
                 "Invalid / incomplete — recorded PHITS completion no longer matches "
                 "the current manifest or outputs. Sumtally remains disabled."
             )
-        return (
-            "Segment progress unavailable for this workspace. "
-            "The version-3 record does not match the selected workspace."
-        )
+    else:
+        try:
+            validate_segment_progress_for_workspace(workspace_root, summary)
+        except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+            return (
+                "Segment progress unavailable for this workspace. "
+                "The version-3 record does not match the selected workspace."
+            )
     display = format_segment_progress(summary, process_active=False)
     if display is None:
         return (
             "Segment progress unavailable for this workspace. "
             "No version-3 completion state is displayed."
-        )
-    if (
-        summary.get("stage_status") == "success"
-        and not segment_execution_authorizes_sumtally(workspace_root)
-    ):
-        return (
-            "Invalid / incomplete — recorded PHITS completion no longer matches "
-            "the current manifest or outputs. Sumtally remains disabled."
         )
     return display
 

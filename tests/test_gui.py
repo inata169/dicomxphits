@@ -334,6 +334,16 @@ def test_existing_progress_does_not_show_stale_success_as_completed(
     assert not display.startswith("Completed")
 
 
+def test_existing_progress_accepts_relocated_valid_success(tmp_path: Path) -> None:
+    workspace, summary, _output = write_bound_success_progress_workspace(tmp_path)
+    relocated = tmp_path / "relocated-workspace"
+    workspace.rename(relocated)
+
+    display = format_existing_segment_progress(relocated, summary)
+
+    assert display.startswith("Completed")
+
+
 def test_existing_progress_replaces_missing_or_invalid_summary_with_unavailable(
     tmp_path: Path,
 ) -> None:
