@@ -289,6 +289,10 @@ def validate_segment_execution_summary(
         ):
             raise ValueError("Incomplete PHITS segment contains result evidence")
         if item_status == "success":
+            if item.get("return_code") != 0:
+                raise ValueError(
+                    "Successful PHITS segment does not have a zero return code"
+                )
             if any(
                 not isinstance(item.get(field), str)
                 or re.fullmatch(r"[0-9a-f]{64}", str(item.get(field))) is None

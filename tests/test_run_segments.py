@@ -891,6 +891,22 @@ def test_v3_segment_summary_rejects_invalid_root_timing(field, value, message):
         validate_segment_execution_summary(summary, require_success=True)
 
 
+@pytest.mark.parametrize("return_code", [None, 1])
+def test_v3_success_segment_requires_zero_return_code(tmp_path, return_code):
+    workspace, _manifest = write_workspace(tmp_path, active_segment(0))
+    expected = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
+    summary = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(workspace, [expected]),
+    )
+    summary["segments"][0]["return_code"] = return_code
+
+    with pytest.raises(ValueError, match="zero return code"):
+        validate_segment_execution_summary(summary, require_success=True)
+
+
 def test_progress_write_failure_stops_before_next_segment(tmp_path):
     workspace, _manifest = write_workspace(
         tmp_path,

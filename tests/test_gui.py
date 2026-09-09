@@ -51,6 +51,7 @@ from dicomxphits.gui import (
     rtdose_stage_state,
     run_stage,
     select_segment_progress_summary,
+    select_workspace_segment_progress_summary,
     segment_execution_authorizes_sumtally,
     segment_progress_run_id,
     stage_by_key,
@@ -101,6 +102,7 @@ def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: s
             item["finished_at"] = f"2026-09-09T00:00:{index + 1:02d}Z"
             item["duration_seconds"] = 10.0
         if status == "success":
+            item["return_code"] = 0
             item["expected_output_sha256"] = "1" * 64
             item["phits_out_sha256"] = "2" * 64
             item["geometry_diagnostics"] = {"status": "clean"}
@@ -155,6 +157,7 @@ def write_bound_success_progress_workspace(
         "segments": [
             {
                 "segment_id": "seg_001",
+                "phits_input_path": "segments/seg_001/phits.inp",
                 "expected_output_path": "segments/seg_001/deposit-target-3D.out",
             }
         ]
@@ -167,6 +170,9 @@ def write_bound_success_progress_workspace(
     summary["segments"][0].update(
         {
             "expected_output_path": str(output.resolve()),
+            "phits_input_path": str(
+                (workspace / "segments" / "seg_001" / "phits.inp").resolve()
+            ),
             "expected_output_sha256": gui_module.file_sha256(output),
             "phits_out_path": str(phits_out.resolve()),
             "phits_out_sha256": gui_module.file_sha256(phits_out),
@@ -374,6 +380,46 @@ def test_segment_progress_selection_binds_to_new_gui_invocation() -> None:
     )
 
 
+def test_workspace_progress_selection_rejects_wrong_root_and_escaping_path(
+    tmp_path: Path,
+) -> None:
+    workspace, summary, _output = write_bound_success_progress_workspace(tmp_path)
+
+    assert (
+        select_workspace_segment_progress_summary(
+            summary,
+            workspace_root=workspace,
+            expected_run_id=None,
+            prior_run_id=None,
+        )
+        is summary
+    )
+
+    wrong_root = dict(summary)
+    wrong_root["workspace_root"] = str((tmp_path / "other").resolve())
+    assert (
+        select_workspace_segment_progress_summary(
+            wrong_root,
+            workspace_root=workspace,
+            expected_run_id=None,
+            prior_run_id=None,
+        )
+        is None
+    )
+
+    escaping = json.loads(json.dumps(summary))
+    escaping["segments"][0]["expected_output_path"] = "../outside.out"
+    assert (
+        select_workspace_segment_progress_summary(
+            escaping,
+            workspace_root=workspace,
+            expected_run_id=None,
+            prior_run_id=None,
+        )
+        is None
+    )
+
+
 def test_terminal_segment_progress_rejects_prior_invocation_success() -> None:
     previous = v3_progress_summary("success", stage_status="success", run_id="old-run")
 
@@ -397,6 +443,27 @@ def test_terminal_segment_progress_accepts_current_invocation_failure() -> None:
     )
 
     assert display.startswith("Failed")
+
+
+def test_terminal_segment_progress_validates_current_artifacts(tmp_path: Path) -> None:
+    workspace, summary, output = write_bound_success_progress_workspace(tmp_path)
+
+    completed = format_terminal_segment_progress(
+        summary,
+        workspace_root=workspace,
+        expected_run_id="run-1",
+        prior_run_id=None,
+    )
+    output.write_text("changed after PHITS success", encoding="utf-8")
+    stale = format_terminal_segment_progress(
+        summary,
+        workspace_root=workspace,
+        expected_run_id="run-1",
+        prior_run_id=None,
+    )
+
+    assert completed.startswith("Completed")
+    assert stale.startswith("Invalid / incomplete")
 
 
 def test_segment_progress_ignores_unknown_summary_schema() -> None:

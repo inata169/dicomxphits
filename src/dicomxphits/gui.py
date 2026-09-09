@@ -59,6 +59,7 @@ from dicomxphits.workspace_recovery import (
     rtdose_plan_evidence_is_current,
     standard_ct2phits_handoff,
     validate_segment_execution_for_downstream,
+    validate_segment_progress_for_workspace,
 )
 
 
@@ -648,11 +649,18 @@ def segment_progress_run_id(summary: Mapping[str, object] | None) -> str | None:
 
 
 def segment_execution_authorizes_sumtally(workspace_root: Path) -> bool:
-    manifest = read_summary(
-        workspace_root / "segments" / "segment_manifest.json"
-    )
     summary = read_summary(
         workspace_root / stage_by_key("run_segments").summary_relative_path
+    )
+    return segment_execution_summary_authorizes_sumtally(workspace_root, summary)
+
+
+def segment_execution_summary_authorizes_sumtally(
+    workspace_root: Path,
+    summary: Mapping[str, object] | None,
+) -> bool:
+    manifest = read_summary(
+        workspace_root / "segments" / "segment_manifest.json"
     )
     if not isinstance(manifest, Mapping) or not isinstance(summary, Mapping):
         return False
@@ -681,9 +689,31 @@ def select_segment_progress_summary(
     return summary if run_id != prior_run_id else None
 
 
+def select_workspace_segment_progress_summary(
+    summary: Mapping[str, object] | None,
+    *,
+    workspace_root: Path,
+    expected_run_id: str | None,
+    prior_run_id: str | None,
+) -> Mapping[str, object] | None:
+    selected = select_segment_progress_summary(
+        summary,
+        expected_run_id=expected_run_id,
+        prior_run_id=prior_run_id,
+    )
+    if selected is None:
+        return None
+    try:
+        validate_segment_progress_for_workspace(workspace_root, selected)
+    except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+        return None
+    return selected
+
+
 def format_terminal_segment_progress(
     summary: Mapping[str, object] | None,
     *,
+    workspace_root: Path | None = None,
     expected_run_id: str | None,
     prior_run_id: str | None,
 ) -> str:
@@ -697,11 +727,31 @@ def format_terminal_segment_progress(
             "Failed / incomplete — no PHITS progress record belongs to this "
             "invocation. Sumtally remains disabled."
         )
+    if workspace_root is not None:
+        try:
+            validate_segment_progress_for_workspace(workspace_root, selected)
+        except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+            return (
+                "Invalid / incomplete — the PHITS progress record does not match "
+                "the selected workspace or its artifacts. Sumtally remains disabled."
+            )
     display = format_segment_progress(selected, process_active=False)
     if display is None:
         return (
             "Failed / incomplete — the PHITS progress record for this invocation "
             "is invalid. Sumtally remains disabled."
+        )
+    if (
+        workspace_root is not None
+        and selected.get("stage_status") == "success"
+        and not segment_execution_summary_authorizes_sumtally(
+            workspace_root,
+            selected,
+        )
+    ):
+        return (
+            "Invalid / incomplete — recorded PHITS completion no longer matches "
+            "the current manifest or outputs. Sumtally remains disabled."
         )
     return display
 
@@ -1945,8 +1995,9 @@ def _build_gui() -> int:
                             == phits_progress_summary_path.resolve()
                         ):
                             invocation_is_current = (
-                                select_segment_progress_summary(
+                                select_workspace_segment_progress_summary(
                                     read_summary(expected_summary_path),
+                                    workspace_root=workspace_path,
                                     expected_run_id=phits_progress_run_id,
                                     prior_run_id=phits_progress_prior_run_id,
                                 )
@@ -3215,8 +3266,10 @@ def _build_gui() -> int:
         ):
             return
         summary = read_summary(phits_progress_summary_path)
-        selected = select_segment_progress_summary(
+        workspace_root = phits_progress_summary_path.parent.parent
+        selected = select_workspace_segment_progress_summary(
             summary,
+            workspace_root=workspace_root,
             expected_run_id=phits_progress_run_id,
             prior_run_id=phits_progress_prior_run_id,
         )
@@ -3248,16 +3301,27 @@ def _build_gui() -> int:
         nonlocal phits_progress_run_id
         if summary is None and phits_progress_summary_path is not None:
             summary = read_summary(phits_progress_summary_path)
-        selected = select_segment_progress_summary(
-            summary,
-            expected_run_id=phits_progress_run_id,
-            prior_run_id=phits_progress_prior_run_id,
+        workspace_root = (
+            phits_progress_summary_path.parent.parent
+            if phits_progress_summary_path is not None
+            else None
+        )
+        selected = (
+            select_workspace_segment_progress_summary(
+                summary,
+                workspace_root=workspace_root,
+                expected_run_id=phits_progress_run_id,
+                prior_run_id=phits_progress_prior_run_id,
+            )
+            if workspace_root is not None
+            else None
         )
         if selected is not None:
             phits_progress_run_id = segment_progress_run_id(selected)
         phits_progress_status.set(
             format_terminal_segment_progress(
                 summary,
+                workspace_root=workspace_root,
                 expected_run_id=phits_progress_run_id,
                 prior_run_id=phits_progress_prior_run_id,
             )
