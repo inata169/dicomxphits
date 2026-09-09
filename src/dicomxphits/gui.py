@@ -710,6 +710,39 @@ def select_workspace_segment_progress_summary(
     return selected
 
 
+def select_cached_workspace_segment_progress_summary(
+    summary: Mapping[str, object] | None,
+    *,
+    workspace_root: Path,
+    expected_run_id: str | None,
+    prior_run_id: str | None,
+    cached_summary: Mapping[str, object] | None,
+    cached_accepted: bool,
+) -> tuple[
+    Mapping[str, object] | None,
+    Mapping[str, object] | None,
+    bool,
+]:
+    if isinstance(summary, Mapping) and summary == cached_summary:
+        selected = select_segment_progress_summary(
+            summary,
+            expected_run_id=expected_run_id,
+            prior_run_id=prior_run_id,
+        )
+        return (
+            selected if cached_accepted else None,
+            summary,
+            cached_accepted,
+        )
+    selected = select_workspace_segment_progress_summary(
+        summary,
+        workspace_root=workspace_root,
+        expected_run_id=expected_run_id,
+        prior_run_id=prior_run_id,
+    )
+    return selected, summary, selected is not None
+
+
 def format_terminal_segment_progress(
     summary: Mapping[str, object] | None,
     *,
@@ -880,6 +913,27 @@ def format_existing_segment_progress(
         return (
             "Segment progress unavailable for this workspace. "
             "No version-3 completion state is displayed."
+        )
+    try:
+        schema = validate_segment_execution_summary(summary, require_success=False)
+    except (TypeError, ValueError):
+        schema = None
+    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+        return (
+            "Segment progress unavailable for this workspace. "
+            "No version-3 completion state is displayed."
+        )
+    try:
+        validate_segment_progress_for_workspace(workspace_root, summary)
+    except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+        if summary.get("stage_status") == "success":
+            return (
+                "Invalid / incomplete — recorded PHITS completion no longer matches "
+                "the current manifest or outputs. Sumtally remains disabled."
+            )
+        return (
+            "Segment progress unavailable for this workspace. "
+            "The version-3 record does not match the selected workspace."
         )
     display = format_segment_progress(summary, process_active=False)
     if display is None:
@@ -1934,6 +1988,8 @@ def _build_gui() -> int:
     phits_progress_anchor_key: tuple[str, str] | None = None
     phits_progress_anchor_elapsed = 0.0
     phits_progress_anchor_monotonic = 0.0
+    phits_progress_validation_summary: Mapping[str, object] | None = None
+    phits_progress_validation_accepted = False
 
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
@@ -3260,6 +3316,8 @@ def _build_gui() -> int:
         nonlocal phits_progress_anchor_key
         nonlocal phits_progress_anchor_elapsed
         nonlocal phits_progress_anchor_monotonic
+        nonlocal phits_progress_validation_summary
+        nonlocal phits_progress_validation_accepted
         if (
             execution_guard.active_stage != "run_segments"
             or phits_progress_summary_path is None
@@ -3267,11 +3325,17 @@ def _build_gui() -> int:
             return
         summary = read_summary(phits_progress_summary_path)
         workspace_root = phits_progress_summary_path.parent.parent
-        selected = select_workspace_segment_progress_summary(
+        (
+            selected,
+            phits_progress_validation_summary,
+            phits_progress_validation_accepted,
+        ) = select_cached_workspace_segment_progress_summary(
             summary,
             workspace_root=workspace_root,
             expected_run_id=phits_progress_run_id,
             prior_run_id=phits_progress_prior_run_id,
+            cached_summary=phits_progress_validation_summary,
+            cached_accepted=phits_progress_validation_accepted,
         )
         if selected is not None:
             selected_run_id = segment_progress_run_id(selected)
@@ -3423,6 +3487,8 @@ def _build_gui() -> int:
         nonlocal phits_progress_prior_run_id
         nonlocal phits_progress_summary_path
         nonlocal phits_progress_anchor_key
+        nonlocal phits_progress_validation_summary
+        nonlocal phits_progress_validation_accepted
         if execution_guard.active_stage is not None:
             append("Another stage is already running.", "warning")
             return
@@ -3458,6 +3524,8 @@ def _build_gui() -> int:
             phits_progress_prior_run_id = segment_progress_run_id(prior_summary)
             phits_progress_run_id = None
             phits_progress_anchor_key = None
+            phits_progress_validation_summary = None
+            phits_progress_validation_accepted = False
             phits_progress_status.set(
                 "Starting PHITS segment execution; waiting for the first progress record."
             )

@@ -754,6 +754,7 @@ def run_segments(
     run_id_factory: Callable[[], str] = _default_run_id,
     summary_writer: Callable[[Path, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    workspace_root = workspace_root.expanduser().resolve()
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
     manifest_digest: str | None = None

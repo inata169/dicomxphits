@@ -50,6 +50,7 @@ from dicomxphits.gui import (
     rtdose_nav_status,
     rtdose_stage_state,
     run_stage,
+    select_cached_workspace_segment_progress_summary,
     select_segment_progress_summary,
     select_workspace_segment_progress_summary,
     segment_execution_authorizes_sumtally,
@@ -420,6 +421,47 @@ def test_workspace_progress_selection_rejects_wrong_root_and_escaping_path(
     )
 
 
+def test_workspace_progress_validation_is_cached_for_unchanged_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = v3_progress_summary("running", run_id="current-run")
+    calls = 0
+
+    def accept(_workspace_root, _summary):
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(
+        gui_module,
+        "validate_segment_progress_for_workspace",
+        accept,
+    )
+
+    first, cached_summary, cached_accepted = (
+        select_cached_workspace_segment_progress_summary(
+            summary,
+            workspace_root=tmp_path,
+            expected_run_id="current-run",
+            prior_run_id=None,
+            cached_summary=None,
+            cached_accepted=False,
+        )
+    )
+    second, _, _ = select_cached_workspace_segment_progress_summary(
+        dict(summary),
+        workspace_root=tmp_path,
+        expected_run_id="current-run",
+        prior_run_id=None,
+        cached_summary=cached_summary,
+        cached_accepted=cached_accepted,
+    )
+
+    assert first is summary
+    assert second == summary
+    assert calls == 1
+
+
 def test_terminal_segment_progress_rejects_prior_invocation_success() -> None:
     previous = v3_progress_summary("success", stage_status="success", run_id="old-run")
 
@@ -464,6 +506,17 @@ def test_terminal_segment_progress_validates_current_artifacts(tmp_path: Path) -
 
     assert completed.startswith("Completed")
     assert stale.startswith("Invalid / incomplete")
+
+
+def test_existing_non_success_progress_rejects_wrong_workspace(
+    tmp_path: Path,
+) -> None:
+    summary = v3_progress_summary("running", run_id="stale-run")
+
+    display = format_existing_segment_progress(tmp_path / "selected", summary)
+
+    assert "progress unavailable" in display.lower()
+    assert "validated" not in display.lower()
 
 
 def test_segment_progress_ignores_unknown_summary_schema() -> None:

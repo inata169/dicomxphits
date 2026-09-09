@@ -907,6 +907,25 @@ def test_v3_success_segment_requires_zero_return_code(tmp_path, return_code):
         validate_segment_execution_summary(summary, require_success=True)
 
 
+def test_run_segments_records_resolved_workspace_for_relative_input(
+    tmp_path,
+    monkeypatch,
+):
+    workspace, _manifest = write_workspace(tmp_path, active_segment(0))
+    expected = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
+    monkeypatch.chdir(tmp_path)
+
+    summary = run_segments(
+        workspace_root=Path("workspace"),
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(workspace, [expected]),
+    )
+
+    assert summary["workspace_root"] == str(workspace.resolve())
+    assert Path(summary["segments"][0]["expected_output_path"]).is_absolute()
+
+
 def test_progress_write_failure_stops_before_next_segment(tmp_path):
     workspace, _manifest = write_workspace(
         tmp_path,
