@@ -83,8 +83,10 @@ bound separately and excluded from the installation digest when nested there.
                     unavailable.append("Unsupported external input dependency form")
             segments.append({"segment_id": identifier,
                 "inputs": _evidence(root, inputs),
-                "writes": sorted(p.resolve().relative_to(root).as_posix() for p in set(writes)),
-                "required_outputs": sorted(p.resolve().relative_to(root).as_posix() for p in required),
+                # Preserve lexical targets here; guarded publication preflight
+                # rejects linked outputs without following their destinations.
+                "writes": sorted(p.relative_to(root).as_posix() for p in set(writes)),
+                "required_outputs": sorted(p.relative_to(root).as_posix() for p in required),
                 # Hash environment, never persist its potentially sensitive values.
                 "environment_sha256": environment_digest})
         if len(ids) != len(set(ids)):

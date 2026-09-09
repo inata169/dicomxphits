@@ -66,6 +66,13 @@ death. Final callback inspection found that unexpected selection changes also
 needed to suppress the error terminal callback; the closeout focused suite passed.
 No guard or acceptance condition was weakened.
 
+PR CI correction round 1: Ubuntu reported one existing linked-log test failure
+(976 passed / 75 skipped). Binding enumeration resolved a linked output before
+the established guarded-publication check, producing the wrong exception type.
+Keep output targets lexical in the binding so the established path guard rejects
+the link before any child starts. Local Windows skips this symlink case;
+Ubuntu CI is required to verify the platform-specific regression.
+
 ## Proposal validation results
 
 Validated on 2026-09-09, using the existing `.venv` Python interpreter:
