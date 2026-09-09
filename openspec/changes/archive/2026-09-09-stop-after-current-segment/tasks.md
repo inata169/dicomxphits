@@ -26,9 +26,9 @@
 - [x] Test retained outputs, repeated retries, mixed versions and downstream refusal.
 - [x] Test malformed/stale control, persistence errors, crash and child ownership boundaries.
 - [x] Test GUI adapter responsiveness, acknowledgement, workspace/run binding and exit/summary mismatch with synthetic/unit tests and callback inspection.
-- [ ] Run focused tests, compile, full pytest, public audit, strict OpenSpec and Git checks.
+- [x] Run focused tests, compile, full pytest, public audit, strict OpenSpec and Git checks.
 - [x] Review the independent stage-3 PR under the bounded correction policy.
-- [ ] Promote accepted deltas, archive the completed change, and validate the resulting tree.
+- [x] Promote accepted deltas, archive the completed change, and validate the resulting tree.
 
 Runtime implementation is approved; real PHITS verification is not. Keep
 this proposal active; do not mark implementation tests complete from baseline
@@ -101,3 +101,19 @@ also passed separately (2 passed / 29 deselected). Compile and all 15 strict
 OpenSpec checks passed. No additional verified review blocker remained after
 this minimal correction. Independent re-review is not claimed; no optional
 review loop or scope expansion was started. Final full checks and archive follow.
+
+Final runtime validation at `104bc38`: `python -m pytest -q -p no:cacheprovider
+--basetemp <outside-repository-temp-directory>` passed (1076 passed / 10 skipped).
+Compile, public audit (301 files), strict OpenSpec (15 items), and Git diff checks
+passed. Ubuntu and Windows both succeeded in CI runs #549 and #550. PR #62
+remains draft: the human decides ready/merge. Specification promotion/archive is
+the sole remaining closeout operation; no real-tool verification is claimed.
+
+Archive closeout: `openspec.cmd archive stop-after-current-segment --yes`
+validated and promoted four added and three modified requirements, then moved
+this change to the dated archive. The sole unchecked task at invocation was the
+archive operation itself. Generated placeholder Purpose and blank EOF lines were
+cleaned up without changing requirements. All 15 current specs pass strict
+validation; archived proposal/deltas are also checked directly with the installed
+OpenSpec strict Validator. The final public audit includes the new stop spec
+(302 tracked files). Archive changes are documentation/specification only.

@@ -45,6 +45,7 @@ Post-merge main CI #546 also passed on both Ubuntu and Windows. The merged
 feature branch was deleted locally and remotely, and synchronized main was
 confirmed clean before creating this proposal branch.
 
-Status: approved by the human on 2026-09-09 and implemented on the proposal
-branch. This change remains active pending final checks, PR review, and the
-required specification promotion/archive closeout.
+Status: approved by the human on 2026-09-09, implemented in PR #62, and archived
+after required checks and one verified review correction. PR #62 remains draft;
+ready/merge requires the human decision. Real PHITS and interactive desktop
+verification are not claimed.
