@@ -36,8 +36,9 @@ SUMMARY_RELATIVE_PATH = Path("analysis") / "segment_execution_summary.json"
 SEGMENT_EXECUTION_SCHEMA_V2 = "dicomxphits_public_segment_execution_v2"
 SEGMENT_EXECUTION_SCHEMA_V3 = "dicomxphits_public_segment_execution_v3"
 SEGMENT_EXECUTION_SCHEMA_V4 = "dicomxphits_public_segment_execution_v4"
+SEGMENT_EXECUTION_SCHEMA_V5 = "dicomxphits_public_segment_execution_v5"
 SEGMENT_EXECUTION_SCHEMAS = frozenset(
-    {SEGMENT_EXECUTION_SCHEMA_V2, SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}
+    {SEGMENT_EXECUTION_SCHEMA_V2, SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}
 )
 SEGMENT_PROGRESS_STATUSES = frozenset(
     {"pending", "running", "success", "failed", "gate_failed", "skipped"}
@@ -210,7 +211,8 @@ def validate_segment_execution_summary(
     if summary.get("stage") != "run_segments":
         raise ValueError("PHITS segment execution summary has the wrong stage")
     status = summary.get("stage_status")
-    if status != summary.get("status") or status not in EXECUTION_PROGRESS_STATUSES:
+    allowed = EXECUTION_PROGRESS_STATUSES | ({"stopped"} if schema == SEGMENT_EXECUTION_SCHEMA_V5 else set())
+    if status != summary.get("status") or status not in allowed:
         raise ValueError("PHITS segment execution summary has an invalid overall status")
     if require_success and status != "success":
         raise ValueError("PHITS segment execution summary is not successful")
@@ -229,7 +231,7 @@ def validate_segment_execution_summary(
         or re.fullmatch(r"[0-9a-f]{64}", manifest_digest) is None
     ):
         raise ValueError("PHITS segment progress has an invalid manifest digest")
-    if status in {"running", "success", "failed"} and manifest_digest is None:
+    if status in {"running", "success", "failed", "stopped"} and manifest_digest is None:
         raise ValueError("PHITS segment progress is missing its manifest digest")
 
     segments = summary["segments"]
@@ -340,9 +342,12 @@ def validate_segment_execution_summary(
         value not in {"success", "skipped"} for value in observed_statuses
     ):
         raise ValueError("Successful PHITS progress contains incomplete segments")
-    if schema == SEGMENT_EXECUTION_SCHEMA_V4:
+    if schema in {SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}:
         from dicomxphits.segment_retry import validate_v4
         validate_v4(summary)
+    if schema == SEGMENT_EXECUTION_SCHEMA_V5:
+        from dicomxphits.segment_stop import validate_stop_evidence
+        validate_stop_evidence(summary)
     return schema
 
 
@@ -765,6 +770,7 @@ def run_segments(
     summary_writer: Callable[[Path, dict[str, Any]], None] | None = None,
     run_incomplete: bool = False,
     expected_summary_sha256: str | None = None,
+    stop_control=None,
 ) -> dict[str, Any]:
     from dicomxphits.segment_retry import plan_incomplete
     from dicomxphits.workspace_execution import WorkspaceExecutionLease
@@ -775,24 +781,27 @@ def run_segments(
         with WorkspaceExecutionLease(root, create=False) as lease:
             plan = plan_incomplete(root, paths, expected_summary_sha256=expected_summary_sha256)
             if not plan["scheduled"]:
+                if stop_control is not None:
+                    stop_control.close()
                 return plan["summary"]
             with lease.invocation():
                 return _run_segments_locked(workspace_root=root, paths=paths,
                     command_argv=command_argv, runner=lease.run if runner is subprocess.run else runner,
                     monotonic_clock=monotonic_clock, utc_now=utc_now,
-                    run_id_factory=run_id_factory, summary_writer=summary_writer, retry_plan=plan)
+                    run_id_factory=run_id_factory, summary_writer=summary_writer, retry_plan=plan,
+                    stop_control=stop_control)
     with WorkspaceOutputGuard(root):
         with WorkspaceExecutionLease(root) as lease:
             with lease.invocation():
                 return _run_segments_locked(workspace_root=root, paths=paths,
                     command_argv=command_argv, runner=lease.run if runner is subprocess.run else runner,
                     monotonic_clock=monotonic_clock, utc_now=utc_now,
-                    run_id_factory=run_id_factory, summary_writer=summary_writer)
+                    run_id_factory=run_id_factory, summary_writer=summary_writer, stop_control=stop_control)
 
 
 def _run_segments_locked(
     *, workspace_root, paths, command_argv, runner, monotonic_clock, utc_now,
-    run_id_factory, summary_writer, retry_plan=None,
+    run_id_factory, summary_writer, retry_plan=None, stop_control=None,
 ):
     from dicomxphits.segment_retry import capture_binding, result_evidence, validate_binding, validate_results
     workspace_root = workspace_root.expanduser().resolve()
@@ -807,6 +816,7 @@ def _run_segments_locked(
     current_segment: dict[str, Any] | None = None
     execution_binding = None
     parent_attempt = None
+    stop_requested = None
 
     def persist(status: str, *, failure_reason: str | None = None) -> dict[str, Any]:
         summary = build_summary(
@@ -822,7 +832,8 @@ def _run_segments_locked(
             manifest_digest=manifest_digest,
             failure_reason=failure_reason,
         )
-        summary.update(schema_version=SEGMENT_EXECUTION_SCHEMA_V4,
+        summary.update(schema_version=SEGMENT_EXECUTION_SCHEMA_V5,
+            stop_control_enabled=stop_control is not None, stop_requested=deepcopy(stop_requested),
             execution_binding=execution_binding, parent_attempt=parent_attempt,
             retained_active_segment_count=sum(bool(s.get("retained")) for s in segment_summaries))
         validate_segment_execution_summary(summary, require_success=False)
@@ -831,6 +842,28 @@ def _run_segments_locked(
         else:
             summary_writer(summary_file, summary)
         return summary
+
+    def poll_stop():
+        nonlocal stop_requested
+        if stop_control is None:
+            return
+        from dicomxphits.segment_stop import valid_request
+        for request in stop_control.take():
+            if (not valid_request(request, workspace=str(workspace_root), run_id=run_id)
+                or execution_binding is None or execution_binding["retry_unavailable"]):
+                stop_control.reject()
+                continue
+            if stop_requested is not None:
+                continue
+            stop_requested = {key: request[key] for key in ("request_id", "workspace_root", "run_id")}
+            stop_requested.update(acknowledged_at=_utc_text(utc_now()),
+                acknowledged_elapsed_seconds=_nonnegative_duration(monotonic_clock() - started_tick),
+                boundary_segment=deepcopy(current_segment))
+            persist("running")
+
+    def controlled_runner(*args, **kwargs):
+        from dicomxphits.segment_stop import run_while_polling
+        return run_while_polling(runner, poll_stop, *args, **kwargs)
 
     try:
         require_execution_paths(paths)
@@ -929,12 +962,16 @@ def _run_segments_locked(
             validate_binding(workspace_root, manifest, execution_binding, paths)
             validate_results(workspace_root, {"execution_binding": execution_binding,
                 "segments": segment_summaries})
+            poll_stop()
+            if stop_requested is not None:
+                break
             segment_started_tick = float(monotonic_clock())
             segment_started_at = _utc_text(utc_now())
             prior = segment_summaries[summary_index]
             segment_summaries[summary_index] = {
                 **prior,
                 "status": "running",
+                "producer_run_id": run_id,
                 "reason": None,
                 "started_at": segment_started_at,
                 "started_elapsed_seconds": _nonnegative_duration(
@@ -951,7 +988,7 @@ def _run_segments_locked(
                 workspace_root=workspace_root,
                 segment=segment,
                 phits_executable_path=paths.phits_executable_path,
-                runner=runner,
+                runner=controlled_runner if stop_control is not None else runner,
                 input_binding=contracts[prior["segment_id"]]["inputs"],
             )
             validate_binding(workspace_root, manifest, execution_binding, paths)
@@ -974,6 +1011,9 @@ def _run_segments_locked(
             }
             current_segment = None
             persist("running")
+            poll_stop()
+            if stop_requested is not None:
+                break
 
         overall = (
             "success"
@@ -981,9 +1021,11 @@ def _run_segments_locked(
                 item["status"] in {"success", "skipped"}
                 for item in segment_summaries
             )
-            else "failed"
+            else "stopped" if stop_requested is not None and not any(
+                item["status"] in {"failed", "gate_failed"} for item in segment_summaries
+            ) else "failed"
         )
-        if overall == "success":
+        if overall in {"success", "stopped"}:
             validate_binding(workspace_root, manifest, execution_binding, paths)
             validate_results(workspace_root, {"execution_binding": execution_binding,
                 "segments": segment_summaries})
@@ -1005,6 +1047,9 @@ def _run_segments_locked(
                     )
         persist("gate_failed", failure_reason=str(exc))
         raise
+    finally:
+        if stop_control is not None:
+            stop_control.close()
 
 
 def paths_from_args(args: argparse.Namespace) -> ExternalToolPaths:
@@ -1028,31 +1073,41 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--plan-incomplete", action="store_true")
     mode.add_argument("--run-incomplete", action="store_true")
     parser.add_argument("--expected-summary-sha256", default=None)
+    parser.add_argument("--control-stdin", action="store_true")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     workspace_root = Path(args.workspace_root)
+    control = None
     try:
         if args.plan_incomplete:
             from dicomxphits.segment_retry import plan_incomplete
             plan = plan_incomplete(workspace_root, paths_from_args(args))
             print(json.dumps({k: v for k, v in plan.items() if k != "summary"}, ensure_ascii=False))
             return 0
+        if args.control_stdin:
+            from dicomxphits.segment_stop import StopControl
+            control = StopControl()
+            control.start_reader(os.fdopen(os.dup(sys.stdin.fileno()), "rb", buffering=0))
         summary = run_segments(
             workspace_root=workspace_root,
             paths=paths_from_args(args),
             command_argv=sys.argv if argv is None else ["dicomxphits-run-segments", *argv],
             run_incomplete=args.run_incomplete,
             expected_summary_sha256=args.expected_summary_sha256,
+            stop_control=control,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         print(summary_path(workspace_root))
         return 2
+    finally:
+        if control is not None:
+            control.close()
     print(summary_path(workspace_root))
-    return 0 if summary["status"] == "success" else 3
+    return 0 if summary["status"] == "success" else 4 if summary["status"] == "stopped" else 3
 
 
 if __name__ == "__main__":

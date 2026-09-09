@@ -310,7 +310,7 @@ def plan_incomplete(root, paths, *, expected_summary_sha256=None):
         if expected_summary_sha256 is not None and source_digest != expected_summary_sha256:
             raise ValueError("Retry preview changed; create a new preview")
         summary = json.loads(source_bytes)
-        if api.validate_segment_execution_summary(summary, require_success=False) != api.SEGMENT_EXECUTION_SCHEMA_V4:
+        if api.validate_segment_execution_summary(summary, require_success=False) not in {api.SEGMENT_EXECUTION_SCHEMA_V4, api.SEGMENT_EXECUTION_SCHEMA_V5}:
             raise ValueError("Legacy evidence cannot authorize retry; prepare a new workspace")
         binding = summary.get("execution_binding")
         check_binding_shape(binding)

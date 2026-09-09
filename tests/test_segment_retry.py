@@ -19,8 +19,8 @@ from dicomxphits.workspace_recovery import validate_segment_execution_for_downst
 from test_run_segments import write_workspace, active_segment, CLEAN_PHITS_GEOMETRY_SUMMARY
 
 
-def workspace_fixture(tmp_path):
-    root, manifest = write_workspace(tmp_path, active_segment(0), active_segment(1))
+def workspace_fixture(tmp_path, segment_count=2):
+    root, manifest = write_workspace(tmp_path, *(active_segment(i) for i in range(segment_count)))
     (root / "analysis").mkdir()
     for name in ("phits_generation_summary.json", "public_preparation_workspace_summary.json"):
         (root / "analysis" / name).write_text(json.dumps({"synthetic": True}), encoding="utf-8")

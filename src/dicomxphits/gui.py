@@ -48,6 +48,7 @@ from dicomxphits.rtdose_plan_references import (
 from dicomxphits.run_segments import (
     SEGMENT_EXECUTION_SCHEMA_V3,
     SEGMENT_EXECUTION_SCHEMA_V4,
+    SEGMENT_EXECUTION_SCHEMA_V5,
     validate_segment_execution_summary,
 )
 from dicomxphits.workspace_recovery import (
@@ -649,7 +650,7 @@ def segment_progress_run_id(summary: Mapping[str, object] | None) -> str | None:
         schema = validate_segment_execution_summary(summary, require_success=False)
     except ValueError:
         return None
-    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}:
+    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}:
         return None
     run_id = summary.get("run_id")
     return str(run_id) if isinstance(run_id, str) else None
@@ -857,7 +858,7 @@ def format_segment_progress(
         schema = validate_segment_execution_summary(summary, require_success=False)
     except ValueError:
         return None
-    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}:
+    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}:
         return None
     status = str(summary.get("stage_status"))
     completed = int(summary["completed_active_segment_count"])
@@ -869,7 +870,7 @@ def format_segment_progress(
         else max(float(summary["elapsed_seconds"]), live_elapsed_seconds)
     )
     elapsed_text = _format_progress_duration(elapsed)
-    if schema == SEGMENT_EXECUTION_SCHEMA_V4:
+    if schema in {SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}:
         retained = int(summary["retained_active_segment_count"])
         elapsed_text += f"; retained {retained}, newly completed {completed - retained}"
     if status == "running" and not process_active:
@@ -884,6 +885,12 @@ def format_segment_progress(
             f"Failed — validated {completed}/{total} active segments; failed {failed}; "
             f"elapsed {elapsed_text}. Sumtally remains disabled."
         )
+    if status == "stopped":
+        return (f"User stopped; validated {completed}/{total}; remaining {total - completed}; "
+            f"elapsed {elapsed_text}. Use Run incomplete segments. Sumtally remains disabled.")
+    if summary.get("stop_requested") is not None:
+        return (f"Stop pending; finishing the committed segment; validated {completed}/{total}; "
+            f"elapsed {elapsed_text}. No stop-time estimate. Sumtally remains disabled.")
 
     current = summary.get("current_segment")
     current_text = "preparing the first segment"
@@ -929,7 +936,7 @@ def format_existing_segment_progress(
         schema = validate_segment_execution_summary(summary, require_success=False)
     except (TypeError, ValueError):
         schema = None
-    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4}:
+    if schema not in {SEGMENT_EXECUTION_SCHEMA_V3, SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}:
         return (
             "Segment progress unavailable for this workspace. "
             "No version-3 completion state is displayed."
@@ -964,6 +971,30 @@ def progress_workspace_matches(selected_root: str, summary_path: Path | None) ->
         return Path(selected_root).expanduser().resolve() == summary_path.parent.parent.resolve()
     except (OSError, ValueError):
         return False
+
+
+def stop_available(summary: Mapping | None) -> bool:
+    if summary is None:
+        return False
+    try:
+        schema = validate_segment_execution_summary(summary, require_success=False)
+    except (TypeError, ValueError):
+        return False
+    binding = summary.get("execution_binding")
+    return bool(schema == SEGMENT_EXECUTION_SCHEMA_V5 and summary.get("stage_status") == "running"
+        and summary.get("stop_control_enabled") and summary.get("stop_requested") is None
+        and isinstance(binding, Mapping) and not binding.get("retry_unavailable", ["missing"]))
+
+
+def verified_user_stop(result: StageResult, *, expected_run_id, prior_run_id) -> bool:
+    if result.return_code != 4 or result.summary is None:
+        return False
+    root = result.summary_path.parent.parent
+    selected = select_workspace_segment_progress_summary(result.summary, workspace_root=root,
+        expected_run_id=expected_run_id, prior_run_id=prior_run_id)
+    if selected is None or selected.get("schema_version") != SEGMENT_EXECUTION_SCHEMA_V5 or selected.get("stage_status") != "stopped":
+        return False
+    return True
 
 
 def incomplete_plan_for_config(config: GuiConfig) -> dict:
@@ -1248,6 +1279,7 @@ def run_stage(
     *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     public_tree: Path | None = None,
+    control_client=None,
 ) -> StageResult:
     spec = stage_by_key(stage_key)
     workspace = validate_stage(config, spec, public_tree=public_tree)
@@ -1256,7 +1288,8 @@ def run_stage(
         cwd = _resolved_path(config, "rtphits_root")
     else:
         cwd = workspace if workspace.exists() else workspace.parent
-    result = runner(command, cwd=cwd, capture_output=True, text=True, shell=False)
+    adapter = control_client.run if stage_key == "run_segments" and control_client is not None else runner
+    result = adapter(command, cwd=cwd, capture_output=True, text=True, shell=False)
     summary_path = workspace / spec.summary_relative_path
     return StageResult(
         stage_key=stage_key,
@@ -2023,6 +2056,9 @@ def _build_gui() -> int:
     phits_progress_validation_summary: Mapping[str, object] | None = None
     phits_progress_validation_accepted = False
     workspace_selection_controls = []
+    phits_control = None
+    phits_stop_sent = False
+    phits_stop_status = tk.StringVar(value="Stop unavailable until an owned retry-capable run starts.")
 
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
@@ -2033,15 +2069,24 @@ def _build_gui() -> int:
             return RTDOSE_NOT_PREPARED
         return rtdose_stage_state(Path(workspace).expanduser())
 
+    def stop_button_ready() -> bool:
+        return bool(execution_guard.active_stage == "run_segments"
+            and phits_control is not None and phits_control.process is not None
+            and not phits_stop_sent and phits_progress_validation_accepted
+            and progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path)
+            and stop_available(phits_progress_validation_summary))
+
     def refresh_action_button_states() -> None:
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
         for stage_key, button in action_buttons.items():
-            if stage_key == "retry_segments":
+            if stage_key == "stop_segments":
+                enabled = stop_button_ready()
+            elif stage_key == "retry_segments":
                 candidate = read_summary(Path(values["workspace_root"].get()) / "analysis/segment_execution_summary.json")
                 enabled = bool(not busy and tool_profile_resolution.ready_for_stage("run_segments")
                     and isinstance(candidate, Mapping)
-                    and candidate.get("schema_version") == SEGMENT_EXECUTION_SCHEMA_V4
+                    and candidate.get("schema_version") in {SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}
                     and isinstance(candidate.get("execution_binding"), Mapping)
                     and not candidate["execution_binding"].get("retry_unavailable", ["missing"])
                     and candidate.get("stage_status") != "success")
@@ -3411,6 +3456,14 @@ def _build_gui() -> int:
             )
             if display is not None:
                 phits_progress_status.set(display)
+            if selected.get("stop_requested") is not None:
+                phits_stop_status.set("Stop pending: the committed segment will finish and be validated.")
+            elif not phits_stop_sent:
+                phits_stop_status.set("Stop after current segment is available." if stop_available(selected)
+                    else "Stop unavailable: this invocation lacks supported retry/control evidence.")
+        button = action_buttons.get("stop_segments")
+        if button is not None:
+            button.state(["!disabled"] if stop_button_ready() else ["disabled"])
         root.after(250, refresh_phits_progress)
 
     def finish_phits_progress(summary: Mapping[str, object] | None = None) -> None:
@@ -3483,6 +3536,19 @@ def _build_gui() -> int:
             set_busy(None)
             return
         if spec.key == "run_segments":
+            if verified_user_stop(result, expected_run_id=phits_progress_run_id,
+                prior_run_id=phits_progress_prior_run_id):
+                finish_phits_progress(result.summary)
+                nav_status[stage_to_nav[spec.key]].set("User stopped")
+                phits_stop_status.set("User stopped. Use Run incomplete segments to continue.")
+                append("PHITS: user stopped at a verified segment boundary; Sumtally remains disabled.", "info")
+                set_busy(None)
+                return
+            if result.return_code == 4 or (result.summary and result.summary.get("stage_status") == "stopped"):
+                phits_progress_status.set("Invalid / incomplete stop evidence. Sumtally remains disabled.")
+                finish_stage_error(spec, "Stop exit and validated invocation evidence do not agree.", validation=False)
+                phits_progress_status.set("Invalid / incomplete stop evidence. Sumtally remains disabled.")
+                return
             finish_phits_progress(result.summary)
         success = result.return_code == 0 and status in {
             "completed",
@@ -3545,6 +3611,7 @@ def _build_gui() -> int:
             rtdose_run_button.focus_set()
 
     def start_stage(stage_key: str, *, retry_plan: dict | None = None) -> None:
+        nonlocal phits_control, phits_stop_sent
         nonlocal phits_progress_run_id
         nonlocal phits_progress_prior_run_id
         nonlocal phits_progress_summary_path
@@ -3586,6 +3653,10 @@ def _build_gui() -> int:
         nav_status[stage_to_nav[stage_key]].set("Running")
         append(f"{spec.label}: started")
         if stage_key == "run_segments":
+            from dicomxphits.segment_stop import ControllerPipe
+            phits_control = ControllerPipe()
+            phits_stop_sent = False
+            phits_stop_status.set("Waiting for owned stop-capable evidence.")
             phits_progress_summary_path = workspace / spec.summary_relative_path
             prior_summary = read_summary(phits_progress_summary_path)
             phits_progress_prior_run_id = segment_progress_run_id(prior_summary)
@@ -3600,7 +3671,8 @@ def _build_gui() -> int:
 
         def worker() -> None:
             try:
-                result = run_stage(config, stage_key)
+                result = run_stage(config, stage_key,
+                    control_client=phits_control if stage_key == "run_segments" else None)
             except Exception as exc:
                 message = _friendly_exception(spec, exc)
                 root.after(
@@ -3611,6 +3683,36 @@ def _build_gui() -> int:
             root.after(0, lambda: finish_stage_success(spec, result))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def request_segment_stop() -> None:
+        nonlocal phits_stop_sent
+        if (execution_guard.active_stage != "run_segments" or phits_stop_sent
+            or phits_control is None or not phits_progress_validation_accepted
+            or not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path)
+            or not stop_available(phits_progress_validation_summary)):
+            return
+        client = phits_control
+        run_id = phits_progress_run_id
+        workspace = str(phits_progress_summary_path.parent.parent.resolve())
+        phits_stop_sent = True
+        phits_stop_status.set("Stop request sending; not yet acknowledged.")
+        refresh_action_button_states()
+
+        def delivery(message):
+            if (phits_control is client and execution_guard.active_stage == "run_segments"
+                and phits_progress_run_id == run_id
+                and progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path)
+                and not (phits_progress_validation_summary or {}).get("stop_requested")):
+                phits_stop_status.set(message)
+
+        def send():
+            try:
+                client.send(workspace, run_id)
+                message = "Stop request sent; waiting for durable acknowledgement."
+            except (OSError, ValueError) as exc:
+                message = f"Stop request delivery failed; no safe stop confirmed: {exc}"
+            root.after(0, lambda: delivery(message))
+        threading.Thread(target=send, daemon=True).start()
 
     def start_incomplete_preview() -> None:
         if execution_guard.active_stage is not None:
@@ -3782,6 +3884,11 @@ def _build_gui() -> int:
     retry_button = ttk.Button(phits_frame, text="Run incomplete segments…", command=start_incomplete_preview)
     retry_button.grid(row=6, column=2, pady=(8, 0), sticky="e")
     action_buttons["retry_segments"] = retry_button
+    stop_button = ttk.Button(phits_frame, text="Stop after current segment", command=request_segment_stop)
+    stop_button.grid(row=7, column=2, pady=(8, 0), sticky="e")
+    action_buttons["stop_segments"] = stop_button
+    ttk.Label(phits_frame, textvariable=phits_stop_status, wraplength=760,
+        style="Surface.TLabel").grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
     sumtally_actions = ttk.Frame(
         sumtally_page, style="Surface.TFrame", padding=(18, 12)
