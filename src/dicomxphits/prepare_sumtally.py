@@ -555,6 +555,12 @@ def generate_sumtally(
         segment_output_evidence = file_digest_evidence(
             expected_segment_outputs(workspace_root, manifest)
         )
+        validate_segment_execution_for_downstream(
+            workspace_root,
+            manifest,
+            segment_execution_summary,
+            allow_external_manifest_outputs=True,
+        )
         tally_geometry_binding = segment_tally_geometry_binding(
             expected_segment_outputs(workspace_root, manifest)
         )

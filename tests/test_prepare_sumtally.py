@@ -13,6 +13,7 @@ PUBLIC_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
+import dicomxphits.prepare_sumtally as prepare_sumtally_module
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.gantry_geometry import (
     CURRENT_GANTRY_GEOMETRY_CONTRACT,
@@ -337,6 +338,39 @@ def test_generate_sumtally_rejects_stale_v2_segment_output(tmp_path: Path) -> No
             paths=paths(),
             command_argv=["generate"],
         )
+
+
+def test_generate_sumtally_rechecks_phits_binding_after_digest_collection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, manifest = write_workspace(tmp_path)
+    output = workspace / manifest["segments"][0]["expected_output_path"]
+    original_file_digest_evidence = prepare_sumtally_module.file_digest_evidence
+    replaced = False
+
+    def replace_before_digest(paths_to_hash):
+        nonlocal replaced
+        paths_to_hash = list(paths_to_hash)
+        if not replaced and output in paths_to_hash:
+            output.write_text("replaced during generation", encoding="utf-8")
+            replaced = True
+        return original_file_digest_evidence(paths_to_hash)
+
+    monkeypatch.setattr(
+        prepare_sumtally_module,
+        "file_digest_evidence",
+        replace_before_digest,
+    )
+
+    with pytest.raises(ValueError, match="does not match its segment artifacts"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+    assert replaced is True
 
 
 def test_generate_sumtally_accepts_matching_prepared_calculation_geometry(tmp_path):
