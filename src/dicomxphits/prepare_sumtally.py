@@ -20,7 +20,11 @@ from dicomxphits.prepare_3dcrt_workspace import (
     validate_public_strict_3dcrt_gate,
     write_json,
 )
-from dicomxphits.run_segments import phits_environment
+from dicomxphits.run_segments import (
+    SEGMENT_EXECUTION_SCHEMA_V3,
+    phits_environment,
+    validate_segment_execution_summary,
+)
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.rtdose_geometry import (
     segment_tally_geometry_binding,
@@ -471,6 +475,23 @@ def generate_sumtally(
         manifest, manifest_path = load_manifest(workspace_root)
         bound_manifest_sha256 = manifest_sha256(manifest)
         strict_gate = validate_manifest_for_sumtally(manifest)
+        segment_execution_summary = load_json_object(
+            workspace_root / "analysis" / "segment_execution_summary.json"
+        )
+        execution_schema = validate_segment_execution_summary(
+            segment_execution_summary,
+            require_success=True,
+        )
+        if execution_schema == SEGMENT_EXECUTION_SCHEMA_V3:
+            from dicomxphits.workspace_recovery import (
+                validate_segment_execution_for_downstream,
+            )
+
+            validate_segment_execution_for_downstream(
+                workspace_root,
+                manifest,
+                segment_execution_summary,
+            )
         validate_segment_outputs_exist(workspace_root, manifest)
         tally_patterns = derive_tally_patterns_from_manifest(manifest, list(TARGET_TALLY_PATTERNS))
         selection = select_sumtally_base_input(

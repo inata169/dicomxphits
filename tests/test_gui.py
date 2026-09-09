@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -40,11 +41,16 @@ from dicomxphits.gui import (
     ct2phits_handoff_values,
     gui_defaults_path,
     geometry_mode_guidance,
+    format_segment_progress,
+    estimate_segment_remaining_seconds,
     preserve_tool_profile_mode_values,
     rtdose_action_enabled,
     rtdose_nav_status,
     rtdose_stage_state,
     run_stage,
+    select_segment_progress_summary,
+    segment_progress_run_id,
+    segment_summary_authorizes_sumtally,
     stage_by_key,
     suggest_case_paths,
     successful_nav_status,
@@ -63,6 +69,199 @@ from dicomxphits.gui_tool_profile import (
     validate_custom_tool_profile,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
+
+
+def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: str = "run-1"):
+    segments = []
+    active_ordinal = 0
+    for index, status in enumerate(statuses, start=1):
+        active_ordinal += 1
+        item = {
+            "segment_id": f"seg_{index:03d}",
+            "manifest_ordinal": index,
+            "active_ordinal": active_ordinal,
+            "status": status,
+            "started_at": None,
+            "finished_at": None,
+            "started_elapsed_seconds": None,
+            "duration_seconds": None,
+            "return_code": None,
+            "geometry_diagnostics": None,
+        }
+        if status in {"running", "success", "failed"}:
+            item["started_at"] = f"2026-09-09T00:00:{index:02d}Z"
+            item["started_elapsed_seconds"] = float((index - 1) * 10)
+        if status in {"success", "failed"}:
+            item["finished_at"] = f"2026-09-09T00:00:{index + 1:02d}Z"
+            item["duration_seconds"] = 10.0
+        if status == "success":
+            item["expected_output_sha256"] = "1" * 64
+            item["phits_out_sha256"] = "2" * 64
+            item["geometry_diagnostics"] = {"status": "clean"}
+        segments.append(item)
+    succeeded = statuses.count("success")
+    failed = statuses.count("failed") + statuses.count("gate_failed")
+    current = next((item for item in segments if item["status"] == "running"), None)
+    return {
+        "schema_version": "dicomxphits_public_segment_execution_v3",
+        "stage": "run_segments",
+        "run_id": run_id,
+        "status": stage_status,
+        "stage_status": stage_status,
+        "workspace_root": "C:/synthetic/workspace",
+        "manifest_sha256": "0" * 64,
+        "started_at": "2026-09-09T00:00:00Z",
+        "updated_at": "2026-09-09T00:00:10Z",
+        "elapsed_seconds": 10.0,
+        "segment_count": len(segments),
+        "active_segment_count": len(segments),
+        "completed_active_segment_count": succeeded,
+        "remaining_active_segment_count": statuses.count("pending")
+        + statuses.count("running"),
+        "current_segment": (
+            {
+                "segment_id": current["segment_id"],
+                "manifest_ordinal": current["manifest_ordinal"],
+                "active_ordinal": current["active_ordinal"],
+            }
+            if current is not None
+            else None
+        ),
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": 0,
+        "segments": segments,
+        "failure_reason": None,
+    }
+
+
+def test_segment_progress_waits_for_first_completed_segment_before_estimating() -> None:
+    summary = v3_progress_summary("running", "pending")
+
+    display = format_segment_progress(
+        summary,
+        process_active=True,
+        live_elapsed_seconds=14.0,
+    )
+
+    assert display is not None
+    assert "validated 0/2 active segments" in display
+    assert "current 1/2 (seg_001)" in display
+    assert "elapsed 00:00:14" in display
+    assert "estimating after first completed segment" in display
+
+
+def test_segment_progress_estimate_uses_completed_segment_mean() -> None:
+    summary = v3_progress_summary("success", "running", "pending")
+
+    remaining = estimate_segment_remaining_seconds(
+        summary,
+        live_elapsed_seconds=14.0,
+    )
+    display = format_segment_progress(
+        summary,
+        process_active=True,
+        live_elapsed_seconds=14.0,
+        now=datetime(2026, 9, 9, 12, 0, 0),
+    )
+
+    assert remaining == pytest.approx(16.0)
+    assert display is not None
+    assert "validated 1/3 active segments" in display
+    assert "Approximate remaining 00:00:16" in display
+    assert "Approximate finish 2026-09-09 12:00:16" in display
+
+
+def test_segment_progress_marks_orphaned_running_record_incomplete() -> None:
+    summary = v3_progress_summary("success", "running")
+
+    display = format_segment_progress(summary, process_active=False)
+
+    assert display is not None
+    assert "Interrupted / incomplete" in display
+    assert "Sumtally remains disabled" in display
+
+
+@pytest.mark.parametrize(
+    ("stage_status", "statuses", "expected"),
+    [
+        ("success", ("success",), "Completed"),
+        ("failed", ("failed",), "Failed"),
+        ("gate_failed", ("gate_failed",), "Failed"),
+    ],
+)
+def test_segment_progress_reports_terminal_state_without_process_activity(
+    stage_status: str,
+    statuses: tuple[str, ...],
+    expected: str,
+) -> None:
+    summary = v3_progress_summary(*statuses, stage_status=stage_status)
+
+    display = format_segment_progress(summary, process_active=False)
+
+    assert display is not None
+    assert display.startswith(expected)
+
+
+@pytest.mark.parametrize("stage_status", ["running", "failed", "gate_failed"])
+def test_non_success_segment_progress_does_not_authorize_sumtally_action(
+    stage_status: str,
+) -> None:
+    item_status = {
+        "running": "pending",
+        "failed": "failed",
+        "gate_failed": "gate_failed",
+    }[stage_status]
+    summary = v3_progress_summary(item_status, stage_status=stage_status)
+
+    assert segment_summary_authorizes_sumtally(summary) is False
+
+
+def test_terminal_success_segment_summary_authorizes_sumtally_action() -> None:
+    summary = v3_progress_summary("success", stage_status="success")
+
+    assert segment_summary_authorizes_sumtally(summary) is True
+
+
+def test_segment_progress_selection_binds_to_new_gui_invocation() -> None:
+    previous = v3_progress_summary("success", stage_status="success", run_id="old-run")
+    current = v3_progress_summary("running", run_id="new-run")
+
+    assert segment_progress_run_id(previous) == "old-run"
+    assert (
+        select_segment_progress_summary(
+            previous,
+            expected_run_id=None,
+            prior_run_id="old-run",
+        )
+        is None
+    )
+    assert (
+        select_segment_progress_summary(
+            current,
+            expected_run_id=None,
+            prior_run_id="old-run",
+        )
+        is current
+    )
+    assert (
+        select_segment_progress_summary(
+            previous,
+            expected_run_id="new-run",
+            prior_run_id="old-run",
+        )
+        is None
+    )
+
+
+def test_segment_progress_ignores_unknown_summary_schema() -> None:
+    summary = v3_progress_summary("running")
+    summary["schema_version"] = "dicomxphits_public_segment_execution_future"
+
+    assert segment_progress_run_id(summary) is None
+    assert format_segment_progress(summary, process_active=True) is None
+
+
 from dicomxphits.project_identity import (
     PROJECT_AUTHOR_DISPLAY,
     PROJECT_REPOSITORY_URL,

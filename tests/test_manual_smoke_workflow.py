@@ -297,6 +297,18 @@ def create_segment_outputs(workspace: Path, manifest: dict[str, Any]) -> None:
         output_path.write_text(
             tally_output_text("synthetic segment dose\n"), encoding="utf-8"
         )
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dicomxphits_public_segment_execution_v2",
+                "stage_status": "success",
+                "segments": [],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def create_successful_sumtally_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, Path]]:

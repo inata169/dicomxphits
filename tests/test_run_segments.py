@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -18,10 +20,13 @@ from dicomxphits.gantry_geometry import (
     GANTRY_GEOMETRY_CONTRACT_FIELD,
 )
 from dicomxphits.run_segments import (
+    SEGMENT_EXECUTION_SCHEMA_V2,
+    SEGMENT_EXECUTION_SCHEMA_V3,
     build_parser,
     main,
     phits_environment,
     run_segments,
+    validate_segment_execution_summary,
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError
 from dicomxphits.sumtally_inputs import file_sha256
@@ -731,3 +736,215 @@ def test_run_segments_parser_has_public_cli_options():
     parser_actions = {action.dest for action in build_parser()._actions}
 
     assert {"workspace_root", "paths_json", "phits_executable_path"} <= parser_actions
+
+
+class StepClock:
+    def __init__(self) -> None:
+        self.monotonic_value = 0.0
+        self.utc_value = datetime(2026, 9, 9, tzinfo=timezone.utc)
+
+    def monotonic(self) -> float:
+        value = self.monotonic_value
+        self.monotonic_value += 2.0
+        return value
+
+    def utc_now(self) -> datetime:
+        value = self.utc_value
+        self.utc_value += timedelta(seconds=1)
+        return value
+
+
+class BackwardWallClock(StepClock):
+    def utc_now(self) -> datetime:
+        value = self.utc_value
+        self.utc_value -= timedelta(seconds=1)
+        return value
+
+
+def test_run_segments_persists_v3_segment_boundary_progress(tmp_path):
+    workspace, _manifest = write_workspace(
+        tmp_path,
+        active_segment(0),
+        active_segment(1),
+    )
+    outputs = [
+        workspace / "segments" / "seg_001" / "deposit-target-3D.out",
+        workspace / "segments" / "seg_002" / "deposit-target-3D.out",
+    ]
+    snapshots = []
+    clock = StepClock()
+
+    summary = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(workspace, outputs),
+        monotonic_clock=clock.monotonic,
+        utc_now=clock.utc_now,
+        run_id_factory=lambda: "synthetic-run-id",
+        summary_writer=lambda _path, value: snapshots.append(deepcopy(value)),
+    )
+
+    assert summary["schema_version"] == SEGMENT_EXECUTION_SCHEMA_V3
+    assert summary["run_id"] == "synthetic-run-id"
+    assert len(snapshots) == 6
+    assert snapshots[0]["current_segment"] is None
+    assert snapshots[1]["current_segment"]["segment_id"] == "seg_001"
+    assert snapshots[2]["completed_active_segment_count"] == 1
+    assert snapshots[3]["current_segment"]["segment_id"] == "seg_002"
+    assert snapshots[4]["completed_active_segment_count"] == 2
+    assert snapshots[5]["stage_status"] == "success"
+    assert snapshots[5]["current_segment"] is None
+    assert snapshots[5]["remaining_active_segment_count"] == 0
+    assert all(
+        item["duration_seconds"] >= 0
+        for item in snapshots[5]["segments"]
+        if item["status"] == "success"
+    )
+    assert (
+        validate_segment_execution_summary(summary, require_success=True)
+        == SEGMENT_EXECUTION_SCHEMA_V3
+    )
+
+
+def test_run_segments_keeps_monotonic_durations_when_wall_clock_moves_backward(
+    tmp_path,
+):
+    workspace, _manifest = write_workspace(tmp_path, active_segment(0))
+    expected = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
+    clock = BackwardWallClock()
+
+    summary = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=fake_runner_for(workspace, [expected]),
+        monotonic_clock=clock.monotonic,
+        utc_now=clock.utc_now,
+    )
+
+    assert summary["stage_status"] == "success"
+    assert summary["elapsed_seconds"] >= 0
+    assert summary["segments"][0]["duration_seconds"] >= 0
+    validate_segment_execution_summary(summary, require_success=True)
+
+
+def test_run_segments_records_zero_active_segments_without_launching_runner(tmp_path):
+    workspace, _manifest = write_workspace(
+        tmp_path,
+        active_segment(0, active=False),
+        active_segment(1, skip=True),
+    )
+    runner_calls = []
+    snapshots = []
+
+    summary = run_segments(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["run"],
+        runner=lambda *args, **kwargs: runner_calls.append((args, kwargs)),
+        summary_writer=lambda _path, value: snapshots.append(deepcopy(value)),
+    )
+
+    assert runner_calls == []
+    assert len(snapshots) == 2
+    assert summary["stage_status"] == "success"
+    assert summary["active_segment_count"] == 0
+    assert summary["completed_active_segment_count"] == 0
+    assert summary["remaining_active_segment_count"] == 0
+    assert [item["status"] for item in summary["segments"]] == ["skipped", "skipped"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("updated_at", "not-a-timestamp", "ISO-8601 UTC timestamp"),
+        ("elapsed_seconds", -0.1, "invalid elapsed duration"),
+    ],
+)
+def test_v3_segment_summary_rejects_invalid_root_timing(field, value, message):
+    summary = {
+        "schema_version": SEGMENT_EXECUTION_SCHEMA_V3,
+        "stage": "run_segments",
+        "run_id": "synthetic-timing",
+        "status": "success",
+        "stage_status": "success",
+        "workspace_root": "C:/synthetic/workspace",
+        "manifest_sha256": "0" * 64,
+        "started_at": "2026-09-09T00:00:00Z",
+        "updated_at": "2026-09-09T00:00:01Z",
+        "elapsed_seconds": 1.0,
+        "segment_count": 0,
+        "active_segment_count": 0,
+        "completed_active_segment_count": 0,
+        "remaining_active_segment_count": 0,
+        "current_segment": None,
+        "succeeded": 0,
+        "failed": 0,
+        "skipped": 0,
+        "segments": [],
+        "failure_reason": None,
+    }
+    summary[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        validate_segment_execution_summary(summary, require_success=True)
+
+
+def test_progress_write_failure_stops_before_next_segment(tmp_path):
+    workspace, _manifest = write_workspace(
+        tmp_path,
+        active_segment(0),
+        active_segment(1),
+    )
+    outputs = [
+        workspace / "segments" / "seg_001" / "deposit-target-3D.out",
+        workspace / "segments" / "seg_002" / "deposit-target-3D.out",
+    ]
+    base_runner = fake_runner_for(workspace, outputs)
+    runner_calls = []
+    snapshots = []
+
+    def runner(*args, **kwargs):
+        runner_calls.append(args)
+        return base_runner(*args, **kwargs)
+
+    def writer(_path, value):
+        snapshots.append(deepcopy(value))
+        if len(snapshots) == 3:
+            raise OSError("synthetic progress write failure")
+
+    with pytest.raises(OSError, match="synthetic progress write failure"):
+        run_segments(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["run"],
+            runner=runner,
+            run_id_factory=lambda: "synthetic-write-failure",
+            summary_writer=writer,
+        )
+
+    assert len(runner_calls) == 1
+    assert snapshots[-1]["stage_status"] == "gate_failed"
+    assert [item["status"] for item in snapshots[-1]["segments"]] == [
+        "success",
+        "gate_failed",
+    ]
+
+
+def test_segment_summary_validator_keeps_v2_success_and_rejects_unknown_version():
+    v2 = {
+        "schema_version": SEGMENT_EXECUTION_SCHEMA_V2,
+        "stage_status": "success",
+        "segments": [],
+    }
+
+    assert (
+        validate_segment_execution_summary(v2, require_success=True)
+        == SEGMENT_EXECUTION_SCHEMA_V2
+    )
+    with pytest.raises(ValueError, match="Unsupported"):
+        validate_segment_execution_summary(
+            {"schema_version": "future", "segments": []},
+            require_success=False,
+        )

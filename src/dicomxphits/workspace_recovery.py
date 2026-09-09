@@ -31,6 +31,7 @@ from dicomxphits.rtdose_plan_references import (
     validate_course_dose_evidence,
     validate_full_plan_context,
 )
+from dicomxphits.run_segments import validate_segment_execution_summary
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
@@ -384,6 +385,28 @@ def _validate_phits_geometry_diagnostic_evidence(
             "PHITS geometry diagnostic evidence is not clean; PHITS results "
             "cannot be reused safely."
         ) from exc
+
+
+def validate_segment_execution_for_downstream(
+    workspace_root: Path,
+    manifest: Mapping[str, Any],
+    segment_summary: Mapping[str, Any] | None,
+) -> None:
+    if not isinstance(segment_summary, Mapping):
+        raise WorkspaceRecoveryError(
+            "PHITS execution evidence is missing or invalid; downstream stages remain disabled."
+        )
+    try:
+        validate_segment_execution_summary(segment_summary, require_success=True)
+    except ValueError as exc:
+        raise WorkspaceRecoveryError(
+            f"PHITS execution evidence is not acceptable: {exc}"
+        ) from exc
+    _validate_phits_geometry_diagnostic_evidence(
+        workspace_root,
+        manifest,
+        segment_summary,
+    )
 
 
 def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
@@ -828,15 +851,7 @@ def inspect_existing_workspace(workspace_root: Path) -> WorkspaceRecoveryInspect
     try:
         manifest, outputs = _manifest_and_outputs(root)
         segment_summary = _load_object(root / SUMMARY_PATHS["segments"])
-        if not _succeeded(segment_summary):
-            raise WorkspaceRecoveryError(
-                "PHITS execution evidence is missing or unsuccessful; PHITS results cannot be reused."
-            )
-        if not isinstance(segment_summary, Mapping):
-            raise WorkspaceRecoveryError(
-                "PHITS execution evidence is invalid; PHITS results cannot be reused."
-            )
-        _validate_phits_geometry_diagnostic_evidence(
+        validate_segment_execution_for_downstream(
             root,
             manifest,
             segment_summary,
