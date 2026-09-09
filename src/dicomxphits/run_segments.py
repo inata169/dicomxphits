@@ -7,8 +7,11 @@ import os
 import re
 import subprocess
 import sys
+import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from dicomxphits.prepare_3dcrt_workspace import (
     ExternalToolPaths,
@@ -29,6 +32,17 @@ from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
 
 SUMMARY_RELATIVE_PATH = Path("analysis") / "segment_execution_summary.json"
+SEGMENT_EXECUTION_SCHEMA_V2 = "dicomxphits_public_segment_execution_v2"
+SEGMENT_EXECUTION_SCHEMA_V3 = "dicomxphits_public_segment_execution_v3"
+SEGMENT_EXECUTION_SCHEMAS = frozenset(
+    {SEGMENT_EXECUTION_SCHEMA_V2, SEGMENT_EXECUTION_SCHEMA_V3}
+)
+SEGMENT_PROGRESS_STATUSES = frozenset(
+    {"pending", "running", "success", "failed", "gate_failed", "skipped"}
+)
+EXECUTION_PROGRESS_STATUSES = frozenset(
+    {"running", "success", "failed", "gate_failed"}
+)
 ROOT_BATCH_OUT = "batch.out"
 ROOT_PHITS_OUT = "phits.out"
 OMP_DIRECTIVE_PATTERN = re.compile(r"^\s*\$OMP\s*=\s*(\d+)\s*$", re.IGNORECASE)
@@ -104,9 +118,61 @@ def summary_path(workspace_root: Path) -> Path:
     return workspace_root / SUMMARY_RELATIVE_PATH
 
 
-def blank_segment_summary(segment: dict[str, Any], *, status: str, reason: str | None = None) -> dict[str, Any]:
+def _utc_text(value: datetime) -> str:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("UTC clock must return a timezone-aware datetime")
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _default_utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _default_run_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _nonnegative_duration(value: float) -> float:
+    return max(0.0, float(value))
+
+
+def _is_nonnegative_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and float(value) >= 0.0
+    )
+
+
+def _is_nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _parse_utc_text(value: object, *, field_name: str) -> datetime:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise ValueError(f"{field_name} must be an ISO-8601 UTC timestamp")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO-8601 UTC timestamp") from exc
+    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise ValueError(f"{field_name} must be an ISO-8601 UTC timestamp")
+    return parsed
+
+
+def blank_segment_summary(
+    segment: dict[str, Any],
+    *,
+    status: str,
+    manifest_ordinal: int,
+    active_ordinal: int | None,
+    reason: str | None = None,
+) -> dict[str, Any]:
     return {
         "segment_id": str(segment.get("segment_id") or segment.get("segment_index") or "unknown"),
+        "manifest_ordinal": manifest_ordinal,
+        "active_ordinal": active_ordinal,
         "phits_input_path": str(segment.get("phits_input_path") or ""),
         "expected_output_path": str(segment.get("expected_output_path") or ""),
         "return_code": None,
@@ -115,7 +181,164 @@ def blank_segment_summary(segment: dict[str, Any], *, status: str, reason: str |
         "geometry_diagnostics": None,
         "status": status,
         "reason": reason,
+        "started_at": None,
+        "finished_at": None,
+        "started_elapsed_seconds": None,
+        "duration_seconds": None,
     }
+
+
+def validate_segment_execution_summary(
+    summary: Mapping[str, Any],
+    *,
+    require_success: bool,
+) -> str:
+    schema = summary.get("schema_version")
+    if schema not in SEGMENT_EXECUTION_SCHEMAS:
+        raise ValueError("Unsupported PHITS segment execution summary schema")
+    if not isinstance(summary.get("segments"), list):
+        raise ValueError("PHITS segment execution summary is missing segments")
+    if schema == SEGMENT_EXECUTION_SCHEMA_V2:
+        v2_success = any(
+            summary.get(field) == "success" for field in ("stage_status", "status")
+        )
+        if require_success and not v2_success:
+            raise ValueError("PHITS segment execution summary is not successful")
+        return schema
+    if summary.get("stage") != "run_segments":
+        raise ValueError("PHITS segment execution summary has the wrong stage")
+    status = summary.get("stage_status")
+    if status != summary.get("status") or status not in EXECUTION_PROGRESS_STATUSES:
+        raise ValueError("PHITS segment execution summary has an invalid overall status")
+    if require_success and status != "success":
+        raise ValueError("PHITS segment execution summary is not successful")
+    run_id = summary.get("run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("PHITS segment progress is missing its invocation identifier")
+    _parse_utc_text(summary.get("started_at"), field_name="started_at")
+    _parse_utc_text(summary.get("updated_at"), field_name="updated_at")
+    if not _is_nonnegative_number(summary.get("elapsed_seconds")):
+        raise ValueError("PHITS segment progress has an invalid elapsed duration")
+    if not isinstance(summary.get("workspace_root"), str) or not summary.get("workspace_root"):
+        raise ValueError("PHITS segment progress is missing its workspace root")
+    manifest_digest = summary.get("manifest_sha256")
+    if manifest_digest is not None and (
+        not isinstance(manifest_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", manifest_digest) is None
+    ):
+        raise ValueError("PHITS segment progress has an invalid manifest digest")
+    if status in {"running", "success", "failed"} and manifest_digest is None:
+        raise ValueError("PHITS segment progress is missing its manifest digest")
+
+    segments = summary["segments"]
+    count_fields = (
+        "segment_count",
+        "active_segment_count",
+        "completed_active_segment_count",
+        "remaining_active_segment_count",
+        "succeeded",
+        "failed",
+        "skipped",
+    )
+    if any(not _is_nonnegative_int(summary.get(field)) for field in count_fields):
+        raise ValueError("PHITS segment progress has invalid segment counts")
+    if summary.get("segment_count") != len(segments):
+        raise ValueError("PHITS segment progress segment count does not match its entries")
+
+    observed_statuses: list[str] = []
+    running_items: list[Mapping[str, Any]] = []
+    active_ordinals: list[int] = []
+    for position, item in enumerate(segments, start=1):
+        if not isinstance(item, Mapping):
+            raise ValueError("PHITS segment progress contains a non-object segment")
+        item_status = item.get("status")
+        if item_status not in SEGMENT_PROGRESS_STATUSES:
+            raise ValueError("PHITS segment progress contains an invalid segment status")
+        observed_statuses.append(str(item_status))
+        if item.get("manifest_ordinal") != position:
+            raise ValueError("PHITS segment progress has an invalid manifest ordinal")
+        active_ordinal = item.get("active_ordinal")
+        if item_status == "skipped":
+            if active_ordinal is not None:
+                raise ValueError("Skipped PHITS segment has an active ordinal")
+        else:
+            if not isinstance(active_ordinal, int) or isinstance(active_ordinal, bool):
+                raise ValueError("Active PHITS segment is missing its active ordinal")
+            active_ordinals.append(active_ordinal)
+        if item_status == "running":
+            running_items.append(item)
+        has_started = item.get("started_at") is not None
+        if item_status in {"running", "success", "failed"} or has_started:
+            _parse_utc_text(item.get("started_at"), field_name="segment started_at")
+            if not _is_nonnegative_number(item.get("started_elapsed_seconds")):
+                raise ValueError("PHITS segment has an invalid start duration")
+        has_terminal_timing = item_status in {"success", "failed"} or (
+            item_status == "gate_failed" and has_started
+        )
+        if has_terminal_timing:
+            _parse_utc_text(item.get("finished_at"), field_name="segment finished_at")
+            if not _is_nonnegative_number(item.get("duration_seconds")):
+                raise ValueError("PHITS segment has an invalid duration")
+        elif item.get("finished_at") is not None or item.get("duration_seconds") is not None:
+            raise ValueError("Incomplete PHITS segment contains terminal timing")
+        if item_status in {"pending", "running"} and (
+            item.get("return_code") is not None
+            or item.get("geometry_diagnostics") is not None
+            or item.get("expected_output_sha256") is not None
+            or item.get("phits_out_sha256") is not None
+        ):
+            raise ValueError("Incomplete PHITS segment contains result evidence")
+        if item_status == "success":
+            if item.get("return_code") != 0:
+                raise ValueError(
+                    "Successful PHITS segment does not have a zero return code"
+                )
+            if any(
+                not isinstance(item.get(field), str)
+                or re.fullmatch(r"[0-9a-f]{64}", str(item.get(field))) is None
+                for field in ("expected_output_sha256", "phits_out_sha256")
+            ):
+                raise ValueError("Successful PHITS segment is missing output digests")
+            diagnostics = item.get("geometry_diagnostics")
+            if not isinstance(diagnostics, Mapping) or diagnostics.get("status") != "clean":
+                raise ValueError("Successful PHITS segment is missing clean geometry evidence")
+
+    active_count = len([value for value in observed_statuses if value != "skipped"])
+    succeeded = observed_statuses.count("success")
+    failed = observed_statuses.count("failed") + observed_statuses.count("gate_failed")
+    skipped = observed_statuses.count("skipped")
+    remaining = observed_statuses.count("pending") + observed_statuses.count("running")
+    if active_ordinals != list(range(1, active_count + 1)):
+        raise ValueError("PHITS segment progress active ordinals are not contiguous")
+    expected_counts = {
+        "active_segment_count": active_count,
+        "completed_active_segment_count": succeeded,
+        "remaining_active_segment_count": remaining,
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+    }
+    if any(summary.get(key) != value for key, value in expected_counts.items()):
+        raise ValueError("PHITS segment progress counts do not match its entries")
+    current = summary.get("current_segment")
+    if len(running_items) > 1:
+        raise ValueError("PHITS segment progress contains multiple running segments")
+    if running_items:
+        running = running_items[0]
+        if not isinstance(current, Mapping) or any(
+            current.get(key) != running.get(key)
+            for key in ("segment_id", "manifest_ordinal", "active_ordinal")
+        ):
+            raise ValueError("PHITS segment progress current segment is inconsistent")
+    elif current is not None:
+        raise ValueError("PHITS segment progress names a segment that is not running")
+    if status != "running" and running_items:
+        raise ValueError("Terminal PHITS segment progress contains a running segment")
+    if status == "success" and any(
+        value not in {"success", "skipped"} for value in observed_statuses
+    ):
+        raise ValueError("Successful PHITS progress contains incomplete segments")
+    return schema
 
 
 def collect_root_outputs(
@@ -480,21 +703,38 @@ def build_summary(
     status: str,
     segments: list[dict[str, Any]],
     command_argv: list[str] | None,
+    run_id: str,
+    started_at: str,
+    updated_at: str,
+    elapsed_seconds: float,
+    current_segment: dict[str, Any] | None,
     manifest_digest: str | None = None,
     failure_reason: str | None = None,
 ) -> dict[str, Any]:
     succeeded = sum(1 for segment in segments if segment.get("status") == "success")
     failed = sum(1 for segment in segments if segment.get("status") in {"failed", "gate_failed"})
     skipped = sum(1 for segment in segments if segment.get("status") == "skipped")
+    active = len(segments) - skipped
+    remaining = sum(
+        1 for segment in segments if segment.get("status") in {"pending", "running"}
+    )
     return {
-        "schema_version": "dicomxphits_public_segment_execution_v2",
+        "schema_version": SEGMENT_EXECUTION_SCHEMA_V3,
         "stage": "run_segments",
+        "run_id": run_id,
         "status": status,
         "stage_status": status,
         "workspace_root": str(workspace_root),
         "manifest_sha256": manifest_digest,
         "command": {"argv": command_argv or sys.argv},
+        "started_at": started_at,
+        "updated_at": updated_at,
+        "elapsed_seconds": elapsed_seconds,
         "segment_count": len(segments),
+        "active_segment_count": active,
+        "completed_active_segment_count": succeeded,
+        "remaining_active_segment_count": remaining,
+        "current_segment": current_segment,
         "succeeded": succeeded,
         "failed": failed,
         "skipped": skipped,
@@ -509,10 +749,43 @@ def run_segments(
     paths: ExternalToolPaths,
     command_argv: list[str] | None = None,
     runner=subprocess.run,
+    monotonic_clock: Callable[[], float] = time.monotonic,
+    utc_now: Callable[[], datetime] = _default_utc_now,
+    run_id_factory: Callable[[], str] = _default_run_id,
+    summary_writer: Callable[[Path, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
+    workspace_root = workspace_root.expanduser().resolve()
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
     manifest_digest: str | None = None
+    run_id = str(run_id_factory()).strip()
+    if not run_id:
+        raise ValueError("segment execution invocation identifier must not be empty")
+    started_tick = float(monotonic_clock())
+    started_at = _utc_text(utc_now())
+    current_segment: dict[str, Any] | None = None
+
+    def persist(status: str, *, failure_reason: str | None = None) -> dict[str, Any]:
+        summary = build_summary(
+            workspace_root=workspace_root,
+            status=status,
+            segments=segment_summaries,
+            command_argv=command_argv,
+            run_id=run_id,
+            started_at=started_at,
+            updated_at=_utc_text(utc_now()),
+            elapsed_seconds=_nonnegative_duration(monotonic_clock() - started_tick),
+            current_segment=current_segment,
+            manifest_digest=manifest_digest,
+            failure_reason=failure_reason,
+        )
+        validate_segment_execution_summary(summary, require_success=False)
+        if summary_writer is None:
+            write_json(summary_file, summary, case_root=workspace_root)
+        else:
+            summary_writer(summary_file, summary)
+        return summary
+
     try:
         require_execution_paths(paths)
         manifest, _manifest_path = load_manifest(workspace_root)
@@ -523,15 +796,32 @@ def run_segments(
             raise ValueError("segment manifest must contain a segments list")
 
         active_segments: list[tuple[int, dict[str, Any]]] = []
-        for item in raw_segments:
+        active_ordinal = 0
+        for manifest_index, item in enumerate(raw_segments):
             if not isinstance(item, dict):
                 continue
             is_active, skip_reason = segment_active_state(item)
             if is_active:
+                active_ordinal += 1
                 active_segments.append((len(segment_summaries), item))
-                segment_summaries.append(blank_segment_summary(item, status="pending"))
+                segment_summaries.append(
+                    blank_segment_summary(
+                        item,
+                        status="pending",
+                        manifest_ordinal=manifest_index + 1,
+                        active_ordinal=active_ordinal,
+                    )
+                )
             else:
-                segment_summaries.append(blank_segment_summary(item, status="skipped", reason=skip_reason))
+                segment_summaries.append(
+                    blank_segment_summary(
+                        item,
+                        status="skipped",
+                        manifest_ordinal=manifest_index + 1,
+                        active_ordinal=None,
+                        reason=skip_reason,
+                    )
+                )
 
         with WorkspaceOutputGuard(workspace_root) as guard:
             guard.prepare_file_target(summary_file, create_parents=True)
@@ -563,40 +853,72 @@ def run_segments(
                 ):
                     guard.prepare_file_target(output, create_parents=True)
 
+        persist("running")
         for summary_index, segment in active_segments:
-            segment_summaries[summary_index] = (
-                run_one_segment(
-                    workspace_root=workspace_root,
-                    segment=segment,
-                    phits_executable_path=paths.phits_executable_path,
-                    runner=runner,
-                )
+            segment_started_tick = float(monotonic_clock())
+            segment_started_at = _utc_text(utc_now())
+            prior = segment_summaries[summary_index]
+            segment_summaries[summary_index] = {
+                **prior,
+                "status": "running",
+                "reason": None,
+                "started_at": segment_started_at,
+                "started_elapsed_seconds": _nonnegative_duration(
+                    segment_started_tick - started_tick
+                ),
+            }
+            current_segment = {
+                "segment_id": prior["segment_id"],
+                "manifest_ordinal": prior["manifest_ordinal"],
+                "active_ordinal": prior["active_ordinal"],
+            }
+            persist("running")
+            result = run_one_segment(
+                workspace_root=workspace_root,
+                segment=segment,
+                phits_executable_path=paths.phits_executable_path,
+                runner=runner,
             )
+            finished_tick = float(monotonic_clock())
+            segment_summaries[summary_index] = {
+                **result,
+                "manifest_ordinal": prior["manifest_ordinal"],
+                "active_ordinal": prior["active_ordinal"],
+                "started_at": segment_started_at,
+                "finished_at": _utc_text(utc_now()),
+                "started_elapsed_seconds": _nonnegative_duration(
+                    segment_started_tick - started_tick
+                ),
+                "duration_seconds": _nonnegative_duration(
+                    finished_tick - segment_started_tick
+                ),
+            }
+            current_segment = None
+            persist("running")
 
-        overall = "success" if all(item["status"] in {"success", "skipped"} for item in segment_summaries) else "failed"
-        summary = build_summary(
-            workspace_root=workspace_root,
-            status=overall,
-            segments=segment_summaries,
-            command_argv=command_argv,
-            manifest_digest=manifest_digest,
+        overall = (
+            "success"
+            if all(
+                item["status"] in {"success", "skipped"}
+                for item in segment_summaries
+            )
+            else "failed"
         )
-        write_json(summary_file, summary, case_root=workspace_root)
-        return summary
+        return persist(overall)
     except Exception as exc:
+        current_segment = None
         for segment in segment_summaries:
-            if segment.get("status") == "pending":
+            if segment.get("status") in {"pending", "running"}:
                 segment["status"] = "gate_failed"
                 segment["reason"] = str(exc)
-        summary = build_summary(
-            workspace_root=workspace_root,
-            status="gate_failed",
-            segments=segment_summaries,
-            command_argv=command_argv,
-            manifest_digest=manifest_digest,
-            failure_reason=str(exc),
-        )
-        write_json(summary_file, summary, case_root=workspace_root)
+                if segment.get("started_at") is not None:
+                    segment["finished_at"] = _utc_text(utc_now())
+                    segment["duration_seconds"] = _nonnegative_duration(
+                        monotonic_clock()
+                        - started_tick
+                        - float(segment.get("started_elapsed_seconds") or 0.0)
+                    )
+        persist("gate_failed", failure_reason=str(exc))
         raise
 
 

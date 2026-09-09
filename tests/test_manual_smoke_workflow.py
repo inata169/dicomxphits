@@ -21,10 +21,13 @@ from dicomxphits.gantry_geometry import (
     CURRENT_GANTRY_GEOMETRY_CONTRACT,
     GANTRY_GEOMETRY_CONTRACT_FIELD,
 )
+from dicomxphits.phits_geometry_diagnostics import (
+    GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+)
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.prepare_rtdose import PHITS2DICOM_REQUIRED_TEMPLATE_TAGS, prepare_rtdose, run_rtdose
 from dicomxphits.prepare_sumtally import generate_sumtally, run_sumtally
-from dicomxphits.sumtally_inputs import file_sha256
+from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
 
 SMOKE_PLAN_UID = "1.2.826.0.1.3680043.10.54321.9101"
@@ -291,12 +294,53 @@ def tool_paths(tmp_path: Path, *, phits2dicom: str | None = None) -> ExternalToo
 
 
 def create_segment_outputs(workspace: Path, manifest: dict[str, Any]) -> None:
+    execution_segments = []
     for segment in manifest["segments"]:
         output_path = workspace / str(segment["expected_output_path"])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
             tally_output_text("synthetic segment dose\n"), encoding="utf-8"
         )
+        phits_out_path = output_path.parent / "phits.out"
+        phits_out_path.write_text(
+            "Number of lost particles     =     0 / nlost =    10000\n"
+            "Number of geometry recovering = 0\n"
+            "Number of unrecovered errors = 0\n",
+            encoding="utf-8",
+        )
+        execution_segments.append(
+            {
+                "segment_id": segment["segment_id"],
+                "status": "success",
+                "expected_output_path": str(output_path.resolve()),
+                "expected_output_sha256": file_sha256(output_path),
+                "phits_out_path": str(phits_out_path.resolve()),
+                "phits_out_sha256": file_sha256(phits_out_path),
+                "geometry_diagnostics": {
+                    "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+                    "status": "clean",
+                    "counts": {
+                        "lost_particles": 0,
+                        "geometry_recovering": 0,
+                        "unrecovered_errors": 0,
+                    },
+                },
+            }
+        )
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dicomxphits_public_segment_execution_v2",
+                "stage_status": "success",
+                "workspace_root": str(workspace.resolve()),
+                "manifest_sha256": manifest_sha256(manifest),
+                "segments": execution_segments,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def create_successful_sumtally_workspace(tmp_path: Path) -> tuple[Path, dict[str, Any], dict[str, Path]]:

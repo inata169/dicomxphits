@@ -20,7 +20,10 @@ from dicomxphits.prepare_3dcrt_workspace import (
     validate_public_strict_3dcrt_gate,
     write_json,
 )
-from dicomxphits.run_segments import phits_environment
+from dicomxphits.run_segments import (
+    phits_environment,
+    validate_segment_execution_summary,
+)
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.rtdose_geometry import (
     segment_tally_geometry_binding,
@@ -471,6 +474,13 @@ def generate_sumtally(
         manifest, manifest_path = load_manifest(workspace_root)
         bound_manifest_sha256 = manifest_sha256(manifest)
         strict_gate = validate_manifest_for_sumtally(manifest)
+        segment_execution_summary = load_json_object(
+            workspace_root / "analysis" / "segment_execution_summary.json"
+        )
+        validate_segment_execution_summary(
+            segment_execution_summary,
+            require_success=True,
+        )
         validate_segment_outputs_exist(workspace_root, manifest)
         tally_patterns = derive_tally_patterns_from_manifest(manifest, list(TARGET_TALLY_PATTERNS))
         selection = select_sumtally_base_input(
@@ -487,6 +497,16 @@ def generate_sumtally(
             output_name=output_name,
             weight_field=WEIGHT_FIELD,
             mode=SUMTALLY_MODE,
+        )
+        from dicomxphits.workspace_recovery import (
+            validate_segment_execution_for_downstream,
+        )
+
+        validate_segment_execution_for_downstream(
+            workspace_root,
+            manifest,
+            segment_execution_summary,
+            allow_external_manifest_outputs=True,
         )
 
         sumtally_dir = workspace_root / "sumtally"
@@ -534,6 +554,12 @@ def generate_sumtally(
             sumtally_input_sha256 = file_sha256(sumtally_path)
         segment_output_evidence = file_digest_evidence(
             expected_segment_outputs(workspace_root, manifest)
+        )
+        validate_segment_execution_for_downstream(
+            workspace_root,
+            manifest,
+            segment_execution_summary,
+            allow_external_manifest_outputs=True,
         )
         tally_geometry_binding = segment_tally_geometry_binding(
             expected_segment_outputs(workspace_root, manifest)

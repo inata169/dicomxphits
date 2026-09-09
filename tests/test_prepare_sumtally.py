@@ -13,10 +13,14 @@ PUBLIC_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
+import dicomxphits.prepare_sumtally as prepare_sumtally_module
 from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
 from dicomxphits.gantry_geometry import (
     CURRENT_GANTRY_GEOMETRY_CONTRACT,
     GANTRY_GEOMETRY_CONTRACT_FIELD,
+)
+from dicomxphits.phits_geometry_diagnostics import (
+    GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
 )
 from dicomxphits.prepare_sumtally import (
     DEFAULT_SUMTALLY_OUTPUT_NAME,
@@ -29,7 +33,8 @@ from dicomxphits.prepare_sumtally import (
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError
 from dicomxphits.rtdose_geometry import tally_mesh_geometry_sha256
-from dicomxphits.sumtally_inputs import file_sha256
+from dicomxphits.run_segments import validate_segment_execution_summary
+from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
 def tally_output_text() -> str:
     return (
@@ -100,6 +105,7 @@ def write_workspace(tmp_path, *segments, metadata=None):
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    execution_segments = []
     for segment in manifest["segments"]:
         phits_path = workspace / segment["phits_input_path"]
         phits_path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,10 +125,50 @@ def write_workspace(tmp_path, *segments, metadata=None):
             output_path = workspace / segment["expected_output_path"]
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(tally_output_text(), encoding="utf-8")
+            phits_out_path = output_path.parent / "phits.out"
+            phits_out_path.write_text(
+                "Number of lost particles     =     0 / nlost =    10000\n"
+                "Number of geometry recovering = 0\n"
+                "Number of unrecovered errors = 0\n",
+                encoding="utf-8",
+            )
+            execution_segments.append(
+                {
+                    "segment_id": segment["segment_id"],
+                    "status": "success",
+                    "expected_output_path": str(output_path.resolve()),
+                    "expected_output_sha256": file_sha256(output_path),
+                    "phits_out_path": str(phits_out_path.resolve()),
+                    "phits_out_sha256": file_sha256(phits_out_path),
+                    "geometry_diagnostics": {
+                        "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+                        "status": "clean",
+                        "counts": {
+                            "lost_particles": 0,
+                            "geometry_recovering": 0,
+                            "unrecovered_errors": 0,
+                        },
+                    },
+                }
+            )
     if metadata is not None:
         summary_path = workspace / "analysis" / "public_preparation_workspace_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(metadata), encoding="utf-8")
+    segment_summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    segment_summary_path.parent.mkdir(parents=True, exist_ok=True)
+    segment_summary_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "dicomxphits_public_segment_execution_v2",
+                "stage_status": "success",
+                "workspace_root": str(workspace.resolve()),
+                "manifest_sha256": manifest_sha256(manifest),
+                "segments": execution_segments,
+            }
+        ),
+        encoding="utf-8",
+    )
     return workspace, manifest
 
 
@@ -132,6 +178,105 @@ def paths(phits2dicom=None):
         phits_executable_path="/opt/phits-root/bin/phits",
         phits2dicom_executable_path=phits2dicom,
     )
+
+
+def non_success_v3_summary(
+    workspace: Path,
+    manifest: dict,
+    *,
+    stage_status: str,
+) -> dict:
+    item_statuses = {
+        "running": ["pending"] * len(manifest["segments"]),
+        "failed": ["failed"]
+        + ["gate_failed"] * (len(manifest["segments"]) - 1),
+        "gate_failed": ["gate_failed"] * len(manifest["segments"]),
+    }[stage_status]
+    segments = []
+    for ordinal, (manifest_segment, item_status) in enumerate(
+        zip(manifest["segments"], item_statuses),
+        start=1,
+    ):
+        item = {
+            "segment_id": manifest_segment["segment_id"],
+            "manifest_ordinal": ordinal,
+            "active_ordinal": ordinal,
+            "status": item_status,
+            "started_at": None,
+            "finished_at": None,
+            "started_elapsed_seconds": None,
+            "duration_seconds": None,
+            "return_code": None,
+            "geometry_diagnostics": None,
+        }
+        if item_status == "failed":
+            item.update(
+                {
+                    "started_at": "2026-09-09T00:00:01Z",
+                    "finished_at": "2026-09-09T00:00:02Z",
+                    "started_elapsed_seconds": 1.0,
+                    "duration_seconds": 1.0,
+                    "return_code": 1,
+                }
+            )
+        segments.append(item)
+    failed = sum(item["status"] in {"failed", "gate_failed"} for item in segments)
+    remaining = sum(item["status"] in {"pending", "running"} for item in segments)
+    return {
+        "schema_version": "dicomxphits_public_segment_execution_v3",
+        "stage": "run_segments",
+        "run_id": f"synthetic-{stage_status}",
+        "status": stage_status,
+        "stage_status": stage_status,
+        "workspace_root": str(workspace.resolve()),
+        "manifest_sha256": manifest_sha256(manifest),
+        "started_at": "2026-09-09T00:00:00Z",
+        "updated_at": "2026-09-09T00:00:03Z",
+        "elapsed_seconds": 3.0,
+        "segment_count": len(segments),
+        "active_segment_count": len(segments),
+        "completed_active_segment_count": 0,
+        "remaining_active_segment_count": remaining,
+        "current_segment": None,
+        "succeeded": 0,
+        "failed": failed,
+        "skipped": 0,
+        "segments": segments,
+        "failure_reason": None if stage_status == "running" else "synthetic failure",
+    }
+
+
+@pytest.mark.parametrize("stage_status", ["running", "failed", "gate_failed"])
+def test_generate_sumtally_rejects_structurally_valid_non_success_v3_summary(
+    tmp_path: Path,
+    stage_status: str,
+) -> None:
+    workspace, manifest = write_workspace(tmp_path)
+    progress = non_success_v3_summary(
+        workspace,
+        manifest,
+        stage_status=stage_status,
+    )
+    validate_segment_execution_summary(progress, require_success=False)
+    (workspace / "analysis" / "segment_execution_summary.json").write_text(
+        json.dumps(progress),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="not successful"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+    failure = json.loads(
+        (workspace / "analysis" / "sumtally_generation_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["stage_status"] == "gate_failed"
+    assert failure["phits_execution_started"] is False
 
 
 def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
@@ -180,6 +325,98 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert "sumfactor = 100" in content
     assert "seg_001/deposit-target-3D.out  40" in content
     assert "seg_002/deposit-target-3D.out  60" in content
+
+
+def test_generate_sumtally_rejects_stale_v2_segment_output(tmp_path: Path) -> None:
+    workspace, manifest = write_workspace(tmp_path)
+    output = workspace / manifest["segments"][0]["expected_output_path"]
+    output.write_text("changed after PHITS success", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match its segment artifacts"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+
+def test_generate_sumtally_accepts_same_workspace_v2_with_relative_root(
+    tmp_path: Path,
+) -> None:
+    workspace, _ = write_workspace(tmp_path)
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    legacy = json.loads(summary_path.read_text(encoding="utf-8"))
+    legacy["workspace_root"] = workspace.name
+    summary_path.write_text(json.dumps(legacy), encoding="utf-8")
+    original_summary = summary_path.read_bytes()
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    assert summary["stage_status"] == "success"
+    assert summary_path.read_bytes() == original_summary
+
+
+def test_generate_sumtally_rejects_v2_relative_root_with_other_workspace_paths(
+    tmp_path: Path,
+) -> None:
+    workspace, _ = write_workspace(tmp_path)
+    other_workspace, _ = write_workspace(tmp_path / "other")
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    legacy = json.loads(summary_path.read_text(encoding="utf-8"))
+    legacy["workspace_root"] = workspace.name
+    legacy["segments"][0]["expected_output_path"] = str(
+        (
+            other_workspace
+            / "segments"
+            / "seg_001"
+            / "deposit-target-3D.out"
+        ).resolve()
+    )
+    summary_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid artifact binding"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+
+def test_generate_sumtally_rechecks_phits_binding_after_digest_collection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, manifest = write_workspace(tmp_path)
+    output = workspace / manifest["segments"][0]["expected_output_path"]
+    original_file_digest_evidence = prepare_sumtally_module.file_digest_evidence
+    replaced = False
+
+    def replace_before_digest(paths_to_hash):
+        nonlocal replaced
+        paths_to_hash = list(paths_to_hash)
+        if not replaced and output in paths_to_hash:
+            output.write_text("replaced during generation", encoding="utf-8")
+            replaced = True
+        return original_file_digest_evidence(paths_to_hash)
+
+    monkeypatch.setattr(
+        prepare_sumtally_module,
+        "file_digest_evidence",
+        replace_before_digest,
+    )
+
+    with pytest.raises(ValueError, match="does not match its segment artifacts"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+    assert replaced is True
 
 
 def test_generate_sumtally_accepts_matching_prepared_calculation_geometry(tmp_path):

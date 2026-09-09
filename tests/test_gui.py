@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -38,13 +39,22 @@ from dicomxphits.gui import (
     clear_handoff_for_workspace_change,
     clear_new_case_handoff_state,
     ct2phits_handoff_values,
+    format_existing_segment_progress,
+    format_terminal_segment_progress,
     gui_defaults_path,
     geometry_mode_guidance,
+    format_segment_progress,
+    estimate_segment_remaining_seconds,
     preserve_tool_profile_mode_values,
     rtdose_action_enabled,
     rtdose_nav_status,
     rtdose_stage_state,
     run_stage,
+    select_cached_workspace_segment_progress_summary,
+    select_segment_progress_summary,
+    select_workspace_segment_progress_summary,
+    segment_execution_authorizes_sumtally,
+    segment_progress_run_id,
     stage_by_key,
     suggest_case_paths,
     successful_nav_status,
@@ -63,6 +73,470 @@ from dicomxphits.gui_tool_profile import (
     validate_custom_tool_profile,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
+from dicomxphits.phits_geometry_diagnostics import (
+    GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+)
+
+
+def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: str = "run-1"):
+    segments = []
+    active_ordinal = 0
+    for index, status in enumerate(statuses, start=1):
+        if status != "skipped":
+            active_ordinal += 1
+        item = {
+            "segment_id": f"seg_{index:03d}",
+            "manifest_ordinal": index,
+            "active_ordinal": active_ordinal if status != "skipped" else None,
+            "status": status,
+            "started_at": None,
+            "finished_at": None,
+            "started_elapsed_seconds": None,
+            "duration_seconds": None,
+            "return_code": None,
+            "geometry_diagnostics": None,
+        }
+        if status in {"running", "success", "failed"}:
+            item["started_at"] = f"2026-09-09T00:00:{index:02d}Z"
+            item["started_elapsed_seconds"] = float((index - 1) * 10)
+        if status in {"success", "failed"}:
+            item["finished_at"] = f"2026-09-09T00:00:{index + 1:02d}Z"
+            item["duration_seconds"] = 10.0
+        if status == "success":
+            item["return_code"] = 0
+            item["expected_output_sha256"] = "1" * 64
+            item["phits_out_sha256"] = "2" * 64
+            item["geometry_diagnostics"] = {"status": "clean"}
+        segments.append(item)
+    succeeded = statuses.count("success")
+    failed = statuses.count("failed") + statuses.count("gate_failed")
+    skipped = statuses.count("skipped")
+    current = next((item for item in segments if item["status"] == "running"), None)
+    return {
+        "schema_version": "dicomxphits_public_segment_execution_v3",
+        "stage": "run_segments",
+        "run_id": run_id,
+        "status": stage_status,
+        "stage_status": stage_status,
+        "workspace_root": "C:/synthetic/workspace",
+        "manifest_sha256": "0" * 64,
+        "started_at": "2026-09-09T00:00:00Z",
+        "updated_at": "2026-09-09T00:00:10Z",
+        "elapsed_seconds": 10.0,
+        "segment_count": len(segments),
+        "active_segment_count": len(segments) - skipped,
+        "completed_active_segment_count": succeeded,
+        "remaining_active_segment_count": statuses.count("pending")
+        + statuses.count("running"),
+        "current_segment": (
+            {
+                "segment_id": current["segment_id"],
+                "manifest_ordinal": current["manifest_ordinal"],
+                "active_ordinal": current["active_ordinal"],
+            }
+            if current is not None
+            else None
+        ),
+        "succeeded": succeeded,
+        "failed": failed,
+        "skipped": skipped,
+        "segments": segments,
+        "failure_reason": None,
+    }
+
+
+def write_bound_success_progress_workspace(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, object], Path]:
+    workspace = tmp_path / "workspace"
+    output = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
+    phits_out = output.with_name("phits.out")
+    output.parent.mkdir(parents=True)
+    output.write_text("synthetic tally", encoding="utf-8")
+    phits_out.write_text("synthetic PHITS output", encoding="utf-8")
+    manifest = {
+        "segments": [
+            {
+                "segment_id": "seg_001",
+                "phits_input_path": "segments/seg_001/phits.inp",
+                "expected_output_path": "segments/seg_001/deposit-target-3D.out",
+            }
+        ]
+    }
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    summary = v3_progress_summary("success", stage_status="success")
+    summary["workspace_root"] = str(workspace.resolve())
+    summary["manifest_sha256"] = gui_module.manifest_sha256(manifest)
+    summary["segments"][0].update(
+        {
+            "expected_output_path": str(output.resolve()),
+            "phits_input_path": str(
+                (workspace / "segments" / "seg_001" / "phits.inp").resolve()
+            ),
+            "expected_output_sha256": gui_module.file_sha256(output),
+            "phits_out_path": str(phits_out.resolve()),
+            "phits_out_sha256": gui_module.file_sha256(phits_out),
+            "geometry_diagnostics": {
+                "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+                "status": "clean",
+                "counts": {
+                    "lost_particles": 0,
+                    "geometry_recovering": 0,
+                    "unrecovered_errors": 0,
+                },
+            },
+        }
+    )
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    return workspace, summary, output
+
+
+def test_segment_progress_waits_for_first_completed_segment_before_estimating() -> None:
+    summary = v3_progress_summary("running", "pending")
+
+    display = format_segment_progress(
+        summary,
+        process_active=True,
+        live_elapsed_seconds=14.0,
+    )
+
+    assert display is not None
+    assert "validated 0/2 active segments" in display
+    assert "current active 1/2, manifest 1 (seg_001)" in display
+    assert "elapsed 00:00:14" in display
+    assert "estimating after first completed segment" in display
+
+
+def test_segment_progress_estimate_uses_completed_segment_mean() -> None:
+    summary = v3_progress_summary("success", "running", "pending")
+
+    remaining = estimate_segment_remaining_seconds(
+        summary,
+        live_elapsed_seconds=14.0,
+    )
+    display = format_segment_progress(
+        summary,
+        process_active=True,
+        live_elapsed_seconds=14.0,
+        now=datetime(2026, 9, 9, 12, 0, 0),
+    )
+
+    assert remaining == pytest.approx(16.0)
+    assert display is not None
+    assert "validated 1/3 active segments" in display
+    assert "Approximate remaining 00:00:16" in display
+    assert "Approximate finish 2026-09-09 12:00:16" in display
+
+
+def test_segment_progress_shows_manifest_ordinal_after_skipped_segment() -> None:
+    summary = v3_progress_summary("skipped", "running")
+
+    display = format_segment_progress(summary, process_active=True)
+
+    assert display is not None
+    assert "current active 1/1, manifest 2 (seg_002)" in display
+
+
+def test_segment_progress_marks_orphaned_running_record_incomplete() -> None:
+    summary = v3_progress_summary("success", "running")
+
+    display = format_segment_progress(summary, process_active=False)
+
+    assert display is not None
+    assert "Interrupted / incomplete" in display
+    assert "Sumtally remains disabled" in display
+
+
+@pytest.mark.parametrize(
+    ("stage_status", "statuses", "expected"),
+    [
+        ("success", ("success",), "Completed"),
+        ("failed", ("failed",), "Failed"),
+        ("gate_failed", ("gate_failed",), "Failed"),
+    ],
+)
+def test_segment_progress_reports_terminal_state_without_process_activity(
+    stage_status: str,
+    statuses: tuple[str, ...],
+    expected: str,
+) -> None:
+    summary = v3_progress_summary(*statuses, stage_status=stage_status)
+
+    display = format_segment_progress(summary, process_active=False)
+
+    assert display is not None
+    assert display.startswith(expected)
+
+
+@pytest.mark.parametrize("stage_status", ["running", "failed", "gate_failed"])
+def test_non_success_segment_progress_does_not_authorize_sumtally_action(
+    tmp_path: Path,
+    stage_status: str,
+) -> None:
+    item_status = {
+        "running": "pending",
+        "failed": "failed",
+        "gate_failed": "gate_failed",
+    }[stage_status]
+    summary = v3_progress_summary(item_status, stage_status=stage_status)
+    workspace = tmp_path / "workspace"
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "segment_id": "seg_001",
+                        "expected_output_path": (
+                            "segments/seg_001/deposit-target-3D.out"
+                        ),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    assert segment_execution_authorizes_sumtally(workspace) is False
+
+
+def test_sumtally_action_requires_current_terminal_success_artifact_bindings(
+    tmp_path: Path,
+) -> None:
+    workspace, _summary, output = write_bound_success_progress_workspace(tmp_path)
+
+    assert segment_execution_authorizes_sumtally(workspace) is True
+
+    output.write_text("changed tally", encoding="utf-8")
+
+    assert segment_execution_authorizes_sumtally(workspace) is False
+
+
+def test_existing_progress_does_not_show_stale_success_as_completed(
+    tmp_path: Path,
+) -> None:
+    workspace, summary, output = write_bound_success_progress_workspace(tmp_path)
+
+    assert format_existing_segment_progress(workspace, summary).startswith("Completed")
+
+    output.write_text("changed tally", encoding="utf-8")
+    display = format_existing_segment_progress(workspace, summary)
+
+    assert display.startswith("Invalid / incomplete")
+    assert "Sumtally remains disabled" in display
+    assert not display.startswith("Completed")
+
+
+def test_existing_progress_accepts_relocated_valid_success(tmp_path: Path) -> None:
+    workspace, summary, _output = write_bound_success_progress_workspace(tmp_path)
+    relocated = tmp_path / "relocated-workspace"
+    workspace.rename(relocated)
+
+    display = format_existing_segment_progress(relocated, summary)
+
+    assert display.startswith("Completed")
+
+
+def test_existing_progress_replaces_missing_or_invalid_summary_with_unavailable(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    unknown = v3_progress_summary("success", stage_status="success")
+    unknown["schema_version"] = "dicomxphits_public_segment_execution_future"
+
+    missing_display = format_existing_segment_progress(workspace, None)
+    invalid_display = format_existing_segment_progress(workspace, unknown)
+
+    assert "progress unavailable" in missing_display.lower()
+    assert "progress unavailable" in invalid_display.lower()
+    assert "Completed" not in missing_display
+    assert "Completed" not in invalid_display
+
+
+def test_segment_progress_selection_binds_to_new_gui_invocation() -> None:
+    previous = v3_progress_summary("success", stage_status="success", run_id="old-run")
+    current = v3_progress_summary("running", run_id="new-run")
+
+    assert segment_progress_run_id(previous) == "old-run"
+    assert (
+        select_segment_progress_summary(
+            previous,
+            expected_run_id=None,
+            prior_run_id="old-run",
+        )
+        is None
+    )
+    assert (
+        select_segment_progress_summary(
+            current,
+            expected_run_id=None,
+            prior_run_id="old-run",
+        )
+        is current
+    )
+    assert (
+        select_segment_progress_summary(
+            previous,
+            expected_run_id="new-run",
+            prior_run_id="old-run",
+        )
+        is None
+    )
+
+
+def test_workspace_progress_selection_rejects_wrong_root_and_escaping_path(
+    tmp_path: Path,
+) -> None:
+    workspace, summary, _output = write_bound_success_progress_workspace(tmp_path)
+
+    assert (
+        select_workspace_segment_progress_summary(
+            summary,
+            workspace_root=workspace,
+            expected_run_id=None,
+            prior_run_id=None,
+        )
+        is summary
+    )
+
+    wrong_root = dict(summary)
+    wrong_root["workspace_root"] = str((tmp_path / "other").resolve())
+    assert (
+        select_workspace_segment_progress_summary(
+            wrong_root,
+            workspace_root=workspace,
+            expected_run_id=None,
+            prior_run_id=None,
+        )
+        is None
+    )
+
+    escaping = json.loads(json.dumps(summary))
+    escaping["segments"][0]["expected_output_path"] = "../outside.out"
+    assert (
+        select_workspace_segment_progress_summary(
+            escaping,
+            workspace_root=workspace,
+            expected_run_id=None,
+            prior_run_id=None,
+        )
+        is None
+    )
+
+
+def test_workspace_progress_validation_is_cached_for_unchanged_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    summary = v3_progress_summary("running", run_id="current-run")
+    calls = 0
+
+    def accept(_workspace_root, _summary):
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(
+        gui_module,
+        "validate_segment_progress_for_workspace",
+        accept,
+    )
+
+    first, cached_summary, cached_accepted = (
+        select_cached_workspace_segment_progress_summary(
+            summary,
+            workspace_root=tmp_path,
+            expected_run_id="current-run",
+            prior_run_id=None,
+            cached_summary=None,
+            cached_accepted=False,
+        )
+    )
+    second, _, _ = select_cached_workspace_segment_progress_summary(
+        dict(summary),
+        workspace_root=tmp_path,
+        expected_run_id="current-run",
+        prior_run_id=None,
+        cached_summary=cached_summary,
+        cached_accepted=cached_accepted,
+    )
+
+    assert first is summary
+    assert second == summary
+    assert calls == 1
+
+
+def test_terminal_segment_progress_rejects_prior_invocation_success() -> None:
+    previous = v3_progress_summary("success", stage_status="success", run_id="old-run")
+
+    display = format_terminal_segment_progress(
+        previous,
+        expected_run_id=None,
+        prior_run_id="old-run",
+    )
+
+    assert display.startswith("Failed / incomplete")
+    assert "Sumtally remains disabled" in display
+
+
+def test_terminal_segment_progress_accepts_current_invocation_failure() -> None:
+    current = v3_progress_summary("failed", stage_status="failed", run_id="new-run")
+
+    display = format_terminal_segment_progress(
+        current,
+        expected_run_id="new-run",
+        prior_run_id="old-run",
+    )
+
+    assert display.startswith("Failed")
+
+
+def test_terminal_segment_progress_validates_current_artifacts(tmp_path: Path) -> None:
+    workspace, summary, output = write_bound_success_progress_workspace(tmp_path)
+
+    completed = format_terminal_segment_progress(
+        summary,
+        workspace_root=workspace,
+        expected_run_id="run-1",
+        prior_run_id=None,
+    )
+    output.write_text("changed after PHITS success", encoding="utf-8")
+    stale = format_terminal_segment_progress(
+        summary,
+        workspace_root=workspace,
+        expected_run_id="run-1",
+        prior_run_id=None,
+    )
+
+    assert completed.startswith("Completed")
+    assert stale.startswith("Invalid / incomplete")
+
+
+def test_existing_non_success_progress_rejects_wrong_workspace(
+    tmp_path: Path,
+) -> None:
+    summary = v3_progress_summary("running", run_id="stale-run")
+
+    display = format_existing_segment_progress(tmp_path / "selected", summary)
+
+    assert "progress unavailable" in display.lower()
+    assert "validated" not in display.lower()
+
+
+def test_segment_progress_ignores_unknown_summary_schema() -> None:
+    summary = v3_progress_summary("running")
+    summary["schema_version"] = "dicomxphits_public_segment_execution_future"
+
+    assert segment_progress_run_id(summary) is None
+    assert format_segment_progress(summary, process_active=True) is None
+
+
 from dicomxphits.project_identity import (
     PROJECT_AUTHOR_DISPLAY,
     PROJECT_REPOSITORY_URL,

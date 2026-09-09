@@ -7,9 +7,10 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
 
@@ -44,6 +45,10 @@ from dicomxphits.rtdose_plan_references import (
     COURSE_DOSE_CONTRACT_VERSION,
     course_dose_evidence_is_current,
 )
+from dicomxphits.run_segments import (
+    SEGMENT_EXECUTION_SCHEMA_V3,
+    validate_segment_execution_summary,
+)
 from dicomxphits.workspace_recovery import (
     RECOVERY_COMPLETE,
     RECOVERY_READY,
@@ -53,6 +58,8 @@ from dicomxphits.workspace_recovery import (
     preserve_downstream_for_recovery,
     rtdose_plan_evidence_is_current,
     standard_ct2phits_handoff,
+    validate_segment_execution_for_downstream,
+    validate_segment_progress_for_workspace,
 )
 
 
@@ -626,6 +633,317 @@ def read_summary(path: Path) -> dict[str, object] | None:
     if isinstance(data, dict):
         return data
     return {"summary_error": "summary JSON root is not an object"}
+
+
+def segment_progress_run_id(summary: Mapping[str, object] | None) -> str | None:
+    if not isinstance(summary, Mapping):
+        return None
+    try:
+        schema = validate_segment_execution_summary(summary, require_success=False)
+    except ValueError:
+        return None
+    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+        return None
+    run_id = summary.get("run_id")
+    return str(run_id) if isinstance(run_id, str) else None
+
+
+def segment_execution_authorizes_sumtally(workspace_root: Path) -> bool:
+    summary = read_summary(
+        workspace_root / stage_by_key("run_segments").summary_relative_path
+    )
+    return segment_execution_summary_authorizes_sumtally(workspace_root, summary)
+
+
+def segment_execution_summary_authorizes_sumtally(
+    workspace_root: Path,
+    summary: Mapping[str, object] | None,
+) -> bool:
+    manifest = read_summary(
+        workspace_root / "segments" / "segment_manifest.json"
+    )
+    if not isinstance(manifest, Mapping) or not isinstance(summary, Mapping):
+        return False
+    try:
+        validate_segment_execution_for_downstream(
+            workspace_root,
+            manifest,
+            summary,
+        )
+    except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+        return False
+    return True
+
+
+def select_segment_progress_summary(
+    summary: Mapping[str, object] | None,
+    *,
+    expected_run_id: str | None,
+    prior_run_id: str | None,
+) -> Mapping[str, object] | None:
+    run_id = segment_progress_run_id(summary)
+    if run_id is None:
+        return None
+    if expected_run_id is not None:
+        return summary if run_id == expected_run_id else None
+    return summary if run_id != prior_run_id else None
+
+
+def select_workspace_segment_progress_summary(
+    summary: Mapping[str, object] | None,
+    *,
+    workspace_root: Path,
+    expected_run_id: str | None,
+    prior_run_id: str | None,
+) -> Mapping[str, object] | None:
+    selected = select_segment_progress_summary(
+        summary,
+        expected_run_id=expected_run_id,
+        prior_run_id=prior_run_id,
+    )
+    if selected is None:
+        return None
+    try:
+        validate_segment_progress_for_workspace(workspace_root, selected)
+    except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+        return None
+    return selected
+
+
+def select_cached_workspace_segment_progress_summary(
+    summary: Mapping[str, object] | None,
+    *,
+    workspace_root: Path,
+    expected_run_id: str | None,
+    prior_run_id: str | None,
+    cached_summary: Mapping[str, object] | None,
+    cached_accepted: bool,
+) -> tuple[
+    Mapping[str, object] | None,
+    Mapping[str, object] | None,
+    bool,
+]:
+    if isinstance(summary, Mapping) and summary == cached_summary:
+        selected = select_segment_progress_summary(
+            summary,
+            expected_run_id=expected_run_id,
+            prior_run_id=prior_run_id,
+        )
+        return (
+            selected if cached_accepted else None,
+            summary,
+            cached_accepted,
+        )
+    selected = select_workspace_segment_progress_summary(
+        summary,
+        workspace_root=workspace_root,
+        expected_run_id=expected_run_id,
+        prior_run_id=prior_run_id,
+    )
+    return selected, summary, selected is not None
+
+
+def format_terminal_segment_progress(
+    summary: Mapping[str, object] | None,
+    *,
+    workspace_root: Path | None = None,
+    expected_run_id: str | None,
+    prior_run_id: str | None,
+) -> str:
+    selected = select_segment_progress_summary(
+        summary,
+        expected_run_id=expected_run_id,
+        prior_run_id=prior_run_id,
+    )
+    if selected is None:
+        return (
+            "Failed / incomplete — no PHITS progress record belongs to this "
+            "invocation. Sumtally remains disabled."
+        )
+    if workspace_root is not None:
+        try:
+            validate_segment_progress_for_workspace(workspace_root, selected)
+        except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+            return (
+                "Invalid / incomplete — the PHITS progress record does not match "
+                "the selected workspace or its artifacts. Sumtally remains disabled."
+            )
+    display = format_segment_progress(selected, process_active=False)
+    if display is None:
+        return (
+            "Failed / incomplete — the PHITS progress record for this invocation "
+            "is invalid. Sumtally remains disabled."
+        )
+    if (
+        workspace_root is not None
+        and selected.get("stage_status") == "success"
+        and not segment_execution_summary_authorizes_sumtally(
+            workspace_root,
+            selected,
+        )
+    ):
+        return (
+            "Invalid / incomplete — recorded PHITS completion no longer matches "
+            "the current manifest or outputs. Sumtally remains disabled."
+        )
+    return display
+
+
+def estimate_segment_remaining_seconds(
+    summary: Mapping[str, object],
+    *,
+    live_elapsed_seconds: float,
+) -> float | None:
+    if summary.get("stage_status") != "running":
+        return None
+    raw_segments = summary.get("segments")
+    if not isinstance(raw_segments, list):
+        return None
+    durations = [
+        float(item["duration_seconds"])
+        for item in raw_segments
+        if isinstance(item, Mapping)
+        and item.get("status") == "success"
+        and isinstance(item.get("duration_seconds"), (int, float))
+        and not isinstance(item.get("duration_seconds"), bool)
+    ]
+    if not durations:
+        return None
+    mean_duration = sum(durations) / len(durations)
+    pending = sum(
+        1
+        for item in raw_segments
+        if isinstance(item, Mapping) and item.get("status") == "pending"
+    )
+    running = next(
+        (
+            item
+            for item in raw_segments
+            if isinstance(item, Mapping) and item.get("status") == "running"
+        ),
+        None,
+    )
+    current_allowance = 0.0
+    if running is not None:
+        started_elapsed = float(running.get("started_elapsed_seconds") or 0.0)
+        current_elapsed = max(0.0, live_elapsed_seconds - started_elapsed)
+        current_allowance = max(0.0, mean_duration - current_elapsed)
+    return max(0.0, current_allowance + mean_duration * pending)
+
+
+def _format_progress_duration(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def format_segment_progress(
+    summary: Mapping[str, object],
+    *,
+    process_active: bool,
+    live_elapsed_seconds: float | None = None,
+    now: datetime | None = None,
+) -> str | None:
+    try:
+        schema = validate_segment_execution_summary(summary, require_success=False)
+    except ValueError:
+        return None
+    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+        return None
+    status = str(summary.get("stage_status"))
+    completed = int(summary["completed_active_segment_count"])
+    total = int(summary["active_segment_count"])
+    failed = int(summary["failed"])
+    elapsed = (
+        float(summary["elapsed_seconds"])
+        if live_elapsed_seconds is None
+        else max(float(summary["elapsed_seconds"]), live_elapsed_seconds)
+    )
+    elapsed_text = _format_progress_duration(elapsed)
+    if status == "running" and not process_active:
+        return (
+            f"Interrupted / incomplete — validated {completed}/{total} active segments; "
+            f"elapsed at last update {elapsed_text}. Sumtally remains disabled."
+        )
+    if status == "success":
+        return f"Completed — validated {completed}/{total} active segments; elapsed {elapsed_text}."
+    if status in {"failed", "gate_failed"}:
+        return (
+            f"Failed — validated {completed}/{total} active segments; failed {failed}; "
+            f"elapsed {elapsed_text}. Sumtally remains disabled."
+        )
+
+    current = summary.get("current_segment")
+    current_text = "preparing the first segment"
+    if isinstance(current, Mapping):
+        raw_identifier = str(current.get("segment_id") or "unknown")
+        identifier = "".join(
+            character if character.isprintable() and character not in "\r\n" else "?"
+            for character in raw_identifier
+        )[:80]
+        current_text = (
+            f"current active {int(current['active_ordinal'])}/{total}, "
+            f"manifest {int(current['manifest_ordinal'])} ({identifier})"
+        )
+    remaining = estimate_segment_remaining_seconds(
+        summary,
+        live_elapsed_seconds=elapsed,
+    )
+    if remaining is None:
+        estimate_text = "estimating after first completed segment"
+    else:
+        clock = now or datetime.now().astimezone()
+        finish = clock + timedelta(seconds=remaining)
+        estimate_text = (
+            f"Approximate remaining {_format_progress_duration(remaining)}; "
+            f"Approximate finish {finish:%Y-%m-%d %H:%M:%S}"
+        )
+    return (
+        f"Running — validated {completed}/{total} active segments; {current_text}; "
+        f"elapsed {elapsed_text}; {estimate_text}."
+    )
+
+
+def format_existing_segment_progress(
+    workspace_root: Path,
+    summary: Mapping[str, object] | None,
+) -> str:
+    if not isinstance(summary, Mapping):
+        return (
+            "Segment progress unavailable for this workspace. "
+            "No version-3 completion state is displayed."
+        )
+    try:
+        schema = validate_segment_execution_summary(summary, require_success=False)
+    except (TypeError, ValueError):
+        schema = None
+    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+        return (
+            "Segment progress unavailable for this workspace. "
+            "No version-3 completion state is displayed."
+        )
+    if summary.get("stage_status") == "success":
+        if not segment_execution_summary_authorizes_sumtally(workspace_root, summary):
+            return (
+                "Invalid / incomplete — recorded PHITS completion no longer matches "
+                "the current manifest or outputs. Sumtally remains disabled."
+            )
+    else:
+        try:
+            validate_segment_progress_for_workspace(workspace_root, summary)
+        except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
+            return (
+                "Segment progress unavailable for this workspace. "
+                "The version-3 record does not match the selected workspace."
+            )
+    display = format_segment_progress(summary, process_active=False)
+    if display is None:
+        return (
+            "Segment progress unavailable for this workspace. "
+            "No version-3 completion state is displayed."
+        )
+    return display
 
 
 def summary_succeeded(summary: Mapping[str, object] | None) -> bool:
@@ -1651,12 +1969,21 @@ def _build_gui() -> int:
     )
     final_rtdose_output = tk.StringVar(value="")
     tool_profile_status = tk.StringVar(value="Not validated")
+    phits_progress_status = tk.StringVar(value="Not running")
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
     recovery_inspection: WorkspaceRecoveryInspection | None = None
     tool_profile_resolution = resolve_tool_profile(defaults)
     active_tool_profile_mode = values["tool_profile_mode"].get()
     tool_profile_update_in_progress = False
+    phits_progress_run_id: str | None = None
+    phits_progress_prior_run_id: str | None = None
+    phits_progress_summary_path: Path | None = None
+    phits_progress_anchor_key: tuple[str, str] | None = None
+    phits_progress_anchor_elapsed = 0.0
+    phits_progress_anchor_monotonic = 0.0
+    phits_progress_validation_summary: Mapping[str, object] | None = None
+    phits_progress_validation_accepted = False
 
     def values_snapshot() -> dict[str, str]:
         return {name: variable.get() for name, variable in values.items()}
@@ -1704,6 +2031,35 @@ def _build_gui() -> int:
                         allow_overwrite=overwrite.get(),
                     )
                 )
+                if stage_key == "generate_sumtally":
+                    workspace_text = values["workspace_root"].get().strip()
+                    invocation_is_current = True
+                    if workspace_text and phits_progress_summary_path is not None:
+                        workspace_path = Path(workspace_text).expanduser()
+                        expected_summary_path = (
+                            workspace_path
+                            / stage_by_key("run_segments").summary_relative_path
+                        )
+                        if (
+                            expected_summary_path.resolve()
+                            == phits_progress_summary_path.resolve()
+                        ):
+                            invocation_is_current = (
+                                select_workspace_segment_progress_summary(
+                                    read_summary(expected_summary_path),
+                                    workspace_root=workspace_path,
+                                    expected_run_id=phits_progress_run_id,
+                                    prior_run_id=phits_progress_prior_run_id,
+                                )
+                                is not None
+                            )
+                    enabled = enabled and bool(
+                        workspace_text
+                        and segment_execution_authorizes_sumtally(
+                            Path(workspace_text).expanduser()
+                        )
+                        and invocation_is_current
+                    )
                 if existing_case_mode.get() and stage_key in {
                     "run_ct2phits",
                     "prepare_workspace",
@@ -2117,6 +2473,15 @@ def _build_gui() -> int:
         )
         recovery_inspection = inspection
         existing_case_mode.set(True)
+        existing_progress = read_summary(
+            inspection.workspace_root
+            / stage_by_key("run_segments").summary_relative_path
+        )
+        existing_progress_text = format_existing_segment_progress(
+            inspection.workspace_root,
+            existing_progress,
+        )
+        phits_progress_status.set(existing_progress_text)
         final_rtdose_output.set(
             str(inspection.final_output) if inspection.final_output else ""
         )
@@ -2231,6 +2596,7 @@ def _build_gui() -> int:
             set_status=handoff_status.set,
         )
         final_rtdose_output.set("")
+        phits_progress_status.set("Not running")
         recovery_status.set(
             "Open an existing 3D-CRT workspace to inspect reusable results."
         )
@@ -2807,6 +3173,12 @@ def _build_gui() -> int:
         text="PHITS runs only through the explicit segment adapter and prepared workspace.",
         style="SurfaceMuted.TLabel",
     ).grid(row=3, column=1, columnspan=2, sticky="w", pady=(6, 10))
+    ttk.Label(
+        phits_frame,
+        textvariable=phits_progress_status,
+        style="Surface.TLabel",
+        wraplength=780,
+    ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 8))
 
     sumtally_page = new_page("sumtally")
     sumtally_frame = ttk.Frame(
@@ -2933,7 +3305,89 @@ def _build_gui() -> int:
             f"Running {stage_by_key(stage_key).label}…" if stage_key else "Ready"
         )
 
+    def refresh_phits_progress() -> None:
+        nonlocal phits_progress_run_id
+        nonlocal phits_progress_anchor_key
+        nonlocal phits_progress_anchor_elapsed
+        nonlocal phits_progress_anchor_monotonic
+        nonlocal phits_progress_validation_summary
+        nonlocal phits_progress_validation_accepted
+        if (
+            execution_guard.active_stage != "run_segments"
+            or phits_progress_summary_path is None
+        ):
+            return
+        summary = read_summary(phits_progress_summary_path)
+        workspace_root = phits_progress_summary_path.parent.parent
+        (
+            selected,
+            phits_progress_validation_summary,
+            phits_progress_validation_accepted,
+        ) = select_cached_workspace_segment_progress_summary(
+            summary,
+            workspace_root=workspace_root,
+            expected_run_id=phits_progress_run_id,
+            prior_run_id=phits_progress_prior_run_id,
+            cached_summary=phits_progress_validation_summary,
+            cached_accepted=phits_progress_validation_accepted,
+        )
+        if selected is not None:
+            selected_run_id = segment_progress_run_id(selected)
+            assert selected_run_id is not None
+            phits_progress_run_id = selected_run_id
+            anchor_key = (selected_run_id, str(selected.get("updated_at") or ""))
+            if anchor_key != phits_progress_anchor_key:
+                phits_progress_anchor_key = anchor_key
+                phits_progress_anchor_elapsed = float(
+                    selected.get("elapsed_seconds") or 0.0
+                )
+                phits_progress_anchor_monotonic = time.monotonic()
+            live_elapsed = phits_progress_anchor_elapsed + max(
+                0.0,
+                time.monotonic() - phits_progress_anchor_monotonic,
+            )
+            display = format_segment_progress(
+                selected,
+                process_active=True,
+                live_elapsed_seconds=live_elapsed,
+            )
+            if display is not None:
+                phits_progress_status.set(display)
+        root.after(250, refresh_phits_progress)
+
+    def finish_phits_progress(summary: Mapping[str, object] | None = None) -> None:
+        nonlocal phits_progress_run_id
+        if summary is None and phits_progress_summary_path is not None:
+            summary = read_summary(phits_progress_summary_path)
+        workspace_root = (
+            phits_progress_summary_path.parent.parent
+            if phits_progress_summary_path is not None
+            else None
+        )
+        selected = (
+            select_workspace_segment_progress_summary(
+                summary,
+                workspace_root=workspace_root,
+                expected_run_id=phits_progress_run_id,
+                prior_run_id=phits_progress_prior_run_id,
+            )
+            if workspace_root is not None
+            else None
+        )
+        if selected is not None:
+            phits_progress_run_id = segment_progress_run_id(selected)
+        phits_progress_status.set(
+            format_terminal_segment_progress(
+                summary,
+                workspace_root=workspace_root,
+                expected_run_id=phits_progress_run_id,
+                prior_run_id=phits_progress_prior_run_id,
+            )
+        )
+
     def finish_stage_error(spec: StageSpec, message: str, *, validation: bool) -> None:
+        if spec.key == "run_segments" and execution_guard.active_stage == "run_segments":
+            finish_phits_progress()
         rtdose_state = current_rtdose_state()
         nav_status[stage_to_nav[spec.key]].set(
             validation_nav_status(spec.key, rtdose_state=rtdose_state)
@@ -2960,6 +3414,8 @@ def _build_gui() -> int:
 
     def finish_stage_success(spec: StageSpec, result: StageResult) -> None:
         status = _stage_status(result)
+        if spec.key == "run_segments":
+            finish_phits_progress(result.summary)
         success = result.return_code == 0 and status in {
             "completed",
             "success",
@@ -3021,6 +3477,12 @@ def _build_gui() -> int:
             rtdose_run_button.focus_set()
 
     def start_stage(stage_key: str) -> None:
+        nonlocal phits_progress_run_id
+        nonlocal phits_progress_prior_run_id
+        nonlocal phits_progress_summary_path
+        nonlocal phits_progress_anchor_key
+        nonlocal phits_progress_validation_summary
+        nonlocal phits_progress_validation_accepted
         if execution_guard.active_stage is not None:
             append("Another stage is already running.", "warning")
             return
@@ -3040,7 +3502,7 @@ def _build_gui() -> int:
                     manual_handoff_selected=manual_handoff.get(),
                     verified_handoff_available=verified_handoff_available.get(),
                 )
-            validate_stage(config, spec)
+            workspace = validate_stage(config, spec)
         except GuiValidationError as exc:
             finish_stage_error(spec, str(exc), validation=True)
             return
@@ -3050,6 +3512,18 @@ def _build_gui() -> int:
         set_busy(stage_key)
         nav_status[stage_to_nav[stage_key]].set("Running")
         append(f"{spec.label}: started")
+        if stage_key == "run_segments":
+            phits_progress_summary_path = workspace / spec.summary_relative_path
+            prior_summary = read_summary(phits_progress_summary_path)
+            phits_progress_prior_run_id = segment_progress_run_id(prior_summary)
+            phits_progress_run_id = None
+            phits_progress_anchor_key = None
+            phits_progress_validation_summary = None
+            phits_progress_validation_accepted = False
+            phits_progress_status.set(
+                "Starting PHITS segment execution; waiting for the first progress record."
+            )
+            root.after(100, refresh_phits_progress)
 
         def worker() -> None:
             try:
@@ -3199,7 +3673,7 @@ def _build_gui() -> int:
         style="Primary.TButton",
         command=lambda: start_stage("run_segments"),
     )
-    phits_button.grid(row=4, column=2, pady=(10, 0), sticky="e")
+    phits_button.grid(row=5, column=2, pady=(10, 0), sticky="e")
     action_buttons["run_segments"] = phits_button
 
     sumtally_actions = ttk.Frame(

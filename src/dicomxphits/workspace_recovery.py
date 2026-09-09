@@ -31,6 +31,11 @@ from dicomxphits.rtdose_plan_references import (
     validate_course_dose_evidence,
     validate_full_plan_context,
 )
+from dicomxphits.run_segments import (
+    SEGMENT_EXECUTION_SCHEMA_V2,
+    SEGMENT_EXECUTION_SCHEMA_V3,
+    validate_segment_execution_summary,
+)
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 
@@ -301,6 +306,8 @@ def _validate_phits_geometry_diagnostic_evidence(
     workspace_root: Path,
     manifest: Mapping[str, Any],
     segment_summary: Mapping[str, Any],
+    *,
+    allow_external_manifest_outputs: bool = False,
 ) -> None:
     raw_segments = segment_summary.get("segments")
     if not isinstance(raw_segments, list):
@@ -336,21 +343,52 @@ def _validate_phits_geometry_diagnostic_evidence(
                 "An active PHITS segment is not successful; PHITS results cannot "
                 "be reused safely."
             )
-        expected_output = _workspace_path(
-            workspace_root,
-            str(expected_segments[segment_id].get("expected_output_path") or ""),
+        expected_output_value = str(
+            expected_segments[segment_id].get("expected_output_path") or ""
         )
+        if allow_external_manifest_outputs:
+            raw_expected_output = Path(expected_output_value)
+            expected_output = (
+                raw_expected_output
+                if raw_expected_output.is_absolute()
+                else workspace_root / raw_expected_output
+            ).resolve()
+        else:
+            expected_output = _workspace_path(
+                workspace_root,
+                expected_output_value,
+            )
         try:
-            recorded_output = rebind_workspace_path(
-                str(item.get("expected_output_path") or ""),
-                recorded_workspace_root=segment_summary.get("workspace_root"),
-                current_workspace_root=workspace_root,
-            )
-            recorded_phits_out = rebind_workspace_path(
-                str(item.get("phits_out_path") or ""),
-                recorded_workspace_root=segment_summary.get("workspace_root"),
-                current_workspace_root=workspace_root,
-            )
+            expected_output.relative_to(workspace_root.resolve())
+            output_is_external = False
+        except ValueError:
+            output_is_external = True
+        try:
+            if allow_external_manifest_outputs and output_is_external:
+                raw_recorded_output = Path(
+                    str(item.get("expected_output_path") or "")
+                )
+                raw_recorded_phits_out = Path(str(item.get("phits_out_path") or ""))
+                if (
+                    not raw_recorded_output.is_absolute()
+                    or not raw_recorded_phits_out.is_absolute()
+                ):
+                    raise WorkspaceRecoveryError(
+                        "External PHITS artifact evidence must use absolute paths"
+                    )
+                recorded_output = raw_recorded_output.resolve()
+                recorded_phits_out = raw_recorded_phits_out.resolve()
+            else:
+                recorded_output = rebind_workspace_path(
+                    str(item.get("expected_output_path") or ""),
+                    recorded_workspace_root=segment_summary.get("workspace_root"),
+                    current_workspace_root=workspace_root,
+                )
+                recorded_phits_out = rebind_workspace_path(
+                    str(item.get("phits_out_path") or ""),
+                    recorded_workspace_root=segment_summary.get("workspace_root"),
+                    current_workspace_root=workspace_root,
+                )
         except WorkspaceRecoveryError as exc:
             raise WorkspaceRecoveryError(
                 "PHITS geometry diagnostic evidence has an invalid artifact "
@@ -384,6 +422,164 @@ def _validate_phits_geometry_diagnostic_evidence(
             "PHITS geometry diagnostic evidence is not clean; PHITS results "
             "cannot be reused safely."
         ) from exc
+
+
+def validate_segment_progress_for_workspace(
+    workspace_root: Path,
+    segment_summary: Mapping[str, Any] | None,
+) -> None:
+    """Validate a version-3 progress record against one selected workspace."""
+
+    if not isinstance(segment_summary, Mapping):
+        raise WorkspaceRecoveryError("PHITS segment progress is missing or invalid")
+    try:
+        schema = validate_segment_execution_summary(
+            segment_summary,
+            require_success=False,
+        )
+    except ValueError as exc:
+        raise WorkspaceRecoveryError(
+            f"PHITS segment progress is not acceptable: {exc}"
+        ) from exc
+    if schema != SEGMENT_EXECUTION_SCHEMA_V3:
+        raise WorkspaceRecoveryError("PHITS segment progress is not version 3")
+
+    root = workspace_root.expanduser().resolve()
+    try:
+        recorded_root = Path(str(segment_summary.get("workspace_root") or "")).resolve()
+    except (OSError, ValueError) as exc:
+        raise WorkspaceRecoveryError(
+            "PHITS segment progress has an invalid workspace binding"
+        ) from exc
+    if recorded_root != root:
+        raise WorkspaceRecoveryError(
+            "PHITS segment progress belongs to a different workspace"
+        )
+
+    manifest = _load_object(root / "segments" / "segment_manifest.json")
+    if manifest is None or segment_summary.get("manifest_sha256") != manifest_sha256(
+        manifest
+    ):
+        raise WorkspaceRecoveryError(
+            "PHITS segment progress does not match the selected workspace manifest"
+        )
+    manifest_segments = manifest.get("segments")
+    summary_segments = segment_summary.get("segments")
+    if not isinstance(manifest_segments, list) or not isinstance(summary_segments, list):
+        raise WorkspaceRecoveryError("PHITS segment progress has invalid segment bindings")
+    if len(manifest_segments) != len(summary_segments):
+        raise WorkspaceRecoveryError(
+            "PHITS segment progress does not match the selected workspace segments"
+        )
+
+    for manifest_segment, progress_segment in zip(
+        manifest_segments,
+        summary_segments,
+        strict=True,
+    ):
+        if not isinstance(manifest_segment, Mapping) or not isinstance(
+            progress_segment, Mapping
+        ):
+            raise WorkspaceRecoveryError(
+                "PHITS segment progress has invalid segment bindings"
+            )
+        expected_id = str(
+            manifest_segment.get("segment_id")
+            or manifest_segment.get("segment_index")
+            or "unknown"
+        )
+        if progress_segment.get("segment_id") != expected_id:
+            raise WorkspaceRecoveryError(
+                "PHITS segment progress does not match the selected workspace segments"
+            )
+        bound_manifest_paths: dict[str, Path] = {}
+        for field in ("phits_input_path", "expected_output_path"):
+            expected_path = _workspace_path(
+                root,
+                str(manifest_segment.get(field) or ""),
+            )
+            recorded_path = rebind_workspace_path(
+                str(progress_segment.get(field) or ""),
+                recorded_workspace_root=segment_summary.get("workspace_root"),
+                current_workspace_root=root,
+            )
+            if recorded_path != expected_path:
+                raise WorkspaceRecoveryError(
+                    "PHITS segment progress has mismatched artifact paths"
+                )
+            bound_manifest_paths[field] = expected_path
+        bound_result_paths: dict[str, Path] = {}
+        for field in ("stdout_log_path", "stderr_log_path", "phits_out_path"):
+            value = progress_segment.get(field)
+            if value is not None:
+                bound_result_paths[field] = rebind_workspace_path(
+                    str(value),
+                    recorded_workspace_root=segment_summary.get("workspace_root"),
+                    current_workspace_root=root,
+                )
+        if progress_segment.get("status") == "success":
+            expected_output = bound_manifest_paths["expected_output_path"]
+            phits_out = bound_result_paths.get("phits_out_path")
+            if (
+                not expected_output.is_file()
+                or progress_segment.get("expected_output_sha256")
+                != file_sha256(expected_output)
+                or phits_out is None
+                or not phits_out.is_file()
+                or progress_segment.get("phits_out_sha256") != file_sha256(phits_out)
+            ):
+                raise WorkspaceRecoveryError(
+                    "PHITS segment progress does not match its completed artifacts"
+                )
+            try:
+                require_clean_phits_geometry_diagnostics(
+                    progress_segment.get("geometry_diagnostics")
+                )
+            except PhitsGeometryDiagnosticsError as exc:
+                raise WorkspaceRecoveryError(
+                    "PHITS segment progress lacks clean geometry evidence"
+                ) from exc
+
+
+def validate_segment_execution_for_downstream(
+    workspace_root: Path,
+    manifest: Mapping[str, Any],
+    segment_summary: Mapping[str, Any] | None,
+    *,
+    allow_external_manifest_outputs: bool = False,
+) -> None:
+    if not isinstance(segment_summary, Mapping):
+        raise WorkspaceRecoveryError(
+            "PHITS execution evidence is missing or invalid; downstream stages remain disabled."
+        )
+    try:
+        schema = validate_segment_execution_summary(
+            segment_summary,
+            require_success=True,
+        )
+    except ValueError as exc:
+        raise WorkspaceRecoveryError(
+            f"PHITS execution evidence is not acceptable: {exc}"
+        ) from exc
+    validated_summary = segment_summary
+    recorded_root = str(segment_summary.get("workspace_root") or "").strip()
+    if schema == SEGMENT_EXECUTION_SCHEMA_V2 and recorded_root:
+        root_semantics, _ = _portable_parts(recorded_root)
+        portable_root = (
+            PureWindowsPath(recorded_root)
+            if root_semantics == "windows"
+            else PurePosixPath(recorded_root)
+        )
+        if not portable_root.is_absolute():
+            normalized = deepcopy(dict(segment_summary))
+            normalized["workspace_root"] = str(workspace_root.resolve())
+            validated_summary = normalized
+    _validate_phits_geometry_diagnostic_evidence(
+        workspace_root,
+        manifest,
+        validated_summary,
+        allow_external_manifest_outputs=allow_external_manifest_outputs,
+    )
 
 
 def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
@@ -828,15 +1024,7 @@ def inspect_existing_workspace(workspace_root: Path) -> WorkspaceRecoveryInspect
     try:
         manifest, outputs = _manifest_and_outputs(root)
         segment_summary = _load_object(root / SUMMARY_PATHS["segments"])
-        if not _succeeded(segment_summary):
-            raise WorkspaceRecoveryError(
-                "PHITS execution evidence is missing or unsuccessful; PHITS results cannot be reused."
-            )
-        if not isinstance(segment_summary, Mapping):
-            raise WorkspaceRecoveryError(
-                "PHITS execution evidence is invalid; PHITS results cannot be reused."
-            )
-        _validate_phits_geometry_diagnostic_evidence(
+        validate_segment_execution_for_downstream(
             root,
             manifest,
             segment_summary,

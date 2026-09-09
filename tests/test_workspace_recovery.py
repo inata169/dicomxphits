@@ -23,6 +23,7 @@ from dicomxphits.gui import GuiConfig, StageResult, run_workspace_recovery
 from dicomxphits.phits_geometry_diagnostics import (
     GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
 )
+from dicomxphits.run_segments import validate_segment_execution_summary
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
 from dicomxphits.workspace_recovery import (
     FULL_DOWNSTREAM_SEQUENCE,
@@ -313,6 +314,79 @@ def test_missing_or_nonclean_geometry_diagnostics_block_phits_reuse(
     assert inspection.state == RECOVERY_INVALID
     assert inspection.phits_reusable is False
     assert "diagnostic evidence" in inspection.message
+
+
+@pytest.mark.parametrize("stage_status", ["running", "failed", "gate_failed"])
+def test_non_success_v3_summary_never_unlocks_workspace_recovery(
+    tmp_path: Path,
+    stage_status: str,
+) -> None:
+    workspace = write_recoverable_workspace(tmp_path)
+    manifest = json.loads(
+        (workspace / "segments" / "segment_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    item_status = {
+        "running": "pending",
+        "failed": "failed",
+        "gate_failed": "gate_failed",
+    }[stage_status]
+    segment = {
+        "segment_id": "seg_001",
+        "manifest_ordinal": 1,
+        "active_ordinal": 1,
+        "status": item_status,
+        "started_at": None,
+        "finished_at": None,
+        "started_elapsed_seconds": None,
+        "duration_seconds": None,
+        "return_code": None,
+        "geometry_diagnostics": None,
+    }
+    if item_status == "failed":
+        segment.update(
+            {
+                "started_at": "2026-09-09T00:00:01Z",
+                "finished_at": "2026-09-09T00:00:02Z",
+                "started_elapsed_seconds": 1.0,
+                "duration_seconds": 1.0,
+                "return_code": 1,
+            }
+        )
+    progress = {
+        "schema_version": "dicomxphits_public_segment_execution_v3",
+        "stage": "run_segments",
+        "run_id": f"synthetic-{stage_status}",
+        "status": stage_status,
+        "stage_status": stage_status,
+        "workspace_root": str(workspace.resolve()),
+        "manifest_sha256": manifest_sha256(manifest),
+        "started_at": "2026-09-09T00:00:00Z",
+        "updated_at": "2026-09-09T00:00:03Z",
+        "elapsed_seconds": 3.0,
+        "segment_count": 1,
+        "active_segment_count": 1,
+        "completed_active_segment_count": 0,
+        "remaining_active_segment_count": 1 if item_status == "pending" else 0,
+        "current_segment": None,
+        "succeeded": 0,
+        "failed": 1 if item_status in {"failed", "gate_failed"} else 0,
+        "skipped": 0,
+        "segments": [segment],
+        "failure_reason": None if stage_status == "running" else "synthetic failure",
+    }
+    validate_segment_execution_summary(progress, require_success=False)
+    (workspace / "analysis" / "segment_execution_summary.json").write_text(
+        json.dumps(progress),
+        encoding="utf-8",
+    )
+
+    inspection = inspect_existing_workspace(workspace)
+
+    assert inspection.state == RECOVERY_INVALID
+    assert inspection.phits_reusable is False
+    assert "not successful" in inspection.message
 
 
 def test_legacy_zero_gantry_rejects_asymmetric_mlcx_transport(tmp_path: Path) -> None:
