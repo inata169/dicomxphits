@@ -340,6 +340,52 @@ def test_generate_sumtally_rejects_stale_v2_segment_output(tmp_path: Path) -> No
         )
 
 
+def test_generate_sumtally_accepts_same_workspace_v2_with_relative_root(
+    tmp_path: Path,
+) -> None:
+    workspace, _ = write_workspace(tmp_path)
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    legacy = json.loads(summary_path.read_text(encoding="utf-8"))
+    legacy["workspace_root"] = workspace.name
+    summary_path.write_text(json.dumps(legacy), encoding="utf-8")
+    original_summary = summary_path.read_bytes()
+
+    summary = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+
+    assert summary["stage_status"] == "success"
+    assert summary_path.read_bytes() == original_summary
+
+
+def test_generate_sumtally_rejects_v2_relative_root_with_other_workspace_paths(
+    tmp_path: Path,
+) -> None:
+    workspace, _ = write_workspace(tmp_path)
+    other_workspace, _ = write_workspace(tmp_path / "other")
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    legacy = json.loads(summary_path.read_text(encoding="utf-8"))
+    legacy["workspace_root"] = workspace.name
+    legacy["segments"][0]["expected_output_path"] = str(
+        (
+            other_workspace
+            / "segments"
+            / "seg_001"
+            / "deposit-target-3D.out"
+        ).resolve()
+    )
+    summary_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="invalid artifact binding"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
+
+
 def test_generate_sumtally_rechecks_phits_binding_after_digest_collection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

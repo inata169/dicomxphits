@@ -32,6 +32,7 @@ from dicomxphits.rtdose_plan_references import (
     validate_full_plan_context,
 )
 from dicomxphits.run_segments import (
+    SEGMENT_EXECUTION_SCHEMA_V2,
     SEGMENT_EXECUTION_SCHEMA_V3,
     validate_segment_execution_summary,
 )
@@ -552,15 +553,31 @@ def validate_segment_execution_for_downstream(
             "PHITS execution evidence is missing or invalid; downstream stages remain disabled."
         )
     try:
-        validate_segment_execution_summary(segment_summary, require_success=True)
+        schema = validate_segment_execution_summary(
+            segment_summary,
+            require_success=True,
+        )
     except ValueError as exc:
         raise WorkspaceRecoveryError(
             f"PHITS execution evidence is not acceptable: {exc}"
         ) from exc
+    validated_summary = segment_summary
+    recorded_root = str(segment_summary.get("workspace_root") or "").strip()
+    if schema == SEGMENT_EXECUTION_SCHEMA_V2 and recorded_root:
+        root_semantics, _ = _portable_parts(recorded_root)
+        portable_root = (
+            PureWindowsPath(recorded_root)
+            if root_semantics == "windows"
+            else PurePosixPath(recorded_root)
+        )
+        if not portable_root.is_absolute():
+            normalized = deepcopy(dict(segment_summary))
+            normalized["workspace_root"] = str(workspace_root.resolve())
+            validated_summary = normalized
     _validate_phits_geometry_diagnostic_evidence(
         workspace_root,
         manifest,
-        segment_summary,
+        validated_summary,
         allow_external_manifest_outputs=allow_external_manifest_outputs,
     )
 
