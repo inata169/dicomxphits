@@ -146,6 +146,15 @@ def validate_stop_evidence(summary: Mapping):
             matches = [item for item in summary["segments"] if all(item.get(k) == v for k, v in boundary.items())]
             if len(matches) != 1 or matches[0].get("started_at") is None:
                 raise ValueError("Stop boundary is not a committed segment")
+            committed = matches[0]
+            start = committed.get("started_elapsed_seconds")
+            duration = committed.get("duration_seconds")
+            if (committed.get("retained") is not False
+                or committed.get("producer_run_id") != summary["run_id"]
+                or not _is_nonnegative_number(start) or elapsed < start
+                or (committed["status"] != "running" and (
+                    not _is_nonnegative_number(duration) or elapsed > start + duration))):
+                raise ValueError("Stop boundary was not active in this invocation at acknowledgement")
     if summary["stage_status"] == "stopped":
         if (stop is None or summary.get("current_segment") is not None
             or summary["failed"] or summary["remaining_active_segment_count"] <= 0

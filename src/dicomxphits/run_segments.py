@@ -971,6 +971,7 @@ def _run_segments_locked(
             segment_summaries[summary_index] = {
                 **prior,
                 "status": "running",
+                "producer_run_id": run_id,
                 "reason": None,
                 "started_at": segment_started_at,
                 "started_elapsed_seconds": _nonnegative_duration(

@@ -27,7 +27,7 @@
 - [x] Test malformed/stale control, persistence errors, crash and child ownership boundaries.
 - [x] Test GUI adapter responsiveness, acknowledgement, workspace/run binding and exit/summary mismatch with synthetic/unit tests and callback inspection.
 - [ ] Run focused tests, compile, full pytest, public audit, strict OpenSpec and Git checks.
-- [ ] Review the independent stage-3 PR under the bounded correction policy.
+- [x] Review the independent stage-3 PR under the bounded correction policy.
 - [ ] Promote accepted deltas, archive the completed change, and validate the resulting tree.
 
 Runtime implementation is approved; real PHITS verification is not. Keep
@@ -86,3 +86,18 @@ Full-suite confirmation on that final reader change, PR review, and archive
 closeout are pending. Interactive desktop and real PHITS verification are not
 claimed; only synthetic workspaces, fake runners, and temporary Python children
 were used.
+
+Final initial implementation at `d20ad50`: full pytest confirmation passed
+(1074 passed / 10 skipped), and Ubuntu/Windows CI runs #547 and #548 succeeded.
+
+PR #62 review correction round 1: verified the reported ability to misidentify
+a retained or previously completed result as the acknowledged boundary. New
+committed entries now record the current producer run ID immediately. Boundary
+validation requires a non-retained current-run entry and acknowledgement within
+its monotonic execution interval. Regression tests corrupt both retained and
+earlier-completed boundaries and prove rejection by retry planning and GUI stop
+confirmation. Related tests: 251 passed / 2 skipped; the two corruption cases
+also passed separately (2 passed / 29 deselected). Compile and all 15 strict
+OpenSpec checks passed. No additional verified review blocker remained after
+this minimal correction. Independent re-review is not claimed; no optional
+review loop or scope expansion was started. Final full checks and archive follow.

@@ -328,3 +328,36 @@ def test_cli_has_distinct_stopped_exit_without_changing_other_exit_contracts(tmp
     for status, code in [("success", 0), ("failed", 3)]:
         monkeypatch.setattr(module, "run_segments", lambda **kwargs: {"status": status})
         assert module.main(["--workspace-root", str(root)]) == code
+
+
+@pytest.mark.parametrize("source", ["retained", "earlier_completed"])
+def test_corrupted_stop_boundary_cannot_name_a_noncurrent_result(tmp_path, source):
+    if source == "retained":
+        root, _, paths, _ = partial(tmp_path)
+    else:
+        root, _, paths = workspace_fixture(tmp_path)
+    control = StopControl()
+    if source == "retained":
+        submit(control, root)
+    def on_boundary(summary):
+        if (source == "earlier_completed" and summary["completed_active_segment_count"] == 1
+            and summary["current_segment"] is None and summary["stop_requested"] is None):
+            submit(control, root)
+    summary = run_segments(workspace_root=root, paths=paths, stop_control=control,
+        run_incomplete=source == "retained", runner=runner_for(root),
+        run_id_factory=lambda: "stop-run", summary_writer=writer(root, [], on_boundary))
+    assert summary["stage_status"] == "stopped"
+    first = summary["segments"][0]
+    summary["stop_requested"]["boundary_segment"] = {
+        key: first[key] for key in ("segment_id", "manifest_ordinal", "active_ordinal")}
+    # Retained identity must fail even inside its old interval; an earlier
+    # current-run success must fail when it ended before acknowledgement.
+    summary["stop_requested"]["acknowledged_elapsed_seconds"] = first["started_elapsed_seconds"] + (
+        first["duration_seconds"] / 2 if source == "retained" else first["duration_seconds"] + 1)
+    summary["elapsed_seconds"] = max(summary["elapsed_seconds"], summary["stop_requested"]["acknowledged_elapsed_seconds"])
+    summary_path(root).write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match="not active in this invocation"):
+        plan_incomplete(root, paths)
+    result = StageResult(stage_key="run_segments", command=[], return_code=4,
+        summary_path=summary_path(root), summary=summary, stdout="", stderr="")
+    assert not verified_user_stop(result, expected_run_id="stop-run", prior_run_id=None)
