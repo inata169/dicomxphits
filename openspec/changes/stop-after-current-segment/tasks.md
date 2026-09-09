@@ -6,31 +6,31 @@
 - [x] Read existing runtime, retry, GUI, and repository/OpenSpec contracts.
 - [x] Define stop ordering, ownership, acknowledgement, evidence, GUI and test scope.
 - [x] Validate the proposal with strict OpenSpec and public checks.
-- [ ] Obtain human approval before implementation.
+- [x] Obtain human approval before implementation (user approved with `yes` on 2026-09-09).
 
 ## Implementation after approval
 
-- [ ] Add a bounded invocation-scoped control channel and serialized acknowledgement/launch.
-- [ ] Keep direct-child ownership and GUI responsiveness through pipe and controller failures.
-- [ ] Add v5 stop metadata, strict terminal state validation and distinct exit code.
-- [ ] Preserve v2/v3/v4 reading and eligible v4 retry; support mixed v4/v5 provenance.
-- [ ] Apply failure/completion/stop precedence without changing no-request behavior.
-- [ ] Add GUI stop action, request-sent/pending/stopped presentation and identity checks.
-- [ ] Keep downstream disabled for stopped or otherwise incomplete records.
-- [ ] Reuse explicit incomplete-segment preview after stop and reset prior stop requests.
-- [ ] Document supported scope, unavailable cases, and limitations.
+- [x] Add a bounded invocation-scoped control channel and serialized acknowledgement/launch.
+- [x] Keep direct-child ownership and GUI responsiveness through pipe and controller failures.
+- [x] Add v5 stop metadata, strict terminal state validation and distinct exit code.
+- [x] Preserve v2/v3/v4 reading and eligible v4 retry; support mixed v4/v5 provenance.
+- [x] Apply failure/completion/stop precedence without changing no-request behavior.
+- [x] Add GUI stop action, request-sent/pending/stopped presentation and identity checks.
+- [x] Keep downstream disabled for stopped or otherwise incomplete records.
+- [x] Reuse explicit incomplete-segment preview after stop and reset prior stop requests.
+- [x] Document supported scope, unavailable cases, and limitations.
 
 ## Verification and closeout after implementation
 
-- [ ] Test deterministic launch/stop races and final completion/failure precedence.
-- [ ] Test retained outputs, repeated retries, mixed versions and downstream refusal.
-- [ ] Test malformed/stale control, persistence errors, crash and child ownership boundaries.
-- [ ] Test GUI responsiveness, acknowledgement, workspace/run binding and exit/summary mismatch.
+- [x] Test deterministic launch/stop races and final completion/failure precedence.
+- [x] Test retained outputs, repeated retries, mixed versions and downstream refusal.
+- [x] Test malformed/stale control, persistence errors, crash and child ownership boundaries.
+- [x] Test GUI adapter responsiveness, acknowledgement, workspace/run binding and exit/summary mismatch with synthetic/unit tests and callback inspection.
 - [ ] Run focused tests, compile, full pytest, public audit, strict OpenSpec and Git checks.
 - [ ] Review the independent stage-3 PR under the bounded correction policy.
 - [ ] Promote accepted deltas, archive the completed change, and validate the resulting tree.
 
-No runtime implementation or real PHITS verification is authorized yet. Keep
+Runtime implementation is approved; real PHITS verification is not. Keep
 this proposal active; do not mark implementation tests complete from baseline
 test success. Physics, geometry, DICOM semantics, MU and dose conversion are
 unchanged. External failed workspaces and retained staging remain excluded.
@@ -56,3 +56,33 @@ These tests validate the existing baseline, not the proposed stop capability.
 No proposed feature was implemented or tested. No real PHITS, external-workspace,
 or interactive desktop execution was performed. Proposal remains active awaiting
 human approval; implementation tasks and archive closeout remain incomplete.
+
+## Implementation validation (2026-09-09)
+
+The proposal was subsequently approved and runtime work began on the same
+branch. Stop control uses a bounded reader queue; the owner thread alone writes
+acknowledgements and commits launches. While the child adapter waits on a worker,
+the owner polls control; persistence failure still joins the child before staging
+cleanup. GUI controller output is drained concurrently and stop requests are
+sent off the Tk thread. Stopped workspace display and explicit retry both check
+the local binding, rather than trusting a terminal label.
+
+- Initial stop/runner/retry/GUI focused tests: 217 passed, 2 skipped.
+- Synthetic pipe/ownership and stop tests: 28 passed.
+- Related suites including workspace recovery: 248 passed, 2 skipped.
+- Final stop/GUI/recovery focused suite: 178 passed, 1 skipped.
+- `python -m compileall src`: passed.
+- `python tools/verify_public_tree.py`: 301 tracked files passed (new files staged).
+- `openspec.cmd validate --all --strict`: 15 passed, 0 failed.
+- `git diff --cached --check`: passed.
+
+One added existing-workspace display test initially omitted the required summary
+argument (1 failed / 177 passed / 1 skipped). Passing the intended summary fixed
+the test on its next identical focused run (178 passed / 1 skipped). No runtime
+guard or expected rejection was weakened. Initial full pytest passed with
+1074 passed / 10 skipped. The final bounded-JSON reader check (deep invalid
+JSON within the size limit) also passed: stop-specific suite 29 passed.
+Full-suite confirmation on that final reader change, PR review, and archive
+closeout are pending. Interactive desktop and real PHITS verification are not
+claimed; only synthetic workspaces, fake runners, and temporary Python children
+were used.

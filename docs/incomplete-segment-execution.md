@@ -50,7 +50,7 @@ never authorize partial Sumtally aggregation.
 
 ## Evidence and eligibility
 
-New execution records are v4. Retry binds the manifest, actual input bytes,
+New execution records are v5; eligible v4 records remain retryable. Retry binds the manifest, actual input bytes,
 recursive includes, preparation summaries, child environment digest, configured
 executable, and the file membership and bytes of the explicitly selected PHITS
 installation. The workspace itself is excluded from the installation tree when
@@ -74,6 +74,10 @@ Selective execution initially requires the original resolved workspace and tool
 identity. Bounded relocation remains available for ordinary downstream inspection
 without discovering or loading the former computer's tools.
 
+The [Stop after current segment](segment-boundary-stop.md) control can now end
+an owned retry-capable v5 invocation at a verified boundary. Use this same
+incomplete-segment preview after a user stop; old stop requests never carry over.
+
 Successful segment files are kept byte-for-byte without changing modification
 times. Prior summaries are preserved under
 `analysis/segment_attempt_history/<unique-attempt>/summary.json`, with source
@@ -89,7 +93,7 @@ ownership handle, so a surviving child prevents another execution even if its
 controller has exited. Once OS ownership is released, a valid orphaned v4 record
 may be inspected and retried from its incomplete segment boundaries.
 
-No stop controls, batch/error parser, checkpoint rescue, automatic external
+No immediate/batch stop controls, batch/error parser, checkpoint rescue, automatic external
 workspace migration, or additional-history accumulation is included. The
 original failed external workspace and its retained staging remain excluded.
 Automated tests use synthetic files, fake PHITS runners, and temporary Python
