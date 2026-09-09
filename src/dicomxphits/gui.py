@@ -797,6 +797,32 @@ def format_segment_progress(
     )
 
 
+def format_existing_segment_progress(
+    workspace_root: Path,
+    summary: Mapping[str, object] | None,
+) -> str:
+    if not isinstance(summary, Mapping):
+        return (
+            "Segment progress unavailable for this workspace. "
+            "No version-3 completion state is displayed."
+        )
+    display = format_segment_progress(summary, process_active=False)
+    if display is None:
+        return (
+            "Segment progress unavailable for this workspace. "
+            "No version-3 completion state is displayed."
+        )
+    if (
+        summary.get("stage_status") == "success"
+        and not segment_execution_authorizes_sumtally(workspace_root)
+    ):
+        return (
+            "Invalid / incomplete — recorded PHITS completion no longer matches "
+            "the current manifest or outputs. Sumtally remains disabled."
+        )
+    return display
+
+
 def summary_succeeded(summary: Mapping[str, object] | None) -> bool:
     if not summary:
         return False
@@ -2305,13 +2331,11 @@ def _build_gui() -> int:
             inspection.workspace_root
             / stage_by_key("run_segments").summary_relative_path
         )
-        existing_progress_text = (
-            format_segment_progress(existing_progress, process_active=False)
-            if isinstance(existing_progress, Mapping)
-            else None
+        existing_progress_text = format_existing_segment_progress(
+            inspection.workspace_root,
+            existing_progress,
         )
-        if existing_progress_text is not None:
-            phits_progress_status.set(existing_progress_text)
+        phits_progress_status.set(existing_progress_text)
         final_rtdose_output.set(
             str(inspection.final_output) if inspection.final_output else ""
         )

@@ -39,6 +39,7 @@ from dicomxphits.gui import (
     clear_handoff_for_workspace_change,
     clear_new_case_handoff_state,
     ct2phits_handoff_values,
+    format_existing_segment_progress,
     gui_defaults_path,
     geometry_mode_guidance,
     format_segment_progress,
@@ -138,6 +139,51 @@ def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: s
         "segments": segments,
         "failure_reason": None,
     }
+
+
+def write_bound_success_progress_workspace(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, object], Path]:
+    workspace = tmp_path / "workspace"
+    output = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
+    phits_out = output.with_name("phits.out")
+    output.parent.mkdir(parents=True)
+    output.write_text("synthetic tally", encoding="utf-8")
+    phits_out.write_text("synthetic PHITS output", encoding="utf-8")
+    manifest = {
+        "segments": [
+            {
+                "segment_id": "seg_001",
+                "expected_output_path": "segments/seg_001/deposit-target-3D.out",
+            }
+        ]
+    }
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    summary = v3_progress_summary("success", stage_status="success")
+    summary["workspace_root"] = str(workspace.resolve())
+    summary["manifest_sha256"] = gui_module.manifest_sha256(manifest)
+    summary["segments"][0].update(
+        {
+            "expected_output_path": str(output.resolve()),
+            "expected_output_sha256": gui_module.file_sha256(output),
+            "phits_out_path": str(phits_out.resolve()),
+            "phits_out_sha256": gui_module.file_sha256(phits_out),
+            "geometry_diagnostics": {
+                "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+                "status": "clean",
+                "counts": {
+                    "lost_particles": 0,
+                    "geometry_recovering": 0,
+                    "unrecovered_errors": 0,
+                },
+            },
+        }
+    )
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    return workspace, summary, output
 
 
 def test_segment_progress_waits_for_first_completed_segment_before_estimating() -> None:
@@ -256,51 +302,44 @@ def test_non_success_segment_progress_does_not_authorize_sumtally_action(
 def test_sumtally_action_requires_current_terminal_success_artifact_bindings(
     tmp_path: Path,
 ) -> None:
-    workspace = tmp_path / "workspace"
-    output = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
-    phits_out = output.with_name("phits.out")
-    output.parent.mkdir(parents=True)
-    output.write_text("synthetic tally", encoding="utf-8")
-    phits_out.write_text("synthetic PHITS output", encoding="utf-8")
-    manifest = {
-        "segments": [
-            {
-                "segment_id": "seg_001",
-                "expected_output_path": "segments/seg_001/deposit-target-3D.out",
-            }
-        ]
-    }
-    manifest_path = workspace / "segments" / "segment_manifest.json"
-    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-    summary = v3_progress_summary("success", stage_status="success")
-    summary["workspace_root"] = str(workspace.resolve())
-    summary["manifest_sha256"] = gui_module.manifest_sha256(manifest)
-    summary["segments"][0].update(
-        {
-            "expected_output_path": str(output.resolve()),
-            "expected_output_sha256": gui_module.file_sha256(output),
-            "phits_out_path": str(phits_out.resolve()),
-            "phits_out_sha256": gui_module.file_sha256(phits_out),
-            "geometry_diagnostics": {
-                "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
-                "status": "clean",
-                "counts": {
-                    "lost_particles": 0,
-                    "geometry_recovering": 0,
-                    "unrecovered_errors": 0,
-                },
-            },
-        }
-    )
-    summary_path = workspace / "analysis" / "segment_execution_summary.json"
-    summary_path.parent.mkdir(parents=True)
-    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+    workspace, _summary, output = write_bound_success_progress_workspace(tmp_path)
 
     assert segment_execution_authorizes_sumtally(workspace) is True
 
     output.write_text("changed tally", encoding="utf-8")
 
     assert segment_execution_authorizes_sumtally(workspace) is False
+
+
+def test_existing_progress_does_not_show_stale_success_as_completed(
+    tmp_path: Path,
+) -> None:
+    workspace, summary, output = write_bound_success_progress_workspace(tmp_path)
+
+    assert format_existing_segment_progress(workspace, summary).startswith("Completed")
+
+    output.write_text("changed tally", encoding="utf-8")
+    display = format_existing_segment_progress(workspace, summary)
+
+    assert display.startswith("Invalid / incomplete")
+    assert "Sumtally remains disabled" in display
+    assert not display.startswith("Completed")
+
+
+def test_existing_progress_replaces_missing_or_invalid_summary_with_unavailable(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    unknown = v3_progress_summary("success", stage_status="success")
+    unknown["schema_version"] = "dicomxphits_public_segment_execution_future"
+
+    missing_display = format_existing_segment_progress(workspace, None)
+    invalid_display = format_existing_segment_progress(workspace, unknown)
+
+    assert "progress unavailable" in missing_display.lower()
+    assert "progress unavailable" in invalid_display.lower()
+    assert "Completed" not in missing_display
+    assert "Completed" not in invalid_display
 
 
 def test_segment_progress_selection_binds_to_new_gui_invocation() -> None:
