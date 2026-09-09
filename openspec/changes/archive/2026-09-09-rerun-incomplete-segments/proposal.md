@@ -46,7 +46,9 @@ The original failed external workspace and retained staging are excluded. No
 migration, rescue, real-tool discovery, or real execution is authorized by this
 proposal. Automated validation uses synthetic data and fake runners only.
 
-Status: proposed; implementation awaits human approval. PR #60 was merged at
-`f7dfbac`; its historical handoff is not authority to repeat correction round 8.
-Its workspace-selection review finding is addressed by this proposal's binding
-requirements. No claim is made that the finding is already fixed.
+Status: approved by the human on 2026-09-09, implemented in PR #61, and archived
+after validation and review-driven correction. PR #60 was merged at `f7dfbac`;
+its historical handoff is not authority to repeat correction round 8. Its
+workspace-selection review finding is covered by the implemented binding checks.
+PR #61 remains draft pending the human's ready/merge decision; no real PHITS
+or interactive desktop verification is claimed.

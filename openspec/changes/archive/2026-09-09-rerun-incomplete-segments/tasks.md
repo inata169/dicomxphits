@@ -32,12 +32,12 @@
 - [x] Run `openspec.cmd validate --all --strict` and change-specific strict validation.
 - [x] Run `git diff --check`, `git diff --stat`, and `git status --short`.
 - [x] Review the implementation in its own PR; stop at the repository correction limit.
-- [ ] Promote accepted deltas, archive the completed change, and validate the resulting tree.
+- [x] Promote accepted deltas, archive the completed change, and validate the resulting tree.
 
 Real PHITS and external-workspace verification is not authorized and is not
 represented by synthetic test success. Interactive desktop verification is
 not claimed. PR #61 review identified one blocker, addressed in correction
-round 2 below; specification archive remains pending final checks.
+round 2 below. Final code checks and specification promotion/archive passed.
 
 ## Implementation validation results
 
@@ -89,6 +89,25 @@ real project writer's synthetic libpath, with additional mismatch/extra-directiv
 wrong-file negative tests. Focused runner/retry: 71 passed / 1 skipped. No
 additional verified merge blocker remained after this correction; no optional
 scope expansion or new review loop was started.
+
+Final code validation at `582343b`: full local pytest 1045 passed / 10 skipped;
+compile passed; public audit 291 passed; all strict OpenSpec checks passed;
+Ubuntu and Windows CI runs #542 and #543 succeeded. Review response includes
+the fix and focused test evidence; independent re-review of that fix is not
+claimed. PR #61 remains draft, with ready/merge reserved for the human.
+
+Archive closeout: `openspec.cmd archive rerun-incomplete-segments --yes`
+validated and promoted seven added and two modified requirements, then archived
+the change on 2026-09-09. Its sole unchecked task during the command was this
+archive operation itself. `openspec.cmd validate --all --strict` passed all
+14 current specifications afterward.
+The installed OpenSpec `Validator(true).validateChange()` and
+`validateChangeDeltaSpecs()` also validated the archived proposal and deltas
+directly: both valid, zero errors/warnings. Final public audit includes the
+new promoted retry specification: 292 tracked files passed. Git diff checks
+passed; archive closeout changes only specification/documentation files.
+The archive command added an extra blank EOF line to three promoted specs;
+the first diff check caught it, and removing only those lines restored the check.
 
 ## Proposal validation results
 
