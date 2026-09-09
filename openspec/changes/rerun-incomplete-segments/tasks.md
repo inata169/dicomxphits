@@ -31,12 +31,13 @@
 - [x] Run `python tools/verify_public_tree.py`.
 - [x] Run `openspec.cmd validate --all --strict` and change-specific strict validation.
 - [x] Run `git diff --check`, `git diff --stat`, and `git status --short`.
-- [ ] Review the implementation in its own PR; stop at the repository correction limit.
+- [x] Review the implementation in its own PR; stop at the repository correction limit.
 - [ ] Promote accepted deltas, archive the completed change, and validate the resulting tree.
 
 Real PHITS and external-workspace verification is not authorized and is not
 represented by synthetic test success. Interactive desktop verification is
-not claimed. PR review and specification archive remain pending below.
+not claimed. PR #61 review identified one blocker, addressed in correction
+round 2 below; specification archive remains pending final checks.
 
 ## Implementation validation results
 
@@ -72,6 +73,22 @@ the established guarded-publication check, producing the wrong exception type.
 Keep output targets lexical in the binding so the established path guard rejects
 the link before any child starts. Local Windows skips this symlink case;
 Ubuntu CI is required to verify the platform-specific regression.
+
+Correction round 1 verified: focused runner/retry 68 passed / 1 skipped;
+full local pytest 1042 passed / 10 skipped; public audit 291 passed; compile
+passed; both Ubuntu and Windows CI runs #540 and #541 succeeded.
+
+PR review correction round 2: the reviewer correctly identified that the
+canonical `write_libpath()` output uses `file(1)` and was incorrectly classified
+as an unsupported dependency, disabling the approved feature for prepared
+workspaces. Accept only the canonical workspace-root `libpath.inp` directive
+when its declared installation matches the explicitly configured runtime tree.
+Its bytes remain in the input binding, and downstream read-only inspection does
+not resolve a former computer's tool path. Every retry fixture now includes the
+real project writer's synthetic libpath, with additional mismatch/extra-directive/
+wrong-file negative tests. Focused runner/retry: 71 passed / 1 skipped. No
+additional verified merge blocker remained after this correction; no optional
+scope expansion or new review loop was started.
 
 ## Proposal validation results
 

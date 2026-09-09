@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
+from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths, write_libpath
 from dicomxphits.run_segments import run_segments, summary_path, main
 from dicomxphits.segment_retry import plan_incomplete, validate_results
 from dicomxphits.safe_output import WorkspaceOutputGuard
@@ -29,6 +29,10 @@ def workspace_fixture(tmp_path):
     executable = tools / "synthetic-executable"
     executable.write_bytes(b"synthetic executable identity, never launched")
     (tools / "synthetic-library").write_bytes(b"synthetic runtime data")
+    write_libpath(root, phits_root_folder=str(tools))
+    for segment in manifest["segments"]:
+        source = root / segment["phits_input_path"]
+        source.write_text("infl:{libpath.inp}\n" + source.read_text(), encoding="utf-8")
     return root, manifest, ExternalToolPaths(str(tools), str(executable), None)
 
 
@@ -55,6 +59,24 @@ def partial(tmp_path):
         runner=runner_for(root, fail={"seg_002"}))
     assert result["stage_status"] == "failed"
     return root, manifest, paths, result
+
+
+@pytest.mark.parametrize("damage", ["different_root", "extra_directive", "other_file"])
+def test_noncanonical_runtime_directive_cannot_authorize_retry(tmp_path, damage):
+    root, manifest, paths = workspace_fixture(tmp_path)
+    if damage == "different_root":
+        write_libpath(root, phits_root_folder=str(tmp_path / "different-installation"))
+    elif damage == "extra_directive":
+        libpath = root / "libpath.inp"
+        libpath.write_text(libpath.read_text() + "file(2) = unknown\n")
+    else:
+        source = root / manifest["segments"][0]["phits_input_path"]
+        source.write_text(source.read_text() + (root / "libpath.inp").read_text())
+    result = run_segments(workspace_root=root, paths=paths,
+        runner=runner_for(root, fail={"seg_002"}))
+    assert result["execution_binding"]["retry_unavailable"]
+    with pytest.raises(ValueError, match="Retry evidence unavailable"):
+        plan_incomplete(root, paths)
 
 
 def test_retry_preserves_completed_artifacts_and_creates_unique_terminal_evidence(tmp_path):

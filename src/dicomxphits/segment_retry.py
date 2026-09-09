@@ -77,6 +77,19 @@ bound separately and excluded from the installation digest when nested there.
                 expected.parent / "phits_stderr.txt", expected.parent / api.ROOT_PHITS_OUT])
             for path in inputs:
                 text = path.read_text(encoding="utf-8", errors="strict")
+                canonical_libpath = re.fullmatch(
+                    r"\s*file\s*\(1\)\s*=\s*(.*?)\s+# PHITS install folder name\s*",
+                    text,
+                ) if path == root / "libpath.inp" else None
+                if canonical_libpath is not None:
+                    configured = Path(paths.phits_root_folder or "")
+                    declared = Path(canonical_libpath.group(1))
+                    # Only the exact generated installation directive is covered
+                    # by the configured runtime tree binding. Read-only downstream
+                    # inspection must not resolve a former computer's tool path.
+                    if (not include_runtime or (configured.is_absolute()
+                        and declared.is_absolute() and configured.resolve() == declared.resolve())):
+                        continue
                 # Prepared inputs use recursive infl includes and built-in source
                 # spectra. External file sources are not part of this contract.
                 if re.search(r"(?im)^\s*(?:file\s*\((?!6\s*\))\d+\)|s-type\s*=\s*(?:17|18))", text):
