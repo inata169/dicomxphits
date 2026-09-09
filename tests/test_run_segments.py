@@ -22,6 +22,7 @@ from dicomxphits.gantry_geometry import (
 from dicomxphits.run_segments import (
     SEGMENT_EXECUTION_SCHEMA_V2,
     SEGMENT_EXECUTION_SCHEMA_V3,
+    SEGMENT_EXECUTION_SCHEMA_V4,
     build_parser,
     main,
     phits_environment,
@@ -761,7 +762,7 @@ class BackwardWallClock(StepClock):
         return value
 
 
-def test_run_segments_persists_v3_segment_boundary_progress(tmp_path):
+def test_run_segments_persists_v4_segment_boundary_progress(tmp_path):
     workspace, _manifest = write_workspace(
         tmp_path,
         active_segment(0),
@@ -785,7 +786,7 @@ def test_run_segments_persists_v3_segment_boundary_progress(tmp_path):
         summary_writer=lambda _path, value: snapshots.append(deepcopy(value)),
     )
 
-    assert summary["schema_version"] == SEGMENT_EXECUTION_SCHEMA_V3
+    assert summary["schema_version"] == SEGMENT_EXECUTION_SCHEMA_V4
     assert summary["run_id"] == "synthetic-run-id"
     assert len(snapshots) == 6
     assert snapshots[0]["current_segment"] is None
@@ -803,7 +804,7 @@ def test_run_segments_persists_v3_segment_boundary_progress(tmp_path):
     )
     assert (
         validate_segment_execution_summary(summary, require_success=True)
-        == SEGMENT_EXECUTION_SCHEMA_V3
+        == SEGMENT_EXECUTION_SCHEMA_V4
     )
 
 

@@ -1,5 +1,13 @@
 # Development handoff - 2026-09-09 PHITS segment progress
 
+> Historical snapshot, superseded for current work: correction round 8 was
+> completed in `adfbb0d`, and PR #60 was merged by explicit human instruction
+> as `f7dfbac`. Its feature branch was deleted. Do not repeat the old morning
+> prompt below. Stage 2 (incomplete-segment execution) was subsequently approved;
+> see [the current retry guide](incomplete-segment-execution.md). The sequence is
+> progress, incomplete-segment retry, safe stopping, batch details, then additional
+> history. The original external-workspace protection conditions still apply.
+
 This handoff records the repository state at the end of the 2026-09-09
 development session. `dicomxphits` remains education and research software for
 the documented fixed-field 3D-CRT workflow. Nothing in this work establishes
