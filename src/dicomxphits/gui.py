@@ -58,6 +58,7 @@ from dicomxphits.workspace_recovery import (
     preserve_downstream_for_recovery,
     rtdose_plan_evidence_is_current,
     standard_ct2phits_handoff,
+    validate_segment_execution_for_downstream,
 )
 
 
@@ -646,14 +647,22 @@ def segment_progress_run_id(summary: Mapping[str, object] | None) -> str | None:
     return str(run_id) if isinstance(run_id, str) else None
 
 
-def segment_summary_authorizes_sumtally(
-    summary: Mapping[str, object] | None,
-) -> bool:
-    if not isinstance(summary, Mapping):
+def segment_execution_authorizes_sumtally(workspace_root: Path) -> bool:
+    manifest = read_summary(
+        workspace_root / "segments" / "segment_manifest.json"
+    )
+    summary = read_summary(
+        workspace_root / stage_by_key("run_segments").summary_relative_path
+    )
+    if not isinstance(manifest, Mapping) or not isinstance(summary, Mapping):
         return False
     try:
-        validate_segment_execution_summary(summary, require_success=True)
-    except ValueError:
+        validate_segment_execution_for_downstream(
+            workspace_root,
+            manifest,
+            summary,
+        )
+    except (OSError, TypeError, ValueError, WorkspaceRecoveryError):
         return False
     return True
 
@@ -766,7 +775,8 @@ def format_segment_progress(
             for character in raw_identifier
         )[:80]
         current_text = (
-            f"current {int(current['active_ordinal'])}/{total} ({identifier})"
+            f"current active {int(current['active_ordinal'])}/{total}, "
+            f"manifest {int(current['manifest_ordinal'])} ({identifier})"
         )
     remaining = estimate_segment_remaining_seconds(
         summary,
@@ -1872,16 +1882,11 @@ def _build_gui() -> int:
                 )
                 if stage_key == "generate_sumtally":
                     workspace_text = values["workspace_root"].get().strip()
-                    segment_summary = (
-                        read_summary(
+                    enabled = enabled and bool(
+                        workspace_text
+                        and segment_execution_authorizes_sumtally(
                             Path(workspace_text).expanduser()
-                            / stage_by_key("run_segments").summary_relative_path
                         )
-                        if workspace_text
-                        else None
-                    )
-                    enabled = enabled and segment_summary_authorizes_sumtally(
-                        segment_summary
                     )
                 if existing_case_mode.get() and stage_key in {
                     "run_ct2phits",

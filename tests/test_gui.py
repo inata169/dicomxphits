@@ -49,8 +49,8 @@ from dicomxphits.gui import (
     rtdose_stage_state,
     run_stage,
     select_segment_progress_summary,
+    segment_execution_authorizes_sumtally,
     segment_progress_run_id,
-    segment_summary_authorizes_sumtally,
     stage_by_key,
     suggest_case_paths,
     successful_nav_status,
@@ -69,17 +69,21 @@ from dicomxphits.gui_tool_profile import (
     validate_custom_tool_profile,
 )
 from dicomxphits.prepare_3dcrt_workspace import build_parser
+from dicomxphits.phits_geometry_diagnostics import (
+    GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+)
 
 
 def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: str = "run-1"):
     segments = []
     active_ordinal = 0
     for index, status in enumerate(statuses, start=1):
-        active_ordinal += 1
+        if status != "skipped":
+            active_ordinal += 1
         item = {
             "segment_id": f"seg_{index:03d}",
             "manifest_ordinal": index,
-            "active_ordinal": active_ordinal,
+            "active_ordinal": active_ordinal if status != "skipped" else None,
             "status": status,
             "started_at": None,
             "finished_at": None,
@@ -101,6 +105,7 @@ def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: s
         segments.append(item)
     succeeded = statuses.count("success")
     failed = statuses.count("failed") + statuses.count("gate_failed")
+    skipped = statuses.count("skipped")
     current = next((item for item in segments if item["status"] == "running"), None)
     return {
         "schema_version": "dicomxphits_public_segment_execution_v3",
@@ -114,7 +119,7 @@ def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: s
         "updated_at": "2026-09-09T00:00:10Z",
         "elapsed_seconds": 10.0,
         "segment_count": len(segments),
-        "active_segment_count": len(segments),
+        "active_segment_count": len(segments) - skipped,
         "completed_active_segment_count": succeeded,
         "remaining_active_segment_count": statuses.count("pending")
         + statuses.count("running"),
@@ -129,7 +134,7 @@ def v3_progress_summary(*statuses: str, stage_status: str = "running", run_id: s
         ),
         "succeeded": succeeded,
         "failed": failed,
-        "skipped": 0,
+        "skipped": skipped,
         "segments": segments,
         "failure_reason": None,
     }
@@ -146,7 +151,7 @@ def test_segment_progress_waits_for_first_completed_segment_before_estimating() 
 
     assert display is not None
     assert "validated 0/2 active segments" in display
-    assert "current 1/2 (seg_001)" in display
+    assert "current active 1/2, manifest 1 (seg_001)" in display
     assert "elapsed 00:00:14" in display
     assert "estimating after first completed segment" in display
 
@@ -170,6 +175,15 @@ def test_segment_progress_estimate_uses_completed_segment_mean() -> None:
     assert "validated 1/3 active segments" in display
     assert "Approximate remaining 00:00:16" in display
     assert "Approximate finish 2026-09-09 12:00:16" in display
+
+
+def test_segment_progress_shows_manifest_ordinal_after_skipped_segment() -> None:
+    summary = v3_progress_summary("skipped", "running")
+
+    display = format_segment_progress(summary, process_active=True)
+
+    assert display is not None
+    assert "current active 1/1, manifest 2 (seg_002)" in display
 
 
 def test_segment_progress_marks_orphaned_running_record_incomplete() -> None:
@@ -205,6 +219,7 @@ def test_segment_progress_reports_terminal_state_without_process_activity(
 
 @pytest.mark.parametrize("stage_status", ["running", "failed", "gate_failed"])
 def test_non_success_segment_progress_does_not_authorize_sumtally_action(
+    tmp_path: Path,
     stage_status: str,
 ) -> None:
     item_status = {
@@ -213,14 +228,79 @@ def test_non_success_segment_progress_does_not_authorize_sumtally_action(
         "gate_failed": "gate_failed",
     }[stage_status]
     summary = v3_progress_summary(item_status, stage_status=stage_status)
+    workspace = tmp_path / "workspace"
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "segment_id": "seg_001",
+                        "expected_output_path": (
+                            "segments/seg_001/deposit-target-3D.out"
+                        ),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
 
-    assert segment_summary_authorizes_sumtally(summary) is False
+    assert segment_execution_authorizes_sumtally(workspace) is False
 
 
-def test_terminal_success_segment_summary_authorizes_sumtally_action() -> None:
+def test_sumtally_action_requires_current_terminal_success_artifact_bindings(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    output = workspace / "segments" / "seg_001" / "deposit-target-3D.out"
+    phits_out = output.with_name("phits.out")
+    output.parent.mkdir(parents=True)
+    output.write_text("synthetic tally", encoding="utf-8")
+    phits_out.write_text("synthetic PHITS output", encoding="utf-8")
+    manifest = {
+        "segments": [
+            {
+                "segment_id": "seg_001",
+                "expected_output_path": "segments/seg_001/deposit-target-3D.out",
+            }
+        ]
+    }
+    manifest_path = workspace / "segments" / "segment_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     summary = v3_progress_summary("success", stage_status="success")
+    summary["workspace_root"] = str(workspace.resolve())
+    summary["manifest_sha256"] = gui_module.manifest_sha256(manifest)
+    summary["segments"][0].update(
+        {
+            "expected_output_path": str(output.resolve()),
+            "expected_output_sha256": gui_module.file_sha256(output),
+            "phits_out_path": str(phits_out.resolve()),
+            "phits_out_sha256": gui_module.file_sha256(phits_out),
+            "geometry_diagnostics": {
+                "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+                "status": "clean",
+                "counts": {
+                    "lost_particles": 0,
+                    "geometry_recovering": 0,
+                    "unrecovered_errors": 0,
+                },
+            },
+        }
+    )
+    summary_path = workspace / "analysis" / "segment_execution_summary.json"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
 
-    assert segment_summary_authorizes_sumtally(summary) is True
+    assert segment_execution_authorizes_sumtally(workspace) is True
+
+    output.write_text("changed tally", encoding="utf-8")
+
+    assert segment_execution_authorizes_sumtally(workspace) is False
 
 
 def test_segment_progress_selection_binds_to_new_gui_invocation() -> None:
