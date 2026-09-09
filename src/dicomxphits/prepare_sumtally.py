@@ -21,7 +21,6 @@ from dicomxphits.prepare_3dcrt_workspace import (
     write_json,
 )
 from dicomxphits.run_segments import (
-    SEGMENT_EXECUTION_SCHEMA_V3,
     phits_environment,
     validate_segment_execution_summary,
 )
@@ -478,20 +477,10 @@ def generate_sumtally(
         segment_execution_summary = load_json_object(
             workspace_root / "analysis" / "segment_execution_summary.json"
         )
-        execution_schema = validate_segment_execution_summary(
+        validate_segment_execution_summary(
             segment_execution_summary,
             require_success=True,
         )
-        if execution_schema == SEGMENT_EXECUTION_SCHEMA_V3:
-            from dicomxphits.workspace_recovery import (
-                validate_segment_execution_for_downstream,
-            )
-
-            validate_segment_execution_for_downstream(
-                workspace_root,
-                manifest,
-                segment_execution_summary,
-            )
         validate_segment_outputs_exist(workspace_root, manifest)
         tally_patterns = derive_tally_patterns_from_manifest(manifest, list(TARGET_TALLY_PATTERNS))
         selection = select_sumtally_base_input(
@@ -508,6 +497,16 @@ def generate_sumtally(
             output_name=output_name,
             weight_field=WEIGHT_FIELD,
             mode=SUMTALLY_MODE,
+        )
+        from dicomxphits.workspace_recovery import (
+            validate_segment_execution_for_downstream,
+        )
+
+        validate_segment_execution_for_downstream(
+            workspace_root,
+            manifest,
+            segment_execution_summary,
+            allow_external_manifest_outputs=True,
         )
 
         sumtally_dir = workspace_root / "sumtally"

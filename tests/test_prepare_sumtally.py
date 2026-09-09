@@ -18,6 +18,9 @@ from dicomxphits.gantry_geometry import (
     CURRENT_GANTRY_GEOMETRY_CONTRACT,
     GANTRY_GEOMETRY_CONTRACT_FIELD,
 )
+from dicomxphits.phits_geometry_diagnostics import (
+    GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+)
 from dicomxphits.prepare_sumtally import (
     DEFAULT_SUMTALLY_OUTPUT_NAME,
     build_generate_parser,
@@ -101,6 +104,7 @@ def write_workspace(tmp_path, *segments, metadata=None):
     manifest_path = workspace / "segments" / "segment_manifest.json"
     manifest_path.parent.mkdir(parents=True)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    execution_segments = []
     for segment in manifest["segments"]:
         phits_path = workspace / segment["phits_input_path"]
         phits_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +124,32 @@ def write_workspace(tmp_path, *segments, metadata=None):
             output_path = workspace / segment["expected_output_path"]
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(tally_output_text(), encoding="utf-8")
+            phits_out_path = output_path.parent / "phits.out"
+            phits_out_path.write_text(
+                "Number of lost particles     =     0 / nlost =    10000\n"
+                "Number of geometry recovering = 0\n"
+                "Number of unrecovered errors = 0\n",
+                encoding="utf-8",
+            )
+            execution_segments.append(
+                {
+                    "segment_id": segment["segment_id"],
+                    "status": "success",
+                    "expected_output_path": str(output_path.resolve()),
+                    "expected_output_sha256": file_sha256(output_path),
+                    "phits_out_path": str(phits_out_path.resolve()),
+                    "phits_out_sha256": file_sha256(phits_out_path),
+                    "geometry_diagnostics": {
+                        "schema_version": GEOMETRY_DIAGNOSTICS_SCHEMA_VERSION,
+                        "status": "clean",
+                        "counts": {
+                            "lost_particles": 0,
+                            "geometry_recovering": 0,
+                            "unrecovered_errors": 0,
+                        },
+                    },
+                }
+            )
     if metadata is not None:
         summary_path = workspace / "analysis" / "public_preparation_workspace_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +161,9 @@ def write_workspace(tmp_path, *segments, metadata=None):
             {
                 "schema_version": "dicomxphits_public_segment_execution_v2",
                 "stage_status": "success",
-                "segments": [],
+                "workspace_root": str(workspace.resolve()),
+                "manifest_sha256": manifest_sha256(manifest),
+                "segments": execution_segments,
             }
         ),
         encoding="utf-8",
@@ -292,6 +324,19 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert "sumfactor = 100" in content
     assert "seg_001/deposit-target-3D.out  40" in content
     assert "seg_002/deposit-target-3D.out  60" in content
+
+
+def test_generate_sumtally_rejects_stale_v2_segment_output(tmp_path: Path) -> None:
+    workspace, manifest = write_workspace(tmp_path)
+    output = workspace / manifest["segments"][0]["expected_output_path"]
+    output.write_text("changed after PHITS success", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match its segment artifacts"):
+        generate_sumtally(
+            workspace_root=workspace,
+            paths=paths(),
+            command_argv=["generate"],
+        )
 
 
 def test_generate_sumtally_accepts_matching_prepared_calculation_geometry(tmp_path):

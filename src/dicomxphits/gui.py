@@ -681,6 +681,31 @@ def select_segment_progress_summary(
     return summary if run_id != prior_run_id else None
 
 
+def format_terminal_segment_progress(
+    summary: Mapping[str, object] | None,
+    *,
+    expected_run_id: str | None,
+    prior_run_id: str | None,
+) -> str:
+    selected = select_segment_progress_summary(
+        summary,
+        expected_run_id=expected_run_id,
+        prior_run_id=prior_run_id,
+    )
+    if selected is None:
+        return (
+            "Failed / incomplete — no PHITS progress record belongs to this "
+            "invocation. Sumtally remains disabled."
+        )
+    display = format_segment_progress(selected, process_active=False)
+    if display is None:
+        return (
+            "Failed / incomplete — the PHITS progress record for this invocation "
+            "is invalid. Sumtally remains disabled."
+        )
+    return display
+
+
 def estimate_segment_remaining_seconds(
     summary: Mapping[str, object],
     *,
@@ -1908,11 +1933,31 @@ def _build_gui() -> int:
                 )
                 if stage_key == "generate_sumtally":
                     workspace_text = values["workspace_root"].get().strip()
+                    invocation_is_current = True
+                    if workspace_text and phits_progress_summary_path is not None:
+                        workspace_path = Path(workspace_text).expanduser()
+                        expected_summary_path = (
+                            workspace_path
+                            / stage_by_key("run_segments").summary_relative_path
+                        )
+                        if (
+                            expected_summary_path.resolve()
+                            == phits_progress_summary_path.resolve()
+                        ):
+                            invocation_is_current = (
+                                select_segment_progress_summary(
+                                    read_summary(expected_summary_path),
+                                    expected_run_id=phits_progress_run_id,
+                                    prior_run_id=phits_progress_prior_run_id,
+                                )
+                                is not None
+                            )
                     enabled = enabled and bool(
                         workspace_text
                         and segment_execution_authorizes_sumtally(
                             Path(workspace_text).expanduser()
                         )
+                        and invocation_is_current
                     )
                 if existing_case_mode.get() and stage_key in {
                     "run_ct2phits",
@@ -3200,12 +3245,23 @@ def _build_gui() -> int:
         root.after(250, refresh_phits_progress)
 
     def finish_phits_progress(summary: Mapping[str, object] | None = None) -> None:
+        nonlocal phits_progress_run_id
         if summary is None and phits_progress_summary_path is not None:
             summary = read_summary(phits_progress_summary_path)
-        if isinstance(summary, Mapping):
-            display = format_segment_progress(summary, process_active=False)
-            if display is not None:
-                phits_progress_status.set(display)
+        selected = select_segment_progress_summary(
+            summary,
+            expected_run_id=phits_progress_run_id,
+            prior_run_id=phits_progress_prior_run_id,
+        )
+        if selected is not None:
+            phits_progress_run_id = segment_progress_run_id(selected)
+        phits_progress_status.set(
+            format_terminal_segment_progress(
+                summary,
+                expected_run_id=phits_progress_run_id,
+                prior_run_id=phits_progress_prior_run_id,
+            )
+        )
 
     def finish_stage_error(spec: StageSpec, message: str, *, validation: bool) -> None:
         if spec.key == "run_segments" and execution_guard.active_stage == "run_segments":

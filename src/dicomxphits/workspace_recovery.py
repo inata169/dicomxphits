@@ -302,6 +302,8 @@ def _validate_phits_geometry_diagnostic_evidence(
     workspace_root: Path,
     manifest: Mapping[str, Any],
     segment_summary: Mapping[str, Any],
+    *,
+    allow_external_manifest_outputs: bool = False,
 ) -> None:
     raw_segments = segment_summary.get("segments")
     if not isinstance(raw_segments, list):
@@ -337,21 +339,52 @@ def _validate_phits_geometry_diagnostic_evidence(
                 "An active PHITS segment is not successful; PHITS results cannot "
                 "be reused safely."
             )
-        expected_output = _workspace_path(
-            workspace_root,
-            str(expected_segments[segment_id].get("expected_output_path") or ""),
+        expected_output_value = str(
+            expected_segments[segment_id].get("expected_output_path") or ""
         )
+        if allow_external_manifest_outputs:
+            raw_expected_output = Path(expected_output_value)
+            expected_output = (
+                raw_expected_output
+                if raw_expected_output.is_absolute()
+                else workspace_root / raw_expected_output
+            ).resolve()
+        else:
+            expected_output = _workspace_path(
+                workspace_root,
+                expected_output_value,
+            )
         try:
-            recorded_output = rebind_workspace_path(
-                str(item.get("expected_output_path") or ""),
-                recorded_workspace_root=segment_summary.get("workspace_root"),
-                current_workspace_root=workspace_root,
-            )
-            recorded_phits_out = rebind_workspace_path(
-                str(item.get("phits_out_path") or ""),
-                recorded_workspace_root=segment_summary.get("workspace_root"),
-                current_workspace_root=workspace_root,
-            )
+            expected_output.relative_to(workspace_root.resolve())
+            output_is_external = False
+        except ValueError:
+            output_is_external = True
+        try:
+            if allow_external_manifest_outputs and output_is_external:
+                raw_recorded_output = Path(
+                    str(item.get("expected_output_path") or "")
+                )
+                raw_recorded_phits_out = Path(str(item.get("phits_out_path") or ""))
+                if (
+                    not raw_recorded_output.is_absolute()
+                    or not raw_recorded_phits_out.is_absolute()
+                ):
+                    raise WorkspaceRecoveryError(
+                        "External PHITS artifact evidence must use absolute paths"
+                    )
+                recorded_output = raw_recorded_output.resolve()
+                recorded_phits_out = raw_recorded_phits_out.resolve()
+            else:
+                recorded_output = rebind_workspace_path(
+                    str(item.get("expected_output_path") or ""),
+                    recorded_workspace_root=segment_summary.get("workspace_root"),
+                    current_workspace_root=workspace_root,
+                )
+                recorded_phits_out = rebind_workspace_path(
+                    str(item.get("phits_out_path") or ""),
+                    recorded_workspace_root=segment_summary.get("workspace_root"),
+                    current_workspace_root=workspace_root,
+                )
         except WorkspaceRecoveryError as exc:
             raise WorkspaceRecoveryError(
                 "PHITS geometry diagnostic evidence has an invalid artifact "
@@ -391,6 +424,8 @@ def validate_segment_execution_for_downstream(
     workspace_root: Path,
     manifest: Mapping[str, Any],
     segment_summary: Mapping[str, Any] | None,
+    *,
+    allow_external_manifest_outputs: bool = False,
 ) -> None:
     if not isinstance(segment_summary, Mapping):
         raise WorkspaceRecoveryError(
@@ -406,6 +441,7 @@ def validate_segment_execution_for_downstream(
         workspace_root,
         manifest,
         segment_summary,
+        allow_external_manifest_outputs=allow_external_manifest_outputs,
     )
 
 

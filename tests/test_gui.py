@@ -40,6 +40,7 @@ from dicomxphits.gui import (
     clear_new_case_handoff_state,
     ct2phits_handoff_values,
     format_existing_segment_progress,
+    format_terminal_segment_progress,
     gui_defaults_path,
     geometry_mode_guidance,
     format_segment_progress,
@@ -371,6 +372,31 @@ def test_segment_progress_selection_binds_to_new_gui_invocation() -> None:
         )
         is None
     )
+
+
+def test_terminal_segment_progress_rejects_prior_invocation_success() -> None:
+    previous = v3_progress_summary("success", stage_status="success", run_id="old-run")
+
+    display = format_terminal_segment_progress(
+        previous,
+        expected_run_id=None,
+        prior_run_id="old-run",
+    )
+
+    assert display.startswith("Failed / incomplete")
+    assert "Sumtally remains disabled" in display
+
+
+def test_terminal_segment_progress_accepts_current_invocation_failure() -> None:
+    current = v3_progress_summary("failed", stage_status="failed", run_id="new-run")
+
+    display = format_terminal_segment_progress(
+        current,
+        expected_run_id="new-run",
+        prior_run_id="old-run",
+    )
+
+    assert display.startswith("Failed")
 
 
 def test_segment_progress_ignores_unknown_summary_schema() -> None:
