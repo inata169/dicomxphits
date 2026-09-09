@@ -361,3 +361,30 @@ def test_corrupted_stop_boundary_cannot_name_a_noncurrent_result(tmp_path, sourc
     result = StageResult(stage_key="run_segments", command=[], return_code=4,
         summary_path=summary_path(root), summary=summary, stdout="", stderr="")
     assert not verified_user_stop(result, expected_run_id="stop-run", prior_run_id=None)
+
+
+@pytest.mark.parametrize("damage", ["later_launch", "null_active"])
+def test_stop_rejects_execution_after_acknowledged_boundary(tmp_path, damage):
+    root, _, paths = workspace_fixture(tmp_path, segment_count=3)
+    control = StopControl()
+    def boundary(summary):
+        if (summary["completed_active_segment_count"] == 2
+            and summary["current_segment"] is None and summary["stop_requested"] is None):
+            submit(control, root)
+    summary = run_segments(workspace_root=root, paths=paths, stop_control=control,
+        runner=runner_for(root), run_id_factory=lambda: "stop-run",
+        summary_writer=writer(root, [], boundary))
+    assert summary["stage_status"] == "stopped"
+    assert plan_incomplete(root, paths)["scheduled"] == ["seg_003"]
+    first = summary["segments"][0]
+    summary["stop_requested"]["acknowledged_elapsed_seconds"] = (
+        first["started_elapsed_seconds"] + first["duration_seconds"] / 2)
+    summary["stop_requested"]["boundary_segment"] = (
+        {key: first[key] for key in ("segment_id", "manifest_ordinal", "active_ordinal")}
+        if damage == "later_launch" else None)
+    summary_path(root).write_text(json.dumps(summary))
+    with pytest.raises(ValueError, match="acknowledgement"):
+        plan_incomplete(root, paths)
+    result = StageResult(stage_key="run_segments", command=[], return_code=4,
+        summary_path=summary_path(root), summary=summary, stdout="", stderr="")
+    assert not verified_user_stop(result, expected_run_id="stop-run", prior_run_id=None)

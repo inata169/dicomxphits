@@ -140,6 +140,7 @@ def validate_stop_evidence(summary: Mapping):
         if not _is_nonnegative_number(elapsed) or elapsed > summary["elapsed_seconds"]:
             raise ValueError("Invalid stop acknowledgement duration")
         boundary = stop["boundary_segment"]
+        committed = None
         if boundary is not None:
             if not isinstance(boundary, dict) or set(boundary) != {"segment_id", "manifest_ordinal", "active_ordinal"}:
                 raise ValueError("Malformed stop boundary")
@@ -155,6 +156,21 @@ def validate_stop_evidence(summary: Mapping):
                 or (committed["status"] != "running" and (
                     not _is_nonnegative_number(duration) or elapsed > start + duration))):
                 raise ValueError("Stop boundary was not active in this invocation at acknowledgement")
+        for item in summary["segments"]:
+            # Retained results use the parent invocation's monotonic clock.
+            if (item.get("retained") is not False
+                or item.get("producer_run_id") != summary["run_id"]
+                or item.get("started_at") is None):
+                continue
+            start = item.get("started_elapsed_seconds")
+            if not _is_nonnegative_number(start) or start > elapsed:
+                raise ValueError("Segment launched after stop acknowledgement")
+            if item is not committed:
+                duration = item.get("duration_seconds")
+                # Equal finish/ack times can represent a between-launch boundary.
+                if (item["status"] == "running" or not _is_nonnegative_number(duration)
+                    or start + duration > elapsed):
+                    raise ValueError("Unidentified active segment at stop acknowledgement")
     if summary["stage_status"] == "stopped":
         if (stop is None or summary.get("current_segment") is not None
             or summary["failed"] or summary["remaining_active_segment_count"] <= 0

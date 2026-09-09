@@ -117,3 +117,17 @@ cleaned up without changing requirements. All 15 current specs pass strict
 validation; archived proposal/deltas are also checked directly with the installed
 OpenSpec strict Validator. The final public audit includes the new stop spec
 (302 tracked files). Archive changes are documentation/specification only.
+
+PR #62 review correction round 2: the ready-triggered review identified that
+other current-run entries were not compared with acknowledgement time. Two
+synthetic regressions reproduced acceptance of a later launch and a null
+boundary during an active interval (2 expected failures before the fix).
+Validation now rejects starts after acknowledgement and requires every other
+current-run entry to have finished by acknowledgement. Retained entries keep
+their independent parent clocks. Both retry planning and GUI stop confirmation
+are tested; the unmodified stopped record still permits the remaining segment.
+Related validation passed (130 passed / 1 skipped), as did compile, public audit
+(302 tracked files), and 15 strict OpenSpec checks. The initial test invocation
+was blocked by temporary-directory permissions and rerun with approved access;
+a trailing blank line reported by diff-check was removed. No physics, DICOM,
+dose contract, real-data execution, or specification requirement was changed.
