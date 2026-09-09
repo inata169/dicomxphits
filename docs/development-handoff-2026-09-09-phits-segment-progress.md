@@ -1,5 +1,9 @@
 # Development handoff - 2026-09-09 PHITS segment progress
 
+> Latest end-of-day checkpoint: see
+> [the observation-preparation handoff](development-handoff-2026-09-09-phits-observation-preparation.md).
+> Stages 1-3 are merged; PR #63 is Draft with the evidence prerequisite still open.
+
 > Historical snapshot, superseded for current work: correction round 8 was
 > completed in `adfbb0d`, and PR #60 was merged by explicit human instruction
 > as `f7dfbac`. Its feature branch was deleted. Do not repeat the old morning
