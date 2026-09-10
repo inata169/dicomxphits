@@ -1,8 +1,8 @@
 # CPython 3.12 Windows x64 binary-only lock. Regenerate only from reviewed
 # official PyPI artifacts and update the corresponding security tests.
-# artifact: numpy-2.5.2-cp312-cp312-win_amd64.whl
-numpy==2.5.2 \
-    --hash=sha256:28ac63476ec7651484215ee7fa15a1f78b57c14621f01e392afe17b9a1390ce4
+# artifact: numpy-2.5.3-cp312-cp312-win_amd64.whl
+numpy==2.5.3 \
+    --hash=sha256:0a59a421a32580a009e8a1751345bf829631b990dc1794b80514ab722b435def
 # artifact: pydicom-3.0.2-py3-none-any.whl
 pydicom==3.0.2 \
     --hash=sha256:abf971a5440f84dbaf42c4b6758e30e62480902584f8b270b9a5d146e278a07b
