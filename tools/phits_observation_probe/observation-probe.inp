@@ -4,7 +4,7 @@ Synthetic output-format probe only - not a clinical or beam-model calculation
 
 [ Parameters ]
  icntl = 0
- maxcas = 10000
+ maxcas = 100000
  maxbch = 10
  infl:{libpath.inp}
 

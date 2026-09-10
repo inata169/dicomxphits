@@ -75,9 +75,9 @@ def test_execute_requires_explicit_plan_digest_before_preflight(tmp_path, monkey
 
 def test_deck_is_fixed_probe_not_a_production_plan():
     text = probe.DECK.read_text()
-    for entry in ("$OMP = 2", "maxcas = 10000", "maxbch = 10", "e0 = 1.0",
+    for entry in ("$OMP = 2", "maxcas = 100000", "maxbch = 10", "e0 = 1.0",
         "nx = 3", "ny = 3", "nz = 3", "output = dose", "axis = xy", "epsout = 1"):
-        assert entry in text
+        assert entry in {line.strip() for line in text.splitlines()}
     assert text.count("[ T-Deposit ]") == 1
     for absent in ("istdev", "itall", "timeout", "totfact", "stdcut", "resfile", "$MPI"):
         assert absent not in text

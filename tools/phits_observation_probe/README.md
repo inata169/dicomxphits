@@ -2,13 +2,13 @@
 
 These are project-authored diagnostic artifacts, not PHITS distribution files
 or a production beam model. They implement only capture for the approved
-[verification plan](../../openspec/changes/add-phits-live-observation/verification-plan.md).
+[verification plan](../../openspec/changes/archive/2026-09-10-add-phits-live-observation/verification-plan.md).
 Preparing/testing this kit does **not** authorize real PHITS execution.
 
 ## Artifacts and scope
 
 - `observation-probe.inp`: standalone 1 MeV photon pencil beam and water cube,
-  27 dose cells, 2 OpenMP threads, 10000 histories per batch and 10 batches.
+  27 dose cells, 2 OpenMP threads, 100000 histories per batch and 10 batches.
   It is not a CT/RTPLAN workspace and must not feed Sumtally or RTDOSE.
 - `collect.py`: check-only by default; a separate execution mode launches one
   exact executable in fresh private directories and records raw output bytes.
@@ -21,8 +21,13 @@ The source uses `s-type=1`, `r0=0`, `z0=z1=-2`, `dir=1`, `e0=1`; the
 5.3.3, documents the pencil/monoenergetic source parameters. Cell 1 is the water
 inside surface 1; cell 2 is vacuum outside surface 1 and inside surface 2;
 cell 3 terminates transport outside surface 2. The tally non-mesh settings match
-the repository's generated 3D dose tally. Actual PHITS input acceptance and
-output generation have **not** been tested. Do not change production physics
+the repository's generated 3D dose tally. The first separately approved probe
+used 10000 histories per batch and produced valid final files, but lacked the
+required twice-confirmed live pairs. The separately approved second probe
+provided the missing live evidence. A third separately approved diagnostic
+checked the production observer and a dedicated Tk window with unchanged input.
+See the archived change's tasks for the evidence and limits. Every new execution
+still requires fresh exact launch approval. Do not change production physics
 or guess a parser grammar on the basis of these synthetic helper tests.
 
 ## Private plan, before any real execution
@@ -122,5 +127,8 @@ remain on disk after success/failure and are never uploaded automatically.
 The independent acceptance matrix in the verification plan must still be
 assessed manually: version/mode identity, full grammar, geometry diagnostics,
 paired metadata, at least two distinct live updates, and reference statistics.
-Zero exit alone does not satisfy it. No real PHITS or desktop verification has
-been performed, and task 2.1 remains blocked on actual format evidence.
+Zero exit alone does not satisfy it. The first probe was inconclusive for live
+pair stability; the second satisfied task 2.1. Dedicated real-PHITS/Tk diagnostic
+verification and synthetic testing of the actual GUI are recorded separately
+from an unperformed full real-GUI workflow test. Retain each previous private
+plan and its evidence; never reuse its destinations for a revised probe.

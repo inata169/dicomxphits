@@ -106,15 +106,19 @@ class WorkspaceExecutionLease:
         """Only the selected direct child inherits execution ownership."""
         if self.handle is None:
             raise WorkspaceBusyError("Execution ownership has been released")
+        execute = subprocess.run
+        if "stdout_observer" in kwargs:
+            from dicomxphits.observed_process import run_with_observer
+            execute = run_with_observer
         if os.name == "nt":
             startup = subprocess.STARTUPINFO()
             startup.lpAttributeList = {"handle_list": [self.handle]}
             os.set_handle_inheritable(self.handle, True)
             try:
-                return subprocess.run(command, startupinfo=startup, **kwargs)
+                return execute(command, startupinfo=startup, **kwargs)
             finally:
                 os.set_handle_inheritable(self.handle, False)
-        return subprocess.run(command, pass_fds=(self.handle,), **kwargs)
+        return execute(command, pass_fds=(self.handle,), **kwargs)
 
     @contextmanager
     def invocation(self):

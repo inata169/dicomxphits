@@ -2,12 +2,13 @@
 
 ## Status and authority
 
-This document is a plan only. The human authorized its preparation, not a real
-PHITS launch, installation discovery, inspection of external data, or creation
-of an external workspace. No real command below has been run. The human later
-authorized preparation of the input and collector only; the project-authored
-kit is now at `tools/phits_observation_probe/`, with fake-child tests. Actual
-paths, frozen private plan and real execution approval remain outstanding.
+The first 10000-history-per-batch probe was separately approved and executed;
+see tasks.md for its inconclusive live-pair assessment. The human then approved
+preparation only of a revised 100000-history-per-batch probe, keeping ten batches,
+two threads and all other input settings unchanged. The envelope below describes
+that revised probe. Its fresh private plan and artifact digests must be reviewed
+and its exact single launch separately approved before execution. Previous
+plans and real evidence remain private and are not overwritten or reused.
 
 This is the evidence-acquisition prerequisite for task 2.1, not a change to
 public physics or a new clinical workflow. The synthetic transport model below
@@ -39,7 +40,7 @@ setting or proof of atomic writes.
 | Executable | Human-selected PHITS 3.35 Windows OpenMP executable; no PATH search |
 | Runs | Exactly one; no automatic retry, restart or parameter sweep |
 | Threads | 2; input `$OMP = 2` and child `OMP_NUM_THREADS=2` |
-| Calculation size | `maxcas=10000`, `maxbch=10`; 100000 requested source histories |
+| Calculation size | `maxcas=100000`, `maxbch=10`; 1000000 requested source histories |
 | Mode | Fresh ordinary transport (`icntl=0`); no negative `istdev`, MPI or continuation |
 | Source | Synthetic 1 MeV monoenergetic photon pencil beam along positive z |
 | Geometry | Homogeneous water cube, x/y/z from -1.5 to 1.5 cm; vacuum between water and an outer cube with edges -3 to 3 cm on each axis; particles outside the outer cube are terminated |
@@ -143,7 +144,7 @@ directories, a failed fake-child collector check or changed input digests mean
 no launch. Do not fix a real-tool failure by changing physics or installing
 libraries automatically.
 
-The 100000-history workload is fixed, not a wall-clock guarantee. The user must
+The 1000000-history workload is fixed, not a wall-clock guarantee. The user must
 remain available for the supervised probe. At ten minutes without natural exit,
 notify the user and stop any additional work, while preserving child ownership
 and draining its streams. No automatic timeout, signal, kill, `batch.out` edit,

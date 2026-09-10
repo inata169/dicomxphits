@@ -65,10 +65,10 @@ that a later fix failed. Preserve that history rather than deleting it.
 
 Authoritative working documents:
 
-- [Proposal](../openspec/changes/add-phits-live-observation/proposal.md)
-- [Design](../openspec/changes/add-phits-live-observation/design.md)
-- [Tasks and validation history](../openspec/changes/add-phits-live-observation/tasks.md)
-- [Verification plan](../openspec/changes/add-phits-live-observation/verification-plan.md)
+- [Proposal](../openspec/changes/archive/2026-09-10-add-phits-live-observation/proposal.md)
+- [Design](../openspec/changes/archive/2026-09-10-add-phits-live-observation/design.md)
+- [Tasks and validation history](../openspec/changes/archive/2026-09-10-add-phits-live-observation/tasks.md)
+- [Verification plan](../openspec/changes/archive/2026-09-10-add-phits-live-observation/verification-plan.md)
 - [Probe instructions](../tools/phits_observation_probe/README.md)
 
 Commits: `326a8cd` proposal; `1bd46e9` approval/evidence prerequisite;

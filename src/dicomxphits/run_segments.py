@@ -551,6 +551,7 @@ def run_one_segment(
     phits_executable_path: str,
     runner=subprocess.run,
     input_binding: list[dict[str, str]] | None = None,
+    observation_context=None,
 ) -> dict[str, Any]:
     phits_input = resolve_workspace_file(
         workspace_root,
@@ -598,7 +599,23 @@ def run_one_segment(
             for output in error_outputs:
                 if os.path.lexists(output):
                     guard.unlink(output)
-            result = runner(
+            from dicomxphits.phits_observation import make_observer
+            staged_dose = execution_root / expected_output.resolve().relative_to(workspace_root.resolve())
+            observer = make_observer(workspace_root, execution_root, staged_input, staged_dose, observation_context)
+            def observing_runner(*args, **kwargs):
+                if observer is None:
+                    return runner(*args, **kwargs)
+                try:
+                    observer.start()
+                except Exception:
+                    observer.close(guard)
+                    return runner(*args, **kwargs)
+                try:
+                    return runner(*args, stdout_observer=observer.feed_stdout,
+                        _observation_poll=lambda: observer.publish(guard), **kwargs)
+                finally:
+                    observer.close(guard)
+            result = observing_runner(
                 [phits_executable_path],
                 input=phits_launcher_input(
                     workspace_root=execution_root,
@@ -817,6 +834,8 @@ def _run_segments_locked(
     execution_binding = None
     parent_attempt = None
     stop_requested = None
+    # Only the owned direct runner understands the optional stdout prefix tap.
+    observe_native = getattr(runner, "__self__", None) is not None and type(runner.__self__).__name__ == "WorkspaceExecutionLease"
 
     def persist(status: str, *, failure_reason: str | None = None) -> dict[str, Any]:
         summary = build_summary(
@@ -863,7 +882,12 @@ def _run_segments_locked(
 
     def controlled_runner(*args, **kwargs):
         from dicomxphits.segment_stop import run_while_polling
-        return run_while_polling(runner, poll_stop, *args, **kwargs)
+        observation_poll = kwargs.pop("_observation_poll", None)
+        def poll():
+            poll_stop()
+            if observation_poll is not None:
+                observation_poll()
+        return run_while_polling(runner, poll, *args, **kwargs)
 
     try:
         require_execution_paths(paths)
@@ -983,13 +1007,14 @@ def _run_segments_locked(
                 "manifest_ordinal": prior["manifest_ordinal"],
                 "active_ordinal": prior["active_ordinal"],
             }
-            persist("running")
+            live_summary = persist("running")
             result = run_one_segment(
                 workspace_root=workspace_root,
                 segment=segment,
                 phits_executable_path=paths.phits_executable_path,
-                runner=controlled_runner if stop_control is not None else runner,
+                runner=controlled_runner if stop_control is not None or observe_native else runner,
                 input_binding=contracts[prior["segment_id"]]["inputs"],
+                observation_context=live_summary if observe_native else None,
             )
             validate_binding(workspace_root, manifest, execution_binding, paths)
             result.update(retained=False, producer_run_id=run_id)

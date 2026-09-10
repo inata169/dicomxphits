@@ -2041,6 +2041,9 @@ def _build_gui() -> int:
     final_rtdose_output = tk.StringVar(value="")
     tool_profile_status = tk.StringVar(value="Not validated")
     phits_progress_status = tk.StringVar(value="Not running")
+    from dicomxphits.phits_observation import Presentation
+    observation_presentation = Presentation()
+    phits_observation_status = tk.StringVar(value="Observation unavailable: no owned active segment.")
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
     recovery_inspection: WorkspaceRecoveryInspection | None = None
@@ -3278,6 +3281,10 @@ def _build_gui() -> int:
         wraplength=780,
     ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 8))
 
+    ttk.Label(phits_frame, textvariable=phits_observation_status,
+        style="SurfaceMuted.TLabel", wraplength=780).grid(
+        row=5, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
     sumtally_page = new_page("sumtally")
     sumtally_frame = ttk.Frame(
         sumtally_page, style="Surface.TFrame", padding=(18, 14)
@@ -3416,8 +3423,12 @@ def _build_gui() -> int:
             execution_guard.active_stage != "run_segments"
             or phits_progress_summary_path is None
         ):
+            observation_presentation.reset()
+            phits_observation_status.set("Observation unavailable: no owned active segment.")
             return
         if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+            observation_presentation.reset()
+            phits_observation_status.set("Observation unavailable: workspace selection changed.")
             phits_progress_status.set("Workspace selection changed; previous invocation progress is not displayed.")
             return
         summary = read_summary(phits_progress_summary_path)
@@ -3434,6 +3445,8 @@ def _build_gui() -> int:
             cached_summary=phits_progress_validation_summary,
             cached_accepted=phits_progress_validation_accepted,
         )
+        phits_observation_status.set(observation_presentation.refresh(
+            workspace_root, selected, active=selected is not None))
         if selected is not None:
             selected_run_id = segment_progress_run_id(selected)
             assert selected_run_id is not None
@@ -3468,6 +3481,8 @@ def _build_gui() -> int:
 
     def finish_phits_progress(summary: Mapping[str, object] | None = None) -> None:
         nonlocal phits_progress_run_id
+        observation_presentation.reset()
+        phits_observation_status.set("Observation unavailable: no owned active segment.")
         if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
             return
         if summary is None and phits_progress_summary_path is not None:
@@ -3661,6 +3676,8 @@ def _build_gui() -> int:
             prior_summary = read_summary(phits_progress_summary_path)
             phits_progress_prior_run_id = segment_progress_run_id(prior_summary)
             phits_progress_run_id = None
+            observation_presentation.reset()
+            phits_observation_status.set("Observation waiting for the current owned segment.")
             phits_progress_anchor_key = None
             phits_progress_validation_summary = None
             phits_progress_validation_accepted = False
