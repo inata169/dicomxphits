@@ -1,6 +1,7 @@
 """Capture normal child results while exposing a bounded stdout identity prefix."""
 from __future__ import annotations
 
+import errno
 import subprocess
 import threading
 
@@ -37,9 +38,19 @@ def run_with_observer(command, *, stdout_observer, input, capture_output, text, 
     try:
         try:
             process.stdin.write(input)
+        except BrokenPipeError:
+            pass
+        except OSError as exc:
+            # Match subprocess.run when a Windows child closes its stdin.
+            if exc.errno != errno.EINVAL:
+                raise
+        try:
             process.stdin.close()
         except BrokenPipeError:
             pass
+        except OSError as exc:
+            if exc.errno != errno.EINVAL:
+                raise
         code = process.wait()
     finally:
         # Never release the inherited lease while the owned child survives.
