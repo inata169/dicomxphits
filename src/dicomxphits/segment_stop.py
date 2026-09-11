@@ -183,9 +183,11 @@ class ControllerPipe:
 
     def __init__(self):
         self.process = None
+        self.nonce = uuid.uuid4().hex
+        self.cancel_request_id = None
 
     def run(self, command, *, cwd, **kwargs):
-        process = subprocess.Popen([*command, "--control-stdin"], cwd=cwd,
+        process = subprocess.Popen([*command, "--control-stdin", "--preflight-nonce", self.nonce], cwd=cwd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", shell=False)
         self.process = process
@@ -212,13 +214,17 @@ class ControllerPipe:
                 reader.join()
         return subprocess.CompletedProcess(command, code, *output)
 
-    def send(self, workspace: str, run_id: str):
+    def send(self, workspace: str, run_id: str, *, cancel_preparation=False):
         process = self.process
         if process is None or process.poll() is not None:
             raise ValueError("No active owned PHITS controller")
         request_id = uuid.uuid4().hex
         request = {"operation": OPERATION, "workspace_root": workspace,
             "run_id": run_id, "request_id": request_id}
+        if cancel_preparation:
+            from dicomxphits.segment_preflight import CANCEL
+            request.update(operation=CANCEL, gui_nonce=self.nonce)
+            self.cancel_request_id = request_id
         record = json.dumps(request, ensure_ascii=True) + "\n"
         if len(record.encode("utf-8")) > MAX_CONTROL_BYTES:
             raise ValueError("Stop request exceeds the supported size")

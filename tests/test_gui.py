@@ -210,7 +210,8 @@ def test_segment_progress_waits_for_first_completed_segment_before_estimating() 
     assert "estimating after first completed segment" in display
 
 
-def test_segment_progress_estimate_uses_completed_segment_mean() -> None:
+@pytest.mark.parametrize("verification_pending", [False, True])
+def test_segment_progress_estimate_uses_completed_segment_mean(verification_pending) -> None:
     summary = v3_progress_summary("success", "running", "pending")
 
     remaining = estimate_segment_remaining_seconds(
@@ -222,6 +223,7 @@ def test_segment_progress_estimate_uses_completed_segment_mean() -> None:
         process_active=True,
         live_elapsed_seconds=14.0,
         now=datetime(2026, 9, 9, 12, 0, 0),
+        verification_pending=verification_pending,
     )
 
     assert remaining == pytest.approx(16.0)
@@ -229,6 +231,9 @@ def test_segment_progress_estimate_uses_completed_segment_mean() -> None:
     assert "validated 1/3 active segments" in display
     assert "Approximate remaining 00:00:16" in display
     assert "Approximate finish 2026-09-09 12:00:16" in display
+    if verification_pending:
+        assert "verifying execution evidence" in display
+        assert "current active" not in display
 
 
 def test_segment_progress_shows_manifest_ordinal_after_skipped_segment() -> None:
@@ -1285,6 +1290,31 @@ def test_successful_rtdose_prepare_is_reported_as_prepared(tmp_path: Path) -> No
 def test_rtdose_nav_status_resets_for_unprepared_workspace() -> None:
     assert rtdose_nav_status(RTDOSE_COMPLETED) == "Completed"
     assert rtdose_nav_status(RTDOSE_PREPARED) == "Prepared"
+
+
+@pytest.mark.parametrize("phase", ["preparing", "cancelled_before_launch", "failed", "malformed"])
+@pytest.mark.parametrize("completed", [False, True])
+def test_new_preflight_blocks_historical_rtdose_and_downstream_actions(tmp_path, monkeypatch, phase, completed):
+    from dicomxphits.segment_preflight import Session, RELATIVE_PATH
+    workspace = write_dir(tmp_path / "workspace")
+    binding = write_current_sumtally_binding(workspace)
+    prepare_path = workspace / stage_by_key("prepare_rtdose").summary_relative_path
+    write_file(prepare_path, json.dumps(successful_rtdose_prepare_summary(
+        sumtally_manifest_binding=binding)))
+    assert rtdose_stage_state(workspace) == RTDOSE_PREPARED
+    if completed:
+        monkeypatch.setattr(gui_module, "rtdose_plan_evidence_is_current", lambda *_: True)
+        write_file(workspace / stage_by_key("run_rtdose").summary_relative_path,
+            json.dumps(successful_rtdose_execution_summary(prepare_path)))
+        assert rtdose_stage_state(workspace) == RTDOSE_COMPLETED
+    receipt = Session(workspace, "nonce", "new-run", None).receipt
+    receipt.update(phase=phase, request_id="request" if phase == "cancelled_before_launch" else None)
+    write_file(workspace / RELATIVE_PATH, "{}" if phase == "malformed" else json.dumps(receipt))
+    state = rtdose_stage_state(workspace)
+    assert state == "phits_incomplete"
+    assert rtdose_nav_status(state) == "PHITS incomplete"
+    for stage in ("generate_sumtally", "run_sumtally", "prepare_rtdose", "run_rtdose", "recover_rtdose"):
+        assert not rtdose_action_enabled(stage, state, allow_overwrite=True)
     assert rtdose_nav_status(RTDOSE_NOT_PREPARED) == "Not run"
 
 

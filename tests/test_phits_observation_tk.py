@@ -9,6 +9,7 @@ import pytest
 
 from dicomxphits import gui
 from dicomxphits.phits_observation import RELATIVE_PATH
+from dicomxphits.segment_stop import ControllerPipe
 from test_phits_live_observation import observer_fixture
 
 
@@ -51,6 +52,9 @@ def test_real_tk_observation_updates_stale_resets_and_layout(tmp_path, monkeypat
         refresh = state["refresh_phits_progress"]
         cells = dict(zip(refresh.__code__.co_freevars, refresh.__closure__))
         cells["phits_progress_summary_path"].cell_contents = tmp_path / "analysis/segment_execution_summary.json"
+        # Match the owned controller initialized by run_selected before refresh.
+        # Construction does not launch a process; Popen remains forbidden above.
+        cells["phits_control"].cell_contents = ControllerPipe()
         status = state["phits_observation_status"]
         presentation = state["observation_presentation"]
         guard = state["execution_guard"]

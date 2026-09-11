@@ -651,6 +651,8 @@ def expected_segment_outputs(workspace_root: Path, manifest: dict[str, Any]) -> 
 
 
 def validate_segment_outputs_exist(workspace_root: Path, manifest: dict[str, Any]) -> None:
+    from dicomxphits.segment_preflight import require_finished_preflight
+    require_finished_preflight(workspace_root)
     missing = [path for path in expected_segment_outputs(workspace_root, manifest) if not path.is_file()]
     if missing:
         joined = ", ".join(str(path) for path in missing)

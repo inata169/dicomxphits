@@ -11,6 +11,7 @@ from pathlib import Path
 import secrets
 import shutil
 import stat
+import time
 from typing import Any
 
 
@@ -356,8 +357,22 @@ class WorkspaceOutputGuard:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            self.prepare_file_target(target)
-            os.replace(temporary, target)
+            # Only the frequently polled preflight receipt gets bounded Windows
+            # sharing retries. Keep the same bytes, lease and directory guards;
+            # neither execution nor other output publication is retried.
+            attempts = 3 if (
+                os.name == "nt"
+                and target == self.case_root / "analysis/segment_preflight.json"
+            ) else 1
+            for attempt in range(attempts):
+                self.prepare_file_target(target)
+                try:
+                    os.replace(temporary, target)
+                    break
+                except OSError as exc:
+                    if getattr(exc, "winerror", None) not in (5, 32) or attempt + 1 == attempts:
+                        raise
+                    time.sleep(0.05)
         finally:
             if _lexists(temporary):
                 self.unlink(temporary)

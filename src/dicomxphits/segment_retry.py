@@ -42,6 +42,29 @@ def _evidence(root, paths):
              "sha256": file_sha256(path)} for path in sorted(set(paths))]
 
 
+def _runtime_files(installation, workspace):
+    """Enumerate incrementally, keeping control checkpoints between entries."""
+    from dicomxphits.segment_preflight import checkpoint
+    pending = [installation]
+    while pending:
+        checkpoint()
+        with os.scandir(pending.pop()) as entries:
+            while True:
+                checkpoint()
+                entry = next(entries, None)
+                if entry is None:
+                    break
+                candidate = Path(entry.path)
+                if candidate.resolve() == workspace and entry.is_dir():
+                    continue
+                if candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
+                    raise ValueError("Linked runtime dependency is not supported")
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(candidate)
+                else:
+                    yield candidate
+
+
 def capture_binding(root, manifest, paths, *, include_runtime=True):
     """Capture actual staged dependencies; unavailable tool evidence forbids retry.
 
@@ -72,7 +95,11 @@ bound separately and excluded from the installation digest when nested there.
                 workspace_root=root, phits_input=source, guard=guard)
             input_files.update(inputs)
             writes = api.persistent_segment_outputs(expected_output=expected, declared_outputs=outputs)
-            required = set(outputs + [api.phits_error_output_path(p) for p in outputs])
+            # PHITS may embed a secondary tally's relative error in its primary
+            # output (for example the PDD ``r.err`` column).  The established
+            # segment-success gate requires a separate error file only for the
+            # manifest-selected 3D output.
+            required = set(outputs + [api.phits_error_output_path(expected)])
             required.update([expected.parent / "phits_stdout.txt",
                 expected.parent / "phits_stderr.txt", expected.parent / api.ROOT_PHITS_OUT])
             for path in inputs:
@@ -116,6 +143,8 @@ bound separately and excluded from the installation digest when nested there.
         all_inputs = {p.resolve().relative_to(root).as_posix() for p in input_files}
         all_inputs.update(PREPARATION_FILES)
         all_inputs.update({"segments/segment_manifest.json", api.SUMMARY_RELATIVE_PATH.as_posix()})
+        from dicomxphits.segment_preflight import RELATIVE_PATH as PREFLIGHT_PATH
+        all_inputs.add(PREFLIGHT_PATH.as_posix())
         write_owner = {}
         for segment in segments:
             for relative in segment["writes"]:
@@ -141,20 +170,9 @@ bound separately and excluded from the installation digest when nested there.
     else:
         files = []
         installation = installation.resolve()
-        for directory, dirs, names in os.walk(installation, followlinks=False):
-            base = Path(directory)
-            for name in list(dirs):
-                candidate = base / name
-                if candidate.resolve() == root:
-                    dirs.remove(name)
-                elif candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
-                    raise ValueError("Linked runtime dependency is not supported")
-            for name in names:
-                candidate = base / name
-                if candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
-                    raise ValueError("Linked runtime dependency is not supported")
-                files.append({"path": candidate.relative_to(installation).as_posix(),
-                    "sha256": file_sha256(candidate)})
+        for candidate in _runtime_files(installation, root):
+            files.append({"path": candidate.relative_to(installation).as_posix(),
+                "sha256": file_sha256(candidate)})
         tool = {"root": str(installation), "executable": str(executable.resolve()),
             "executable_sha256": file_sha256(executable),
             "files": sorted(files, key=lambda item: item["path"])}

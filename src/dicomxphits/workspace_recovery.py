@@ -557,6 +557,11 @@ def validate_segment_execution_for_downstream(
     *,
     allow_external_manifest_outputs: bool = False,
 ) -> None:
+    from dicomxphits.segment_preflight import require_current_result
+    try:
+        require_current_result(workspace_root, segment_summary or {})
+    except (OSError, TypeError, ValueError) as exc:
+        raise WorkspaceRecoveryError(str(exc)) from exc
     if not isinstance(segment_summary, Mapping):
         raise WorkspaceRecoveryError(
             "PHITS execution evidence is missing or invalid; downstream stages remain disabled."

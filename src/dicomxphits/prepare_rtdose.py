@@ -381,6 +381,8 @@ def validate_sumtally_manifest_binding(
     generation: dict[str, Any],
     execution: dict[str, Any],
 ) -> dict[str, Any]:
+    from dicomxphits.segment_preflight import require_finished_preflight
+    require_finished_preflight(workspace_root)
     manifest_path = workspace_root / "segments" / "segment_manifest.json"
     manifest = load_json_object(manifest_path)
     expected_normalization_evidence = plan_mu_normalization_evidence(manifest)

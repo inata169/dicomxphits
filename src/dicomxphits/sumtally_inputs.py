@@ -26,10 +26,14 @@ ACTIVE_TREATMENT_SUMMATION_RULE = (
 def file_sha256(path: Path) -> str:
     """Return the SHA-256 digest of one generated Sumtally input file."""
 
+    from dicomxphits.segment_preflight import checkpoint
+    checkpoint()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
+            checkpoint(size=len(chunk))
+    checkpoint(files=1)
     return digest.hexdigest()
 
 

@@ -788,11 +788,35 @@ def run_segments(
     run_incomplete: bool = False,
     expected_summary_sha256: str | None = None,
     stop_control=None,
+    preflight_nonce: str | None = None,
 ) -> dict[str, Any]:
     from dicomxphits.segment_retry import plan_incomplete
     from dicomxphits.workspace_execution import WorkspaceExecutionLease
 
     root = workspace_root.expanduser().resolve()
+    if preflight_nonce is not None:
+        from dicomxphits.segment_preflight import Session, PreparationCancelled, read_receipt
+        run_id = str(run_id_factory())
+        # The outer lease spans preparation, cancellation and terminal receipt.
+        with WorkspaceOutputGuard(root):
+            read_receipt(root)  # Never overwrite malformed or unknown-version evidence.
+            with Session(root, preflight_nonce, run_id, stop_control) as preparation:
+                try:
+                    preparation.checkpoint()
+                    result = run_segments(workspace_root=root, paths=paths,
+                        command_argv=command_argv, runner=runner,
+                        monotonic_clock=monotonic_clock, utc_now=utc_now,
+                        run_id_factory=lambda: run_id, summary_writer=summary_writer,
+                        run_incomplete=run_incomplete,
+                        expected_summary_sha256=expected_summary_sha256,
+                        stop_control=stop_control)
+                    preparation.finish(result)
+                    return result
+                except PreparationCancelled:
+                    return dict(preparation.receipt)
+                finally:
+                    if stop_control is not None:
+                        stop_control.close()
     # Rejected retry preflight must not replace the previous execution summary.
     if run_incomplete:
         with WorkspaceExecutionLease(root, create=False) as lease:
@@ -867,7 +891,14 @@ def _run_segments_locked(
         if stop_control is None:
             return
         from dicomxphits.segment_stop import valid_request
+        from dicomxphits.segment_preflight import current_session
         for request in stop_control.take():
+            preparation = current_session()
+            if preparation is not None and preparation.handle_cancel(request):
+                continue
+            if preparation is not None and not preparation.receipt["child_committed"]:
+                stop_control.reject()
+                continue
             if (not valid_request(request, workspace=str(workspace_root), run_id=run_id)
                 or execution_binding is None or execution_binding["retry_unavailable"]):
                 stop_control.reject()
@@ -890,6 +921,10 @@ def _run_segments_locked(
         return run_while_polling(runner, poll, *args, **kwargs)
 
     try:
+        from dicomxphits.segment_preflight import current_session
+        preparation = current_session()
+        if preparation is not None:
+            preparation.poll = poll_stop
         require_execution_paths(paths)
         manifest, _manifest_path = load_manifest(workspace_root)
         manifest_digest = manifest_sha256(manifest)
@@ -981,14 +1016,19 @@ def _run_segments_locked(
                 parent_attempt = {"path": preserved.relative_to(workspace_root).as_posix(),
                     "sha256": retry_plan["source_sha256"]}
 
-        persist("running")
+        if preparation is None:
+            persist("running")
         for summary_index, segment in active_segments:
+            if preparation is not None:
+                preparation.publish("verifying", force=True)
             validate_binding(workspace_root, manifest, execution_binding, paths)
             validate_results(workspace_root, {"execution_binding": execution_binding,
                 "segments": segment_summaries})
             poll_stop()
             if stop_requested is not None:
                 break
+            if preparation is not None:
+                preparation.commit()
             segment_started_tick = float(monotonic_clock())
             segment_started_at = _utc_text(utc_now())
             prior = segment_summaries[summary_index]
@@ -1016,6 +1056,8 @@ def _run_segments_locked(
                 input_binding=contracts[prior["segment_id"]]["inputs"],
                 observation_context=live_summary if observe_native else None,
             )
+            if preparation is not None:
+                preparation.publish("verifying", force=True)
             validate_binding(workspace_root, manifest, execution_binding, paths)
             result.update(retained=False, producer_run_id=run_id)
             if result["status"] == "success":
@@ -1099,6 +1141,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--run-incomplete", action="store_true")
     parser.add_argument("--expected-summary-sha256", default=None)
     parser.add_argument("--control-stdin", action="store_true")
+    parser.add_argument("--preflight-nonce", default=None)
     return parser
 
 
@@ -1123,6 +1166,7 @@ def main(argv: list[str] | None = None) -> int:
             run_incomplete=args.run_incomplete,
             expected_summary_sha256=args.expected_summary_sha256,
             stop_control=control,
+            preflight_nonce=args.preflight_nonce or uuid.uuid4().hex,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1131,6 +1175,10 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if control is not None:
             control.close()
+    from dicomxphits.segment_preflight import SCHEMA as PREFLIGHT_SCHEMA, RELATIVE_PATH
+    if summary.get("schema_version") == PREFLIGHT_SCHEMA:
+        print(workspace_root / RELATIVE_PATH)
+        return 5 if summary.get("phase") == "cancelled_before_launch" else 2
     print(summary_path(workspace_root))
     return 0 if summary["status"] == "success" else 4 if summary["status"] == "stopped" else 3
 
