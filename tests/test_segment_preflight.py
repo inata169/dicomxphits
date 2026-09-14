@@ -638,6 +638,37 @@ def test_cancel_during_large_input_text_scan_is_bounded(tmp_path, monkeypatch):
     assert not summary_path(root).exists()
 
 
+def test_cancel_during_large_manifest_scan_is_bounded(tmp_path, monkeypatch):
+    root, manifest, paths = workspace_fixture(tmp_path, segment_count=1)
+    manifest["synthetic_padding"] = "x" * (2 * 1024 * 1024 + 17)
+    manifest_path = root / "segments" / "segment_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    control = StopControl()
+    original_checkpoint = Session.checkpoint
+    chunks = []
+
+    def checkpoint(session, *, files=0, size=0):
+        if size:
+            chunks.append(size)
+            if len(chunks) == 1:
+                cancel(control, root)
+        return original_checkpoint(session, files=files, size=size)
+
+    monkeypatch.setattr(Session, "checkpoint", checkpoint)
+    result = run_segments(
+        workspace_root=root,
+        paths=paths,
+        preflight_nonce="nonce",
+        run_id_factory=lambda: "preflight-run",
+        stop_control=control,
+        runner=lambda *a, **k: pytest.fail("PHITS launched during manifest scan"),
+    )
+    assert result["phase"] == "cancelled_before_launch"
+    assert result["child_committed"] is False
+    assert chunks and max(chunks) <= 1024 * 1024
+    assert not summary_path(root).exists()
+
+
 def test_hash_progress_is_published_before_scan_finishes(tmp_path, monkeypatch):
     import dicomxphits.segment_preflight as module
 

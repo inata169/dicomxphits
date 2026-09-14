@@ -56,7 +56,7 @@ PHITS_OUTPUT_PATTERN = re.compile(
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
+    with checked_text_lines(path) as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError(f"JSON root must be an object: {path}")
