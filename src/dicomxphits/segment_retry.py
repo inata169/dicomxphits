@@ -363,6 +363,13 @@ def result_evidence_matches(root, segment_binding, recorded):
         return True
     if not isinstance(recorded, list):
         return False
+    seen_paths = set()
+    for item in recorded:
+        path = item.get("path") if isinstance(item, dict) else None
+        if isinstance(path, str):
+            if path in seen_paths:
+                return False
+            seen_paths.add(path)
     mutable = {
         item for item in segment_binding["writes"]
         if Path(item).name == _api().ROOT_BATCH_OUT
