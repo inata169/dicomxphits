@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ from dicomxphits.prepare_sumtally import (
     select_sumtally_base_input,
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError
+from dicomxphits.workspace_execution import WorkspaceBusyError, WorkspaceExecutionLease
 from dicomxphits.rtdose_geometry import tally_mesh_geometry_sha256
 from dicomxphits.run_segments import validate_segment_execution_summary
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
@@ -1365,6 +1367,80 @@ def test_run_sumtally_records_execution_outputs(monkeypatch, tmp_path):
         summary["sumtally_normalization_evidence"]
         == generation["sumtally_normalization_evidence"]
     )
+
+
+def test_run_sumtally_holds_one_lease_from_downstream_gate_through_launch(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, _ = write_workspace(tmp_path)
+    generation = generate_sumtally(
+        workspace_root=workspace,
+        paths=paths(),
+        command_argv=["generate"],
+    )
+    expected_output = Path(generation["outputs"]["sumtally_output"])
+    gate_reached = threading.Event()
+    release_gate = threading.Event()
+    runner_reached = threading.Event()
+    release_runner = threading.Event()
+    original_gate = prepare_sumtally_module.validate_segment_outputs_exist
+    outcome = {}
+
+    def paused_gate(*args, **kwargs):
+        original_gate(*args, **kwargs)
+        gate_reached.set()
+        if not release_gate.wait(5):
+            raise TimeoutError("synthetic downstream gate was not released")
+
+    def paused_runner(cmd, **kwargs):
+        runner_reached.set()
+        if not release_runner.wait(5):
+            raise TimeoutError("synthetic Sumtally runner was not released")
+        (Path(kwargs["cwd"]) / expected_output.name).write_text(
+            tally_output_text(),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="sum ok", stderr="")
+
+    def invoke():
+        try:
+            outcome["summary"] = run_sumtally(
+                workspace_root=workspace,
+                paths=paths(),
+                command_argv=["run"],
+                runner=paused_runner,
+            )
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    monkeypatch.setattr(
+        prepare_sumtally_module,
+        "validate_segment_outputs_exist",
+        paused_gate,
+    )
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    try:
+        assert gate_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_gate.set()
+        assert runner_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_runner.set()
+        thread.join(10)
+    finally:
+        release_gate.set()
+        release_runner.set()
+        thread.join(10)
+
+    assert not thread.is_alive()
+    assert "error" not in outcome
+    assert outcome["summary"]["stage_status"] == "success"
 
 
 def test_run_sumtally_preserves_execution_evidence_when_geometry_is_invalid(

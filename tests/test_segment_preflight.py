@@ -16,6 +16,7 @@ from dicomxphits.segment_preflight import (
     require_current_result, validate_receipt,
 )
 from dicomxphits.segment_stop import StopControl
+from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import file_sha256
 from dicomxphits.workspace_execution import WorkspaceBusyError, WorkspaceExecutionLease
 from dicomxphits.workspace_recovery import validate_segment_execution_for_downstream
@@ -412,23 +413,44 @@ def test_cancellation_write_failure_is_not_success(tmp_path, monkeypatch):
 
 def test_selective_preflight_cancel_preserves_original_attempt(tmp_path, monkeypatch):
     root, _, paths, _ = partial(tmp_path)
+    current = json.loads(summary_path(root).read_text(encoding="utf-8"))
+    current["failure_reason"] = "x" * (2 * 1024 * 1024 + 17)
+    summary_path(root).write_text(json.dumps(current), encoding="utf-8")
     before = summary_path(root).read_bytes()
     mtime = summary_path(root).stat().st_mtime_ns
     control = StopControl()
-    original_checkpoint = Session.checkpoint
+    original_copy = WorkspaceOutputGuard.copy_file
+    preservation_chunks = []
 
-    def checkpoint(session, *, files=0, size=0):
-        if size:
-            cancel(control, root)
-        return original_checkpoint(session, files=files, size=size)
+    def cancel_during_history_copy(self, source, destination, **kwargs):
+        callback = kwargs.get("checkpoint")
+        if "segment_attempt_history" in destination.parts:
+            assert callback is not None
 
-    monkeypatch.setattr(Session, "checkpoint", checkpoint)
+            def during_copy(*, files=0, size=0):
+                if size:
+                    preservation_chunks.append(size)
+                    if len(preservation_chunks) == 1:
+                        cancel(control, root)
+                callback(files=files, size=size)
+
+            kwargs["checkpoint"] = during_copy
+        return original_copy(self, source, destination, **kwargs)
+
+    monkeypatch.setattr(
+        WorkspaceOutputGuard,
+        "copy_file",
+        cancel_during_history_copy,
+    )
     receipt = run_segments(workspace_root=root, paths=paths, preflight_nonce="nonce",
         run_incomplete=True, run_id_factory=lambda: "preflight-run", stop_control=control,
+        expected_summary_sha256=file_sha256(summary_path(root)),
         runner=lambda *a, **k: pytest.fail("launched"))
     assert receipt["phase"] == "cancelled_before_launch"
+    assert preservation_chunks == [1024 * 1024]
     assert summary_path(root).read_bytes() == before
     assert summary_path(root).stat().st_mtime_ns == mtime
+    assert not list((root / "analysis" / "segment_attempt_history").rglob("summary.json"))
 
 
 def test_stop_is_acknowledged_inside_post_child_verification(tmp_path, monkeypatch):
@@ -437,24 +459,40 @@ def test_stop_is_acknowledged_inside_post_child_verification(tmp_path, monkeypat
     original_checkpoint = Session.checkpoint
     queued = False
     witnessed = []
+    verification_chunks = []
+
+    base_runner = runner_for(root)
+
+    def runner_with_large_phits(command, **kwargs):
+        result = base_runner(command, **kwargs)
+        staged_phits_out = Path(kwargs["cwd"]) / "phits.out"
+        staged_phits_out.write_text(
+            "x" * (2 * 1024 * 1024 + 17)
+            + "\n"
+            + staged_phits_out.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        return result
 
     def checkpoint(session, *, files=0, size=0):
         nonlocal queued
-        if size and session.receipt["child_committed"] and session.receipt["phase"] == "verifying" and not queued:
-            queued = True
-            control.feed(json.dumps(dict(operation="stop-after-current", workspace_root=str(root.resolve()),
-                run_id="preflight-run", request_id="stop-1")).encode())
-            original_checkpoint(session, files=files, size=size)
-            witnessed.append(json.loads(summary_path(root).read_text(encoding="utf-8"))["stop_requested"])
-            return
+        if size and session.receipt["child_committed"] and session.receipt["phase"] == "verifying":
+            verification_chunks.append(size)
+            if not queued:
+                queued = True
+                control.feed(json.dumps(dict(operation="stop-after-current", workspace_root=str(root.resolve()),
+                    run_id="preflight-run", request_id="stop-1")).encode())
+                original_checkpoint(session, files=files, size=size)
+                witnessed.append(json.loads(summary_path(root).read_text(encoding="utf-8"))["stop_requested"])
+                return
         original_checkpoint(session, files=files, size=size)
 
     monkeypatch.setattr(Session, "checkpoint", checkpoint)
-    calls = []
     result = run_segments(workspace_root=root, paths=paths, preflight_nonce="nonce",
-        run_id_factory=lambda: "preflight-run", stop_control=control, runner=runner_for(root, calls=calls))
+        run_id_factory=lambda: "preflight-run", stop_control=control,
+        runner=runner_with_large_phits)
     assert witnessed and witnessed[0]["request_id"] == "stop-1"
-    assert len(calls) == 1
+    assert verification_chunks and max(verification_chunks) <= 1024 * 1024
     assert result["status"] == "stopped"
     assert result["segments"][0]["status"] == "success"
     assert result["segments"][1]["status"] == "pending"

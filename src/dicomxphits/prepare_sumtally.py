@@ -782,8 +782,31 @@ def run_sumtally(
     command_argv: list[str] | None = None,
     runner=subprocess.run,
 ) -> dict[str, Any]:
-    with WorkspaceOutputGuard(workspace_root):
-        pass
+    from dicomxphits.workspace_execution import WorkspaceExecutionLease
+
+    root = workspace_root.expanduser().resolve()
+    # Keep downstream eligibility, generated-input verification, PHITS launch,
+    # and terminal evidence under one ownership interval.
+    with WorkspaceOutputGuard(root):
+        with WorkspaceExecutionLease(root) as lease:
+            with lease.invocation():
+                return _run_sumtally_locked(
+                    workspace_root=root,
+                    paths=paths,
+                    sum_input=sum_input,
+                    command_argv=command_argv,
+                    runner=lease.run if runner is subprocess.run else runner,
+                )
+
+
+def _run_sumtally_locked(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    sum_input: Path | None = None,
+    command_argv: list[str] | None = None,
+    runner=subprocess.run,
+) -> dict[str, Any]:
     workspace_root = workspace_root.resolve()
     execution_summary_path = workspace_root / "analysis" / "sumtally_execution_summary.json"
     phits_started = False

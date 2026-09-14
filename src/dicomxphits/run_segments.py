@@ -358,6 +358,8 @@ def collect_root_outputs(
     *,
     guard: WorkspaceOutputGuard,
 ) -> dict[str, str | None]:
+    from dicomxphits.segment_preflight import checkpoint
+
     guard.mkdir(output_dir)
     collected: dict[str, str | None] = {"batch_out_path": None, "phits_out_path": None}
     batch_source = execution_root / ROOT_BATCH_OUT
@@ -368,7 +370,7 @@ def collect_root_outputs(
                 f"PHITS root output is not a regular file: {batch_source}"
             )
         batch_target = output_dir / ROOT_BATCH_OUT
-        guard.copy_file(batch_source, batch_target)
+        guard.copy_file(batch_source, batch_target, checkpoint=checkpoint)
         collected["batch_out_path"] = str(batch_target)
     phits_source = execution_root / ROOT_PHITS_OUT
     if os.path.lexists(phits_source):
@@ -379,7 +381,7 @@ def collect_root_outputs(
             )
         phits_target = output_dir / ROOT_PHITS_OUT
         guard.prepare(phits_target)
-        guard.copy_file(phits_source, phits_target)
+        guard.copy_file(phits_source, phits_target, checkpoint=checkpoint)
         collected["phits_out_path"] = str(phits_target)
     return collected
 
@@ -519,6 +521,8 @@ def stage_phits_segment_run(
     expected_output: Path,
     guard: WorkspaceOutputGuard,
 ) -> tuple[Path, Path, list[Path]]:
+    from dicomxphits.segment_preflight import checkpoint
+
     inputs, outputs = phits_staging_contract(
         workspace_root=workspace_root,
         phits_input=phits_input,
@@ -534,7 +538,12 @@ def stage_phits_segment_run(
     )
     for source in inputs:
         relative = source.resolve().relative_to(workspace_root.resolve())
-        guard.copy_file(source, execution_root / relative, overwrite=False)
+        guard.copy_file(
+            source,
+            execution_root / relative,
+            overwrite=False,
+            checkpoint=checkpoint,
+        )
     for output in outputs:
         relative = output.resolve().relative_to(workspace_root.resolve())
         guard.mkdir((execution_root / relative).parent)
@@ -554,6 +563,8 @@ def run_one_segment(
     observation_context=None,
     on_child_finished: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
+    from dicomxphits.segment_preflight import checkpoint
+
     phits_input = resolve_workspace_file(
         workspace_root,
         str(segment.get("phits_input_path") or ""),
@@ -676,6 +687,7 @@ def run_one_segment(
                         staged_output,
                         output,
                         overwrite=output.resolve() != expected_output.resolve(),
+                        checkpoint=checkpoint,
                     )
             guard.write_text(stdout_path, result.stdout or "")
             guard.write_text(stderr_path, result.stderr or "")
@@ -855,6 +867,7 @@ def _run_segments_locked(
         bindings_match, capture_binding, result_evidence, validate_binding,
         validate_results, validate_selected_executable,
     )
+    from dicomxphits.segment_preflight import checkpoint
     workspace_root = workspace_root.expanduser().resolve()
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
@@ -1021,7 +1034,12 @@ def _run_segments_locked(
                 history = guard.make_staging_directory(
                     workspace_root / "analysis" / "segment_attempt_history", prefix="attempt-")
                 preserved = history / "summary.json"
-                guard.copy_file(summary_file, preserved, overwrite=False)
+                guard.copy_file(
+                    summary_file,
+                    preserved,
+                    overwrite=False,
+                    checkpoint=checkpoint,
+                )
                 if file_sha256(preserved) != retry_plan["source_sha256"]:
                     raise ValueError("Retry source changed before preservation")
                 parent_attempt = {"path": preserved.relative_to(workspace_root).as_posix(),

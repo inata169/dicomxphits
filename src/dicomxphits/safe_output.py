@@ -12,10 +12,11 @@ import secrets
 import shutil
 import stat
 import time
-from typing import Any
+from typing import Any, Callable
 
 
 FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+_COPY_CHUNK_BYTES = 1024 * 1024
 
 
 class UnsafeWorkspacePathError(ValueError):
@@ -384,9 +385,12 @@ class WorkspaceOutputGuard:
         destination: Path,
         *,
         overwrite: bool = True,
+        checkpoint: Callable[..., None] | None = None,
     ) -> Path:
         """Copy a guarded regular file using exclusive or atomic final creation."""
 
+        if checkpoint is not None:
+            checkpoint()
         source = self.prepare(source)
         if not source.is_file():
             raise UnsafeWorkspacePathError(f"Copy source is not a regular file: {source}")
@@ -406,10 +410,17 @@ class WorkspaceOutputGuard:
                     descriptor, "wb"
                 ) as target_stream:
                     descriptor = None
-                    shutil.copyfileobj(source_stream, target_stream)
+                    if checkpoint is None:
+                        shutil.copyfileobj(source_stream, target_stream)
+                    else:
+                        while chunk := source_stream.read(_COPY_CHUNK_BYTES):
+                            target_stream.write(chunk)
+                            checkpoint(size=len(chunk))
                     target_stream.flush()
                     os.fsync(target_stream.fileno())
-            except Exception:
+                    if checkpoint is not None:
+                        checkpoint(files=1)
+            except BaseException:
                 if descriptor is not None:
                     os.close(descriptor)
                 if created and _lexists(target):
@@ -429,9 +440,16 @@ class WorkspaceOutputGuard:
             with _open_regular_file_for_read(source) as source_stream, os.fdopen(
                 descriptor, "wb"
             ) as target_stream:
-                shutil.copyfileobj(source_stream, target_stream)
+                if checkpoint is None:
+                    shutil.copyfileobj(source_stream, target_stream)
+                else:
+                    while chunk := source_stream.read(_COPY_CHUNK_BYTES):
+                        target_stream.write(chunk)
+                        checkpoint(size=len(chunk))
                 target_stream.flush()
                 os.fsync(target_stream.fileno())
+                if checkpoint is not None:
+                    checkpoint(files=1)
             self.prepare_file_target(target)
             os.replace(temporary, target)
         finally:
