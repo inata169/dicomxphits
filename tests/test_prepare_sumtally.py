@@ -329,6 +329,77 @@ def test_generate_sumtally_records_all_segments_totalfield_contract(tmp_path):
     assert "seg_002/deposit-target-3D.out  60" in content
 
 
+def test_generate_sumtally_holds_one_lease_from_gate_through_publication(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, _ = write_workspace(tmp_path)
+    summary_target = (
+        workspace / "analysis" / "sumtally_generation_summary.json"
+    ).resolve()
+    gate_reached = threading.Event()
+    release_gate = threading.Event()
+    publication_reached = threading.Event()
+    release_publication = threading.Event()
+    original_gate = prepare_sumtally_module.validate_segment_outputs_exist
+    original_write = prepare_sumtally_module.write_json
+    outcome = {}
+
+    def paused_gate(*args, **kwargs):
+        original_gate(*args, **kwargs)
+        gate_reached.set()
+        if not release_gate.wait(5):
+            raise TimeoutError("synthetic Sumtally generation gate was not released")
+
+    def paused_write(path, value, **kwargs):
+        if Path(path).resolve() == summary_target:
+            publication_reached.set()
+            if not release_publication.wait(5):
+                raise TimeoutError(
+                    "synthetic Sumtally generation publication was not released"
+                )
+        return original_write(path, value, **kwargs)
+
+    def invoke():
+        try:
+            outcome["summary"] = generate_sumtally(
+                workspace_root=workspace,
+                paths=paths(),
+                command_argv=["generate"],
+            )
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    monkeypatch.setattr(
+        prepare_sumtally_module,
+        "validate_segment_outputs_exist",
+        paused_gate,
+    )
+    monkeypatch.setattr(prepare_sumtally_module, "write_json", paused_write)
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    try:
+        assert gate_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_gate.set()
+        assert publication_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_publication.set()
+        thread.join(10)
+    finally:
+        release_gate.set()
+        release_publication.set()
+        thread.join(10)
+
+    assert not thread.is_alive()
+    assert "error" not in outcome
+    assert outcome["summary"]["stage_status"] == "success"
+
+
 def test_generate_sumtally_rejects_stale_v2_segment_output(tmp_path: Path) -> None:
     workspace, manifest = write_workspace(tmp_path)
     output = workspace / manifest["segments"][0]["expected_output_path"]

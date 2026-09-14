@@ -1194,6 +1194,43 @@ def prepare_rtdose(
     output_dicom_dose_unit: str = DEFAULT_OUTPUT_DICOM_DOSE_UNIT,
     command_argv: list[str] | None = None,
 ) -> dict[str, Any]:
+    root = workspace_root.expanduser().resolve()
+    # The guard's execution lease spans the Sumtally/current-result gate, all
+    # prepared inputs, revalidation, and terminal publication.
+    with WorkspaceOutputGuard(root):
+        return _prepare_rtdose_locked(
+            workspace_root=root,
+            paths=paths,
+            paths_config=paths_config,
+            template_dicom=template_dicom,
+            rtplan_path=rtplan_path,
+            ct_reference_dicom=ct_reference_dicom,
+            generated_ct_reference_dicom=generated_ct_reference_dicom,
+            smoke_dummy_ct_reference=smoke_dummy_ct_reference,
+            reference_dicom_for_identity=reference_dicom_for_identity,
+            phits_out=phits_out,
+            input_dose_unit=input_dose_unit,
+            output_dicom_dose_unit=output_dicom_dose_unit,
+            command_argv=command_argv,
+        )
+
+
+def _prepare_rtdose_locked(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    paths_config: dict[str, Any],
+    template_dicom: Path,
+    rtplan_path: Path | None = None,
+    ct_reference_dicom: Path | None = None,
+    generated_ct_reference_dicom: Path | None = None,
+    smoke_dummy_ct_reference: Path | None = None,
+    reference_dicom_for_identity: Path | None = None,
+    phits_out: Path | None = None,
+    input_dose_unit: str = DEFAULT_INPUT_DOSE_UNIT,
+    output_dicom_dose_unit: str = DEFAULT_OUTPUT_DICOM_DOSE_UNIT,
+    command_argv: list[str] | None = None,
+) -> dict[str, Any]:
     summary_path = prepare_summary_path(workspace_root)
     try:
         generation, execution = load_sumtally_summaries(workspace_root)

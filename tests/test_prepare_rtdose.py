@@ -1372,6 +1372,84 @@ def test_prepare_records_template_original_and_workspace_copy(tmp_path):
     assert workspace in Path(summary["template_dicom_workspace_copy_path"]).parents
 
 
+def test_prepare_rtdose_holds_one_lease_from_gate_through_publication(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    summary_target = prepare_rtdose_module.prepare_summary_path(workspace).resolve()
+    gate_reached = threading.Event()
+    release_gate = threading.Event()
+    publication_reached = threading.Event()
+    release_publication = threading.Event()
+    original_gate = prepare_rtdose_module.validate_sumtally_manifest_binding
+    original_write = prepare_rtdose_module.write_json
+    outcome = {}
+
+    def paused_gate(*args, **kwargs):
+        result = original_gate(*args, **kwargs)
+        gate_reached.set()
+        if not release_gate.wait(5):
+            raise TimeoutError("synthetic RTDOSE preparation gate was not released")
+        return result
+
+    def paused_write(path, value, **kwargs):
+        if Path(path).resolve() == summary_target:
+            publication_reached.set()
+            if not release_publication.wait(5):
+                raise TimeoutError(
+                    "synthetic RTDOSE preparation publication was not released"
+                )
+        return original_write(path, value, **kwargs)
+
+    def invoke():
+        try:
+            outcome["summary"] = prepare_rtdose(
+                workspace_root=workspace,
+                paths=paths(),
+                paths_config={},
+                template_dicom=template,
+                ct_reference_dicom=ct,
+                phits_out=files["phits_out"],
+                command_argv=["prepare"],
+            )
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    monkeypatch.setattr(
+        prepare_rtdose_module,
+        "validate_sumtally_manifest_binding",
+        paused_gate,
+    )
+    monkeypatch.setattr(prepare_rtdose_module, "write_json", paused_write)
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    try:
+        assert gate_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_gate.set()
+        assert publication_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_publication.set()
+        thread.join(10)
+    finally:
+        release_gate.set()
+        release_publication.set()
+        thread.join(10)
+
+    assert not thread.is_alive()
+    assert "error" not in outcome
+    assert outcome["summary"]["stage_status"] == "success"
+
+
 def test_prepare_writes_failure_summary_for_missing_inputs(tmp_path):
     workspace, files = write_workspace(tmp_path)
     missing_template = tmp_path / "missing_template.dcm"

@@ -463,8 +463,27 @@ def generate_sumtally(
     base_input: Path | None = None,
     command_argv: list[str] | None = None,
 ) -> dict[str, Any]:
-    with WorkspaceOutputGuard(workspace_root):
-        pass
+    root = workspace_root.expanduser().resolve()
+    # The guard's execution lease spans the current-result gate, all generated
+    # inputs, revalidation, and terminal publication.
+    with WorkspaceOutputGuard(root):
+        return _generate_sumtally_locked(
+            workspace_root=root,
+            paths=paths,
+            output_name=output_name,
+            base_input=base_input,
+            command_argv=command_argv,
+        )
+
+
+def _generate_sumtally_locked(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    output_name: str = DEFAULT_SUMTALLY_OUTPUT_NAME,
+    base_input: Path | None = None,
+    command_argv: list[str] | None = None,
+) -> dict[str, Any]:
     workspace_root = workspace_root.resolve()
     generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
     try:
