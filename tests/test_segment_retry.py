@@ -222,6 +222,26 @@ def test_historical_batch_digest_is_ignored_by_downstream_validation(tmp_path):
     validate_segment_execution_for_downstream(root, manifest, result)
 
 
+@pytest.mark.parametrize("malformed", [
+    "not evidence",
+    {},
+    {"path": "batch"},
+    {"path": "batch", "sha256": "invalid"},
+    {"path": "batch", "sha256": "0" * 64, "extra": True},
+])
+def test_malformed_extra_evidence_is_not_filtered_as_historical_batch(
+    tmp_path, malformed,
+):
+    root, _, paths = workspace_fixture(tmp_path, segment_count=1)
+    result = run_segments(workspace_root=root, paths=paths, runner=runner_for(root))
+    batch_relative = Path(result["segments"][0]["batch_out_path"]).relative_to(root).as_posix()
+    if isinstance(malformed, dict) and malformed.get("path") == "batch":
+        malformed = {**malformed, "path": batch_relative}
+    result["segments"][0]["output_evidence"].append(malformed)
+    with pytest.raises(ValueError, match="artifacts changed"):
+        validate_results(root, result)
+
+
 def test_historical_secondary_error_requirement_is_comparison_compatible(tmp_path):
     root, manifest, paths = workspace_fixture(tmp_path)
     first_source = root / manifest["segments"][0]["phits_input_path"]

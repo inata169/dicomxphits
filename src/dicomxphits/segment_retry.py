@@ -352,8 +352,13 @@ def result_evidence_matches(root, segment_binding, recorded):
     # Historical summaries and retained entries may contain batch.out digests.
     # Preserve the stored evidence, but ignore only those exact mutable paths
     # when comparing it to the current bounded result contract.
-    normalized = [item for item in recorded
-        if isinstance(item, dict) and item.get("path") not in mutable]
+    def valid_mutable_evidence(item):
+        return (isinstance(item, dict)
+            and set(item) == {"path", "sha256"}
+            and item.get("path") in mutable
+            and isinstance(item.get("sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None)
+    normalized = [item for item in recorded if not valid_mutable_evidence(item)]
     return normalized == current
 
 
