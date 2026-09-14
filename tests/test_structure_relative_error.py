@@ -12,6 +12,7 @@ import dicomxphits.gui as gui_module
 import dicomxphits.structure_relative_error as module
 from dicomxphits.gui import (
     GuiValidationError,
+    STRUCTURE_EVALUATION_UPSTREAM_STAGES,
     StructureEvaluationRequestGuard,
     structure_evaluation_enabled,
     structure_roi_number,
@@ -400,6 +401,19 @@ def test_gui_result_ticket_rejects_changed_or_changed_back_inputs() -> None:
     guard.invalidate()
 
     assert guard.is_current(ticket, original) is False
+
+
+def test_gui_invalidates_structure_results_for_every_upstream_stage() -> None:
+    assert STRUCTURE_EVALUATION_UPSTREAM_STAGES == {
+        "run_ct2phits",
+        "prepare_workspace",
+        "run_segments",
+        "generate_sumtally",
+        "run_sumtally",
+    }
+    assert "prepare_rtdose" not in STRUCTURE_EVALUATION_UPSTREAM_STAGES
+    assert "run_rtdose" not in STRUCTURE_EVALUATION_UPSTREAM_STAGES
+    assert "evaluate_structure_rerr" not in STRUCTURE_EVALUATION_UPSTREAM_STAGES
 
 
 def test_relocation_rebinds_only_combined_pair_paths(tmp_path: Path) -> None:

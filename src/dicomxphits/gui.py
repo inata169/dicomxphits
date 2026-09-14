@@ -228,6 +228,17 @@ class StructureEvaluationRequestGuard:
         return ticket == (self.generation, tuple(inputs))
 
 
+STRUCTURE_EVALUATION_UPSTREAM_STAGES = frozenset(
+    {
+        "run_ct2phits",
+        "prepare_workspace",
+        "run_segments",
+        "generate_sumtally",
+        "run_sumtally",
+    }
+)
+
+
 def structure_roi_number(value: str) -> int:
     """Parse one explicit DICOM ROINumber without name-based inference."""
 
@@ -2172,6 +2183,10 @@ def _build_gui() -> int:
             values["ct_reference_dicom"].get().strip(),
         )
 
+    def invalidate_structure_evaluation_result(message: str) -> None:
+        structure_evaluation_guard.invalidate()
+        structure_result_status.set(message)
+
     def stop_button_ready() -> bool:
         return bool(execution_guard.active_stage == "run_segments"
             and phits_control is not None and phits_control.process is not None
@@ -3538,6 +3553,12 @@ def _build_gui() -> int:
             execution_guard.finish()
         else:
             execution_guard.begin(stage_key)
+            if stage_key in STRUCTURE_EVALUATION_UPSTREAM_STAGES:
+                invalidate_structure_evaluation_result(
+                    "Unavailable: upstream calculation evidence is being "
+                    "regenerated; request evaluation again after verified "
+                    "Sumtally success."
+                )
         for control in workspace_selection_controls:
             control.state(["disabled"] if stage_key else ["!disabled"])
         refresh_action_button_states()
@@ -4353,8 +4374,7 @@ def _build_gui() -> int:
         refresh_action_button_states()
 
     def invalidate_structure_evaluation(*_args: object) -> None:
-        structure_evaluation_guard.invalidate()
-        structure_result_status.set(
+        invalidate_structure_evaluation_result(
             "Unavailable: evaluation inputs changed; request evaluation again."
         )
         refresh_action_button_states()
