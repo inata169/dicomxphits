@@ -463,6 +463,31 @@ def test_stop_is_acknowledged_inside_post_child_verification(tmp_path, monkeypat
         validate_segment_execution_for_downstream(root, manifest, result)
 
 
+def test_verifying_phase_starts_before_post_child_output_hash(tmp_path, monkeypatch):
+    import dicomxphits.run_segments as module
+
+    root, manifest, paths = workspace_fixture(tmp_path, segment_count=1)
+    expected = root / manifest["segments"][0]["expected_output_path"]
+    original = module.file_sha256
+    observed = []
+
+    def record(path):
+        if Path(path).resolve() == expected.resolve() and expected.is_file():
+            observed.append(read_receipt(root, nonce="nonce")["phase"])
+        return original(path)
+
+    monkeypatch.setattr(module, "file_sha256", record)
+    result = run_segments(
+        workspace_root=root,
+        paths=paths,
+        preflight_nonce="nonce",
+        run_id_factory=lambda: "preflight-run",
+        runner=runner_for(root),
+    )
+    assert result["status"] == "success"
+    assert observed and observed[0] == "verifying"
+
+
 def test_same_size_same_mtime_selected_executable_mutation_is_detected(tmp_path):
     from dicomxphits.segment_retry import capture_binding, validate_binding
     root, manifest, paths = workspace_fixture(tmp_path)

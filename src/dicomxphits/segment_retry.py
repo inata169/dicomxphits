@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 from copy import deepcopy
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
@@ -241,8 +241,48 @@ def comparable_binding(binding):
     return value
 
 
+def _required_error_companions(segment):
+    required = set(segment["required_outputs"])
+    writes = set(segment["writes"])
+    companions = set()
+    for value in required.intersection(writes):
+        path = PurePosixPath(value)
+        if not path.stem.endswith("_err"):
+            continue
+        primary = path.with_name(path.stem.removesuffix("_err") + path.suffix).as_posix()
+        if primary in required:
+            companions.add(value)
+    return companions
+
+
+def _normalize_historical_secondary_requirements(first, second):
+    first_by_id = {item["segment_id"]: item for item in first["segments"]}
+    second_by_id = {item["segment_id"]: item for item in second["segments"]}
+    for identifier in first_by_id.keys() & second_by_id.keys():
+        first_segment = first_by_id[identifier]
+        second_segment = second_by_id[identifier]
+        first_errors = _required_error_companions(first_segment)
+        second_errors = _required_error_companions(second_segment)
+        if len(first_errors) == 1 and first_errors < second_errors:
+            extras = second_errors - first_errors
+            second_segment["required_outputs"] = [
+                value for value in second_segment["required_outputs"] if value not in extras
+            ]
+        elif len(second_errors) == 1 and second_errors < first_errors:
+            extras = first_errors - second_errors
+            first_segment["required_outputs"] = [
+                value for value in first_segment["required_outputs"] if value not in extras
+            ]
+
+
 def bindings_match(first, second):
-    return comparable_binding(first) == comparable_binding(second)
+    first = comparable_binding(first)
+    second = comparable_binding(second)
+    # Older v4/v5 bindings required an error companion for every declared
+    # tally. Comparison accepts only the extra secondary companions while
+    # preserving the single manifest-primary companion required today.
+    _normalize_historical_secondary_requirements(first, second)
+    return first == second
 
 
 def validate_selected_executable(root, binding, paths):
@@ -273,12 +313,11 @@ def validate_binding(root, manifest, binding, paths=None, *, local_only=False):
         # is not authority to read tools on another computer after relocation.
         expected["workspace_root"] = str(root)
         for value in (expected, observed):
-            value.pop("tool", None)
-            value.pop("retry_unavailable", None)
+            value["tool"] = None
+            value["retry_unavailable"] = []
             for segment in value["segments"]:
                 segment.pop("environment_sha256", None)
-    if ((local_only and observed != expected)
-        or (not local_only and not bindings_match(observed, expected))):
+    if not bindings_match(observed, expected):
         raise ValueError("Execution inputs, dependencies, or runtime changed; prepare a new workspace")
 
 

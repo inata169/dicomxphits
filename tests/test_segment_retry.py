@@ -222,6 +222,52 @@ def test_historical_batch_digest_is_ignored_by_downstream_validation(tmp_path):
     validate_segment_execution_for_downstream(root, manifest, result)
 
 
+def test_historical_secondary_error_requirement_is_comparison_compatible(tmp_path):
+    root, manifest, paths = workspace_fixture(tmp_path)
+    first_source = root / manifest["segments"][0]["phits_input_path"]
+    pdd = first_source.parent / "deposit-pdd.out"
+    pdd_error = pdd.with_name("deposit-pdd_err.out")
+    first_source.write_text(
+        first_source.read_text()
+        + f"[ T-Deposit ]\n  file = {pdd.relative_to(root).as_posix()}\n",
+        encoding="utf-8",
+    )
+    base_runner = runner_for(root, fail={"seg_002"})
+
+    def runner_with_secondary(command, **kwargs):
+        result = base_runner(command, **kwargs)
+        source = kwargs["input"].strip().removeprefix("file = ")
+        if Path(source).parent.name == "seg_001":
+            staging = Path(kwargs["cwd"])
+            (staging / pdd.relative_to(root)).write_text("pdd with r.err\n")
+            (staging / pdd_error.relative_to(root)).write_text("legacy companion\n")
+        return result
+
+    original = run_segments(workspace_root=root, paths=paths, runner=runner_with_secondary)
+    assert original["status"] == "failed"
+    contract = original["execution_binding"]["segments"][0]
+    relative_error = pdd_error.relative_to(root).as_posix()
+    assert relative_error in contract["writes"]
+    assert relative_error not in contract["required_outputs"]
+    contract["required_outputs"].append(relative_error)
+    contract["required_outputs"].sort()
+    summary_path(root).write_text(json.dumps(original), encoding="utf-8")
+
+    plan = plan_incomplete(root, paths)
+    result = run_segments(
+        workspace_root=root,
+        paths=paths,
+        run_incomplete=True,
+        expected_summary_sha256=plan["source_sha256"],
+        runner=runner_for(root),
+    )
+    assert result["status"] == "success"
+    assert any(
+        item["path"] == relative_error for item in result["segments"][0]["output_evidence"]
+    )
+    validate_segment_execution_for_downstream(root, manifest, result)
+
+
 def test_repeated_failure_retains_verified_segment_and_blocks_downstream(tmp_path):
     root, manifest, paths, _ = partial(tmp_path)
     for _ in range(2):

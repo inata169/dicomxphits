@@ -552,6 +552,7 @@ def run_one_segment(
     runner=subprocess.run,
     input_binding: list[dict[str, str]] | None = None,
     observation_context=None,
+    on_child_finished: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     phits_input = resolve_workspace_file(
         workspace_root,
@@ -602,16 +603,21 @@ def run_one_segment(
             from dicomxphits.phits_observation import make_observer
             staged_dose = execution_root / expected_output.resolve().relative_to(workspace_root.resolve())
             observer = make_observer(workspace_root, execution_root, staged_input, staged_dose, observation_context)
+            def finished_runner(*args, **kwargs):
+                completed = runner(*args, **kwargs)
+                if on_child_finished is not None:
+                    on_child_finished()
+                return completed
             def observing_runner(*args, **kwargs):
                 if observer is None:
-                    return runner(*args, **kwargs)
+                    return finished_runner(*args, **kwargs)
                 try:
                     observer.start()
                 except Exception:
                     observer.close(guard)
-                    return runner(*args, **kwargs)
+                    return finished_runner(*args, **kwargs)
                 try:
-                    return runner(*args, stdout_observer=observer.feed_stdout,
+                    return finished_runner(*args, stdout_observer=observer.feed_stdout,
                         _observation_poll=lambda: observer.publish(guard), **kwargs)
                 finally:
                     observer.close(guard)
@@ -1063,9 +1069,11 @@ def _run_segments_locked(
                 runner=controlled_runner if stop_control is not None or observe_native else runner,
                 input_binding=contracts[prior["segment_id"]]["inputs"],
                 observation_context=live_summary if observe_native else None,
+                on_child_finished=(
+                    (lambda: preparation.publish("verifying", force=True))
+                    if preparation is not None else None
+                ),
             )
-            if preparation is not None:
-                preparation.publish("verifying", force=True)
             validate_binding(workspace_root, manifest, execution_binding, paths)
             result.update(retained=False, producer_run_id=run_id)
             if result["status"] == "success":
