@@ -286,11 +286,13 @@ def test_stop_wait_loop_retains_ownership_after_controller_death(tmp_path):
 
 
 def test_stop_unavailable_without_retry_identity_does_not_change_ordinary_run(tmp_path):
-    root, _, paths = workspace_fixture(tmp_path)
+    root, manifest, paths = workspace_fixture(tmp_path)
+    source = root / manifest["segments"][0]["phits_input_path"]
+    source.write_text(source.read_text() + "file(2) = unknown\n")
     control = StopControl(lambda message: None)
     submit(control, root)
     snapshots = []
-    result = run_segments(workspace_root=root, paths=replace(paths, phits_root_folder=None),
+    result = run_segments(workspace_root=root, paths=paths,
         stop_control=control, runner=runner_for(root), run_id_factory=lambda: "stop-run",
         summary_writer=writer(root, snapshots))
     assert result["stage_status"] == "success" and result["stop_requested"] is None

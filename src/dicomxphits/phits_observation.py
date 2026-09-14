@@ -12,7 +12,8 @@ from pathlib import Path
 
 from dicomxphits.phits_observation_format import (
     MAX_HEADER_BYTES, MAX_TALLY_BYTES, ObservationError, checkpoint,
-    paired_statistics, parse_batch, parse_identity, prepared_contract, require,
+    paired_isocenter_error, parse_batch, parse_identity, prepared_contract,
+    require,
 )
 from dicomxphits.segment_retry import digest_object
 
@@ -170,7 +171,8 @@ class Observer:
             try:
                 dose, ds = read_snapshot(self.staging, self.dose_path, MAX_TALLY_BYTES, deadline)
                 error, es = read_snapshot(self.staging, self.error_path, MAX_TALLY_BYTES, deadline)
-                result = paired_statistics(dose, error, self.mesh, self.runtime["maxcas"], deadline)
+                result = paired_isocenter_error(
+                    dose, error, self.mesh, self.runtime["maxcas"], deadline)
                 self.error.offer((ds, es), result, time.monotonic())
             except (OSError, ValueError, UnicodeError) as exc:
                 self.error.reject(reason_for(exc))
@@ -228,7 +230,8 @@ def reason_for(exc):
         return "waiting"
     if isinstance(exc, ObservationError):
         allowed = {"resource-limit", "updating", "unsafe-path", "counter-regression",
-                   "pair-mismatch", "mesh-mismatch", "no-evaluable-cells", "invalid-numeric"}
+                   "pair-mismatch", "mesh-mismatch", "isocenter-unavailable",
+                   "invalid-numeric"}
         return str(exc) if str(exc) in allowed else "unsupported-format"
     return "unavailable"
 
@@ -317,7 +320,8 @@ def format_record(record, now):
         state = channel["state"]
         require(state in {"waiting", "available", "updating", "stale", "unsupported-identity",
                           "unsupported-format", "unavailable", "resource-limit", "pair-mismatch",
-                          "mesh-mismatch", "counter-regression", "unsafe-path", "no-evaluable-cells", "invalid-numeric"})
+                          "mesh-mismatch", "counter-regression", "unsafe-path",
+                          "isocenter-unavailable", "invalid-numeric"})
         value = channel["value"]
         if value is None:
             parts.append(f"{kind}: {state}")
@@ -336,11 +340,12 @@ def format_record(record, now):
             require(type(remaining) is int and type(total) is int and 0 <= remaining <= total and total > 0)
             parts.append(f"Observed remaining batches {remaining}; prepared total {total} ({label}, age {age:.1f}s)")
         else:
-            require(isinstance(value, dict) and set(value) == {"total_cells", "valid_cells", "excluded_cells", "coverage", "median_percent", "maximum_percent"})
-            total, valid, excluded = (value[k] for k in ("total_cells", "valid_cells", "excluded_cells"))
-            require(all(type(n) is int for n in (total, valid, excluded)) and 0 < valid <= total <= 10_000_000 and excluded == total-valid)
-            median, maximum, coverage = (value[k] for k in ("median_percent", "maximum_percent", "coverage"))
-            require(all(type(n) in {int, float} and math_finite(n) for n in (median, maximum, coverage)))
-            require(0 < median <= maximum and coverage == valid/total)
-            parts.append(f"Per-cell r.err median {median:.3g}%, max {maximum:.3g}%; valid {valid}/{total} ({coverage:.1%}), unevaluable {excluded} ({label}, age {age:.1f}s)")
+            require(isinstance(value, dict) and set(value) == {"relative_error_percent"})
+            relative_error = value["relative_error_percent"]
+            require(type(relative_error) in {int, float} and math_finite(relative_error)
+                    and relative_error > 0)
+            parts.append(
+                f"Isocenter voxel r.err {relative_error:.3g}% "
+                f"(single reference voxel; {label}, age {age:.1f}s)"
+            )
     return "\n".join(parts)

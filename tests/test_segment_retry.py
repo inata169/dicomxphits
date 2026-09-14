@@ -48,6 +48,8 @@ def runner_for(root, *, fail=(), calls=None):
         output = staging / Path(source).parent / "deposit-target-3D.out"
         output.write_text("dose\n", encoding="utf-8")
         output.with_name("deposit-target-3D_err.out").write_text("error\n", encoding="utf-8")
+        (staging / "batch.out").write_text(
+            "0 <--- number of remaining batches\n", encoding="utf-8")
         (staging / "phits.out").write_text(CLEAN_PHITS_GEOMETRY_SUMMARY, encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
     return runner
@@ -105,7 +107,7 @@ def test_retry_preserves_completed_artifacts_and_creates_unique_terminal_evidenc
     assert again == result
 
 
-@pytest.mark.parametrize("damage", ["input", "include", "tool", "library", "prep",
+@pytest.mark.parametrize("damage", ["input", "include", "tool", "prep",
     "manifest", "output", "missing", "geometry", "missing_record", "malformed", "legacy", "history"])
 def test_retry_rejects_changed_or_missing_evidence_before_launch(tmp_path, damage):
     root, manifest, paths, original = partial(tmp_path)
@@ -118,8 +120,6 @@ def test_retry_rejects_changed_or_missing_evidence_before_launch(tmp_path, damag
         source.write_text(source.read_text() + "infl:{new.inp}\n")
     elif damage == "tool":
         Path(paths.phits_executable_path).write_bytes(b"changed")
-    elif damage == "library":
-        (Path(paths.phits_root_folder) / "synthetic-library").write_bytes(b"changed")
     elif damage == "prep":
         (root / "analysis/phits_generation_summary.json").write_text("{}")
     elif damage == "manifest":
@@ -149,6 +149,143 @@ def test_retry_rejects_changed_or_missing_evidence_before_launch(tmp_path, damag
         run_segments(workspace_root=root, paths=paths, run_incomplete=True,
             runner=lambda *a, **kw: pytest.fail("invalid retry launched"))
     assert (summary_path(root).read_bytes() if summary_path(root).exists() else None) == before
+
+
+def test_batch_control_edit_is_not_artifact_mutation_or_completion_evidence(tmp_path):
+    root, manifest, paths, original = partial(tmp_path)
+    first = original["segments"][0]
+    batch_path = Path(first["batch_out_path"])
+    assert batch_path.read_text(encoding="utf-8").startswith(
+        "0 <--- number of remaining batches")
+    assert batch_path.resolve().relative_to(root).as_posix() not in {
+        item["path"] for item in first["output_evidence"]
+    }
+    batch_path.write_text(
+        "-1 <--- number of remaining batches\n", encoding="utf-8")
+    plan = plan_incomplete(root, paths)
+    calls = []
+    result = run_segments(
+        workspace_root=root, paths=paths, run_incomplete=True,
+        expected_summary_sha256=plan["source_sha256"],
+        runner=runner_for(root, calls=calls),
+    )
+    assert result["stage_status"] == "success" and calls == ["seg_002"]
+    validate_segment_execution_for_downstream(root, manifest, result)
+
+
+def test_historical_full_installation_binding_retries_under_bounded_scope(tmp_path):
+    from dicomxphits.sumtally_inputs import file_sha256
+
+    root, manifest, paths, original = partial(tmp_path)
+    tool = original["execution_binding"]["tool"]
+    tool.pop("scope")
+    library = Path(paths.phits_root_folder) / "synthetic-library"
+    tool["files"] = [{"path": library.name, "sha256": file_sha256(library)}]
+    first = original["segments"][0]
+    batch_path = Path(first["batch_out_path"])
+    first["output_evidence"].append({
+        "path": batch_path.relative_to(root).as_posix(),
+        "sha256": file_sha256(batch_path),
+    })
+    summary_path(root).write_text(json.dumps(original), encoding="utf-8")
+    library.write_bytes(b"changed outside bounded identity")
+    batch_path.write_text(
+        "-1 <--- number of remaining batches\n", encoding="utf-8")
+    plan = plan_incomplete(root, paths)
+    result = run_segments(
+        workspace_root=root, paths=paths, run_incomplete=True,
+        expected_summary_sha256=plan["source_sha256"], runner=runner_for(root),
+    )
+    assert result["execution_binding"]["tool"]["scope"] == "selected_executable"
+    assert "files" not in result["execution_binding"]["tool"]
+    validate_segment_execution_for_downstream(root, manifest, result)
+
+
+def test_historical_batch_digest_is_ignored_by_downstream_validation(tmp_path):
+    from dicomxphits.sumtally_inputs import file_sha256
+
+    root, manifest, paths = workspace_fixture(tmp_path, segment_count=1)
+    result = run_segments(workspace_root=root, paths=paths, runner=runner_for(root))
+    tool = result["execution_binding"]["tool"]
+    tool.pop("scope")
+    library = Path(paths.phits_root_folder) / "synthetic-library"
+    tool["files"] = [{"path": library.name, "sha256": file_sha256(library)}]
+    segment = result["segments"][0]
+    batch_path = Path(segment["batch_out_path"])
+    segment["output_evidence"].append({
+        "path": batch_path.relative_to(root).as_posix(),
+        "sha256": file_sha256(batch_path),
+    })
+    summary_path(root).write_text(json.dumps(result), encoding="utf-8")
+    batch_path.write_text(
+        "-1 <--- number of remaining batches\n", encoding="utf-8")
+    validate_segment_execution_for_downstream(root, manifest, result)
+
+
+@pytest.mark.parametrize("malformed", [
+    "not evidence",
+    {},
+    {"path": "batch"},
+    {"path": "batch", "sha256": "invalid"},
+    {"path": "batch", "sha256": "0" * 64, "extra": True},
+])
+def test_malformed_extra_evidence_is_not_filtered_as_historical_batch(
+    tmp_path, malformed,
+):
+    root, _, paths = workspace_fixture(tmp_path, segment_count=1)
+    result = run_segments(workspace_root=root, paths=paths, runner=runner_for(root))
+    batch_relative = Path(result["segments"][0]["batch_out_path"]).relative_to(root).as_posix()
+    if isinstance(malformed, dict) and malformed.get("path") == "batch":
+        malformed = {**malformed, "path": batch_relative}
+    result["segments"][0]["output_evidence"].append(malformed)
+    with pytest.raises(ValueError, match="artifacts changed"):
+        validate_results(root, result)
+
+
+def test_historical_secondary_error_requirement_is_comparison_compatible(tmp_path):
+    root, manifest, paths = workspace_fixture(tmp_path)
+    first_source = root / manifest["segments"][0]["phits_input_path"]
+    pdd = first_source.parent / "deposit-pdd.out"
+    pdd_error = pdd.with_name("deposit-pdd_err.out")
+    first_source.write_text(
+        first_source.read_text()
+        + f"[ T-Deposit ]\n  file = {pdd.relative_to(root).as_posix()}\n",
+        encoding="utf-8",
+    )
+    base_runner = runner_for(root, fail={"seg_002"})
+
+    def runner_with_secondary(command, **kwargs):
+        result = base_runner(command, **kwargs)
+        source = kwargs["input"].strip().removeprefix("file = ")
+        if Path(source).parent.name == "seg_001":
+            staging = Path(kwargs["cwd"])
+            (staging / pdd.relative_to(root)).write_text("pdd with r.err\n")
+            (staging / pdd_error.relative_to(root)).write_text("legacy companion\n")
+        return result
+
+    original = run_segments(workspace_root=root, paths=paths, runner=runner_with_secondary)
+    assert original["status"] == "failed"
+    contract = original["execution_binding"]["segments"][0]
+    relative_error = pdd_error.relative_to(root).as_posix()
+    assert relative_error in contract["writes"]
+    assert relative_error not in contract["required_outputs"]
+    contract["required_outputs"].append(relative_error)
+    contract["required_outputs"].sort()
+    summary_path(root).write_text(json.dumps(original), encoding="utf-8")
+
+    plan = plan_incomplete(root, paths)
+    result = run_segments(
+        workspace_root=root,
+        paths=paths,
+        run_incomplete=True,
+        expected_summary_sha256=plan["source_sha256"],
+        runner=runner_for(root),
+    )
+    assert result["status"] == "success"
+    assert any(
+        item["path"] == relative_error for item in result["segments"][0]["output_evidence"]
+    )
+    validate_segment_execution_for_downstream(root, manifest, result)
 
 
 def test_repeated_failure_retains_verified_segment_and_blocks_downstream(tmp_path):
@@ -206,7 +343,8 @@ def test_concurrent_owner_blocks_another_thread_without_changing_evidence(tmp_pa
     assert summary_path(root).read_bytes() == before
 
 
-def test_lock_is_retained_by_child_after_controller_exits(tmp_path):
+@pytest.mark.parametrize("launcher", ["run", "popen"])
+def test_lock_is_retained_by_child_after_controller_exits(tmp_path, launcher):
     root = tmp_path / "workspace"
     root.mkdir()
     child_done = tmp_path / "done"
@@ -218,11 +356,23 @@ def test_lock_is_retained_by_child_after_controller_exits(tmp_path):
         "import os,sys,threading,time,pathlib",
         "from dicomxphits.workspace_execution import WorkspaceExecutionLease",
         "lease=WorkspaceExecutionLease(pathlib.Path(sys.argv[1])); lease.__enter__()",
-        "threading.Thread(target=lambda: lease.run([sys.executable,'-c',sys.argv[4],sys.argv[2],sys.argv[3]])).start()",
+        "def launch():",
+        "    result=getattr(lease,sys.argv[5])([sys.executable,'-c',sys.argv[4],sys.argv[2],sys.argv[3]])",
+        "    if hasattr(result,'wait'): result.wait()",
+        "threading.Thread(target=launch).start()",
         "while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)",
         "os._exit(0)",
     ])
-    process = subprocess.Popen([sys.executable, "-c", controller, str(root), str(child_done), str(ready), child])
+    process = subprocess.Popen([
+        sys.executable,
+        "-c",
+        controller,
+        str(root),
+        str(child_done),
+        str(ready),
+        child,
+        launcher,
+    ])
     try:
         process.wait(timeout=10)
         assert ready.exists()

@@ -86,9 +86,10 @@ def write_workspace(tmp_path, *segments):
 
 
 def paths():
+    executable = Path(sys.executable).resolve()
     return ExternalToolPaths(
-        phits_root_folder="/unused/phits-root",
-        phits_executable_path="/opt/phits/bin/phits",
+        phits_root_folder=str(executable.parent),
+        phits_executable_path=str(executable),
         phits2dicom_executable_path=None,
     )
 
@@ -135,7 +136,7 @@ def fake_runner_for(
     pending = list(outputs)
 
     def fake_runner(command, *, input, cwd, capture_output, text, shell, env):
-        assert command == ["/opt/phits/bin/phits"]
+        assert command == [str(Path(sys.executable).resolve())]
         execution_root = Path(cwd)
         assert execution_root != workspace
         execution_root.resolve().relative_to(workspace.resolve())

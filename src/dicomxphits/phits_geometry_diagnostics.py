@@ -84,7 +84,9 @@ def parse_phits_geometry_diagnostics_file(path: Path) -> dict[str, Any]:
         raise PhitsGeometryDiagnosticsError(
             f"PHITS geometry diagnostic output is missing: {path.name}"
         )
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
+    from dicomxphits.sumtally_inputs import checked_text_lines
+
+    with checked_text_lines(path, errors="replace") as stream:
         return parse_phits_geometry_diagnostics(stream)
 
 

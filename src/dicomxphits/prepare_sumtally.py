@@ -463,8 +463,27 @@ def generate_sumtally(
     base_input: Path | None = None,
     command_argv: list[str] | None = None,
 ) -> dict[str, Any]:
-    with WorkspaceOutputGuard(workspace_root):
-        pass
+    root = workspace_root.expanduser().resolve()
+    # The guard's execution lease spans the current-result gate, all generated
+    # inputs, revalidation, and terminal publication.
+    with WorkspaceOutputGuard(root):
+        return _generate_sumtally_locked(
+            workspace_root=root,
+            paths=paths,
+            output_name=output_name,
+            base_input=base_input,
+            command_argv=command_argv,
+        )
+
+
+def _generate_sumtally_locked(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    output_name: str = DEFAULT_SUMTALLY_OUTPUT_NAME,
+    base_input: Path | None = None,
+    command_argv: list[str] | None = None,
+) -> dict[str, Any]:
     workspace_root = workspace_root.resolve()
     generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
     try:
@@ -651,6 +670,8 @@ def expected_segment_outputs(workspace_root: Path, manifest: dict[str, Any]) -> 
 
 
 def validate_segment_outputs_exist(workspace_root: Path, manifest: dict[str, Any]) -> None:
+    from dicomxphits.segment_preflight import require_finished_preflight
+    require_finished_preflight(workspace_root)
     missing = [path for path in expected_segment_outputs(workspace_root, manifest) if not path.is_file()]
     if missing:
         joined = ", ".join(str(path) for path in missing)
@@ -780,8 +801,31 @@ def run_sumtally(
     command_argv: list[str] | None = None,
     runner=subprocess.run,
 ) -> dict[str, Any]:
-    with WorkspaceOutputGuard(workspace_root):
-        pass
+    from dicomxphits.workspace_execution import WorkspaceExecutionLease
+
+    root = workspace_root.expanduser().resolve()
+    # Keep downstream eligibility, generated-input verification, PHITS launch,
+    # and terminal evidence under one ownership interval.
+    with WorkspaceOutputGuard(root):
+        with WorkspaceExecutionLease(root) as lease:
+            with lease.invocation():
+                return _run_sumtally_locked(
+                    workspace_root=root,
+                    paths=paths,
+                    sum_input=sum_input,
+                    command_argv=command_argv,
+                    runner=lease.run if runner is subprocess.run else runner,
+                )
+
+
+def _run_sumtally_locked(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    sum_input: Path | None = None,
+    command_argv: list[str] | None = None,
+    runner=subprocess.run,
+) -> dict[str, Any]:
     workspace_root = workspace_root.resolve()
     execution_summary_path = workspace_root / "analysis" / "sumtally_execution_summary.json"
     phits_started = False

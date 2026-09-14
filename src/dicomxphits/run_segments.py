@@ -29,7 +29,7 @@ from dicomxphits.phits_geometry_diagnostics import (
     parse_phits_geometry_diagnostics_file,
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError, WorkspaceOutputGuard
-from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
+from dicomxphits.sumtally_inputs import checked_text_lines, file_sha256, manifest_sha256
 
 
 SUMMARY_RELATIVE_PATH = Path("analysis") / "segment_execution_summary.json"
@@ -56,7 +56,7 @@ PHITS_OUTPUT_PATTERN = re.compile(
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
+    with checked_text_lines(path) as f:
         data = json.load(f)
     if not isinstance(data, dict):
         raise ValueError(f"JSON root must be an object: {path}")
@@ -358,6 +358,8 @@ def collect_root_outputs(
     *,
     guard: WorkspaceOutputGuard,
 ) -> dict[str, str | None]:
+    from dicomxphits.segment_preflight import checkpoint
+
     guard.mkdir(output_dir)
     collected: dict[str, str | None] = {"batch_out_path": None, "phits_out_path": None}
     batch_source = execution_root / ROOT_BATCH_OUT
@@ -368,7 +370,7 @@ def collect_root_outputs(
                 f"PHITS root output is not a regular file: {batch_source}"
             )
         batch_target = output_dir / ROOT_BATCH_OUT
-        guard.copy_file(batch_source, batch_target)
+        guard.copy_file(batch_source, batch_target, checkpoint=checkpoint)
         collected["batch_out_path"] = str(batch_target)
     phits_source = execution_root / ROOT_PHITS_OUT
     if os.path.lexists(phits_source):
@@ -379,7 +381,7 @@ def collect_root_outputs(
             )
         phits_target = output_dir / ROOT_PHITS_OUT
         guard.prepare(phits_target)
-        guard.copy_file(phits_source, phits_target)
+        guard.copy_file(phits_source, phits_target, checkpoint=checkpoint)
         collected["phits_out_path"] = str(phits_target)
     return collected
 
@@ -415,7 +417,7 @@ def phits_launcher_input(
 
 def phits_environment(phits_input: Path) -> dict[str, str]:
     environment = os.environ.copy()
-    with phits_input.open("r", encoding="utf-8", errors="replace") as stream:
+    with checked_text_lines(phits_input, errors="replace") as stream:
         for line in stream:
             stripped = line.strip()
             if stripped.startswith("["):
@@ -462,7 +464,7 @@ def phits_staging_contract(
             raise FileNotFoundError(f"PHITS input dependency not found: {source}")
         seen_inputs.add(source_resolved)
         inputs.append(source)
-        with source.open("r", encoding="utf-8", errors="replace") as stream:
+        with checked_text_lines(source, errors="replace") as stream:
             for line in stream:
                 include_match = PHITS_INCLUDE_PATTERN.match(line)
                 if include_match is not None:
@@ -519,6 +521,8 @@ def stage_phits_segment_run(
     expected_output: Path,
     guard: WorkspaceOutputGuard,
 ) -> tuple[Path, Path, list[Path]]:
+    from dicomxphits.segment_preflight import checkpoint
+
     inputs, outputs = phits_staging_contract(
         workspace_root=workspace_root,
         phits_input=phits_input,
@@ -534,7 +538,12 @@ def stage_phits_segment_run(
     )
     for source in inputs:
         relative = source.resolve().relative_to(workspace_root.resolve())
-        guard.copy_file(source, execution_root / relative, overwrite=False)
+        guard.copy_file(
+            source,
+            execution_root / relative,
+            overwrite=False,
+            checkpoint=checkpoint,
+        )
     for output in outputs:
         relative = output.resolve().relative_to(workspace_root.resolve())
         guard.mkdir((execution_root / relative).parent)
@@ -552,7 +561,10 @@ def run_one_segment(
     runner=subprocess.run,
     input_binding: list[dict[str, str]] | None = None,
     observation_context=None,
+    on_child_finished: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
+    from dicomxphits.segment_preflight import checkpoint
+
     phits_input = resolve_workspace_file(
         workspace_root,
         str(segment.get("phits_input_path") or ""),
@@ -602,16 +614,21 @@ def run_one_segment(
             from dicomxphits.phits_observation import make_observer
             staged_dose = execution_root / expected_output.resolve().relative_to(workspace_root.resolve())
             observer = make_observer(workspace_root, execution_root, staged_input, staged_dose, observation_context)
+            def finished_runner(*args, **kwargs):
+                completed = runner(*args, **kwargs)
+                if on_child_finished is not None:
+                    on_child_finished()
+                return completed
             def observing_runner(*args, **kwargs):
                 if observer is None:
-                    return runner(*args, **kwargs)
+                    return finished_runner(*args, **kwargs)
                 try:
                     observer.start()
                 except Exception:
                     observer.close(guard)
-                    return runner(*args, **kwargs)
+                    return finished_runner(*args, **kwargs)
                 try:
-                    return runner(*args, stdout_observer=observer.feed_stdout,
+                    return finished_runner(*args, stdout_observer=observer.feed_stdout,
                         _observation_poll=lambda: observer.publish(guard), **kwargs)
                 finally:
                     observer.close(guard)
@@ -670,6 +687,7 @@ def run_one_segment(
                         staged_output,
                         output,
                         overwrite=output.resolve() != expected_output.resolve(),
+                        checkpoint=checkpoint,
                     )
             guard.write_text(stdout_path, result.stdout or "")
             guard.write_text(stderr_path, result.stderr or "")
@@ -788,11 +806,36 @@ def run_segments(
     run_incomplete: bool = False,
     expected_summary_sha256: str | None = None,
     stop_control=None,
+    preflight_nonce: str | None = None,
 ) -> dict[str, Any]:
     from dicomxphits.segment_retry import plan_incomplete
     from dicomxphits.workspace_execution import WorkspaceExecutionLease
 
     root = workspace_root.expanduser().resolve()
+    if preflight_nonce is not None:
+        from dicomxphits.segment_preflight import Session, PreparationCancelled, read_receipt
+        run_id = str(run_id_factory())
+        # The outer lease spans preparation, cancellation and terminal receipt.
+        with WorkspaceExecutionLease(root):
+            with WorkspaceOutputGuard(root):
+                read_receipt(root)  # Never overwrite malformed or unknown-version evidence.
+                with Session(root, preflight_nonce, run_id, stop_control) as preparation:
+                    try:
+                        preparation.checkpoint()
+                        result = run_segments(workspace_root=root, paths=paths,
+                            command_argv=command_argv, runner=runner,
+                            monotonic_clock=monotonic_clock, utc_now=utc_now,
+                            run_id_factory=lambda: run_id, summary_writer=summary_writer,
+                            run_incomplete=run_incomplete,
+                            expected_summary_sha256=expected_summary_sha256,
+                            stop_control=stop_control)
+                        preparation.finish(result)
+                        return result
+                    except PreparationCancelled:
+                        return dict(preparation.receipt)
+                    finally:
+                        if stop_control is not None:
+                            stop_control.close()
     # Rejected retry preflight must not replace the previous execution summary.
     if run_incomplete:
         with WorkspaceExecutionLease(root, create=False) as lease:
@@ -820,7 +863,11 @@ def _run_segments_locked(
     *, workspace_root, paths, command_argv, runner, monotonic_clock, utc_now,
     run_id_factory, summary_writer, retry_plan=None, stop_control=None,
 ):
-    from dicomxphits.segment_retry import capture_binding, result_evidence, validate_binding, validate_results
+    from dicomxphits.segment_retry import (
+        bindings_match, capture_binding, result_evidence, validate_binding,
+        validate_results, validate_selected_executable,
+    )
+    from dicomxphits.segment_preflight import checkpoint
     workspace_root = workspace_root.expanduser().resolve()
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
@@ -867,7 +914,14 @@ def _run_segments_locked(
         if stop_control is None:
             return
         from dicomxphits.segment_stop import valid_request
+        from dicomxphits.segment_preflight import current_session
         for request in stop_control.take():
+            preparation = current_session()
+            if preparation is not None and preparation.handle_cancel(request):
+                continue
+            if preparation is not None and not preparation.receipt["child_committed"]:
+                stop_control.reject()
+                continue
             if (not valid_request(request, workspace=str(workspace_root), run_id=run_id)
                 or execution_binding is None or execution_binding["retry_unavailable"]):
                 stop_control.reject()
@@ -890,6 +944,10 @@ def _run_segments_locked(
         return run_while_polling(runner, poll, *args, **kwargs)
 
     try:
+        from dicomxphits.segment_preflight import current_session
+        preparation = current_session()
+        if preparation is not None:
+            preparation.poll = poll_stop
         require_execution_paths(paths)
         manifest, _manifest_path = load_manifest(workspace_root)
         manifest_digest = manifest_sha256(manifest)
@@ -937,7 +995,8 @@ def _run_segments_locked(
             active_segments = [(i, s) for i, s in active_segments if not segment_summaries[i]["retained"]]
 
         execution_binding = capture_binding(workspace_root, manifest, paths)
-        if retry_plan is not None and execution_binding != retry_plan["summary"]["execution_binding"]:
+        if (retry_plan is not None
+            and not bindings_match(execution_binding, retry_plan["summary"]["execution_binding"])):
             raise ValueError("Execution conditions changed after retry preview")
         contracts = {s["segment_id"]: s for s in execution_binding["segments"]}
         with WorkspaceOutputGuard(workspace_root) as guard:
@@ -975,20 +1034,33 @@ def _run_segments_locked(
                 history = guard.make_staging_directory(
                     workspace_root / "analysis" / "segment_attempt_history", prefix="attempt-")
                 preserved = history / "summary.json"
-                guard.copy_file(summary_file, preserved, overwrite=False)
+                guard.copy_file(
+                    summary_file,
+                    preserved,
+                    overwrite=False,
+                    checkpoint=checkpoint,
+                )
                 if file_sha256(preserved) != retry_plan["source_sha256"]:
                     raise ValueError("Retry source changed before preservation")
                 parent_attempt = {"path": preserved.relative_to(workspace_root).as_posix(),
                     "sha256": retry_plan["source_sha256"]}
 
-        persist("running")
+        if preparation is None:
+            persist("running")
         for summary_index, segment in active_segments:
+            if preparation is not None:
+                preparation.publish("verifying", force=True)
             validate_binding(workspace_root, manifest, execution_binding, paths)
             validate_results(workspace_root, {"execution_binding": execution_binding,
                 "segments": segment_summaries})
             poll_stop()
             if stop_requested is not None:
                 break
+            # Result verification may hash large retained outputs. Recheck the
+            # bounded executable after that work, at the child-commit boundary.
+            validate_selected_executable(workspace_root, execution_binding, paths)
+            if preparation is not None:
+                preparation.commit()
             segment_started_tick = float(monotonic_clock())
             segment_started_at = _utc_text(utc_now())
             prior = segment_summaries[summary_index]
@@ -1015,6 +1087,10 @@ def _run_segments_locked(
                 runner=controlled_runner if stop_control is not None or observe_native else runner,
                 input_binding=contracts[prior["segment_id"]]["inputs"],
                 observation_context=live_summary if observe_native else None,
+                on_child_finished=(
+                    (lambda: preparation.publish("verifying", force=True))
+                    if preparation is not None else None
+                ),
             )
             validate_binding(workspace_root, manifest, execution_binding, paths)
             result.update(retained=False, producer_run_id=run_id)
@@ -1099,6 +1175,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--run-incomplete", action="store_true")
     parser.add_argument("--expected-summary-sha256", default=None)
     parser.add_argument("--control-stdin", action="store_true")
+    parser.add_argument("--preflight-nonce", default=None)
     return parser
 
 
@@ -1123,6 +1200,7 @@ def main(argv: list[str] | None = None) -> int:
             run_incomplete=args.run_incomplete,
             expected_summary_sha256=args.expected_summary_sha256,
             stop_control=control,
+            preflight_nonce=args.preflight_nonce or uuid.uuid4().hex,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1131,6 +1209,10 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if control is not None:
             control.close()
+    from dicomxphits.segment_preflight import SCHEMA as PREFLIGHT_SCHEMA, RELATIVE_PATH
+    if summary.get("schema_version") == PREFLIGHT_SCHEMA:
+        print(workspace_root / RELATIVE_PATH)
+        return 5 if summary.get("phase") == "cancelled_before_launch" else 2
     print(summary_path(workspace_root))
     return 0 if summary["status"] == "success" else 4 if summary["status"] == "stopped" else 3
 

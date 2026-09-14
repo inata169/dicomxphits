@@ -75,6 +75,7 @@ DEFAULT_CT2PHITS_TIMEOUT_SECONDS = 300.0
 RTDOSE_NOT_PREPARED = "not_prepared"
 RTDOSE_PREPARED = "prepared"
 RTDOSE_COMPLETED = "completed"
+RTDOSE_PHITS_INCOMPLETE = "phits_incomplete"
 RTDOSE_PREPARE_SUMMARY_SHA256_FIELD = "rtdose_prepare_summary_sha256"
 RUNTIME_SETTING_DEFAULTS = {
     "maxcas": str(DEFAULT_SEGMENT_MAXCAS),
@@ -853,6 +854,7 @@ def format_segment_progress(
     process_active: bool,
     live_elapsed_seconds: float | None = None,
     now: datetime | None = None,
+    verification_pending: bool = False,
 ) -> str | None:
     try:
         schema = validate_segment_execution_summary(summary, require_success=False)
@@ -889,12 +891,13 @@ def format_segment_progress(
         return (f"User stopped; validated {completed}/{total}; remaining {total - completed}; "
             f"elapsed {elapsed_text}. Use Run incomplete segments. Sumtally remains disabled.")
     if summary.get("stop_requested") is not None:
-        return (f"Stop pending; finishing the committed segment; validated {completed}/{total}; "
+        phase = "verifying results" if verification_pending or summary.get("current_segment") is None else "finishing the committed segment"
+        return (f"Stop pending; {phase}; validated {completed}/{total}; "
             f"elapsed {elapsed_text}. No stop-time estimate. Sumtally remains disabled.")
 
     current = summary.get("current_segment")
-    current_text = "preparing the first segment"
-    if isinstance(current, Mapping):
+    current_text = "verifying execution evidence" if verification_pending else "preparing the first segment"
+    if isinstance(current, Mapping) and not verification_pending:
         raw_identifier = str(current.get("segment_id") or "unknown")
         identifier = "".join(
             character if character.isprintable() and character not in "\r\n" else "?"
@@ -1208,6 +1211,11 @@ def _execution_output_is_current(
 
 
 def rtdose_stage_state(workspace_root: Path) -> str:
+    from dicomxphits.segment_preflight import require_finished_preflight
+    try:
+        require_finished_preflight(workspace_root)
+    except (OSError, TypeError, ValueError):
+        return RTDOSE_PHITS_INCOMPLETE
     prepare_path = (
         workspace_root / stage_by_key("prepare_rtdose").summary_relative_path
     )
@@ -1238,6 +1246,10 @@ def rtdose_action_enabled(
     *,
     allow_overwrite: bool = False,
 ) -> bool:
+    if state == RTDOSE_PHITS_INCOMPLETE and stage_key in {
+        "generate_sumtally", "run_sumtally", "prepare_rtdose", "run_rtdose", "recover_rtdose"
+    }:
+        return False
     if stage_key == "prepare_rtdose":
         return state == RTDOSE_NOT_PREPARED or (
             state in {RTDOSE_PREPARED, RTDOSE_COMPLETED}
@@ -1257,6 +1269,8 @@ def successful_nav_status(stage_key: str) -> str:
 
 
 def rtdose_nav_status(state: str) -> str:
+    if state == RTDOSE_PHITS_INCOMPLETE:
+        return "PHITS incomplete"
     if state == RTDOSE_COMPLETED:
         return "Completed"
     if state == RTDOSE_PREPARED:
@@ -1291,6 +1305,9 @@ def run_stage(
     adapter = control_client.run if stage_key == "run_segments" and control_client is not None else runner
     result = adapter(command, cwd=cwd, capture_output=True, text=True, shell=False)
     summary_path = workspace / spec.summary_relative_path
+    if stage_key == "run_segments" and result.returncode == 5:
+        from dicomxphits.segment_preflight import RELATIVE_PATH
+        summary_path = workspace / RELATIVE_PATH
     return StageResult(
         stage_key=stage_key,
         command=command,
@@ -2061,6 +2078,10 @@ def _build_gui() -> int:
     workspace_selection_controls = []
     phits_control = None
     phits_stop_sent = False
+    phits_cancel_sent = False
+    phits_preflight = None
+    from dicomxphits.segment_preflight import ReceiptTracker
+    phits_preflight_tracker = ReceiptTracker()
     phits_stop_status = tk.StringVar(value="Stop unavailable until an owned retry-capable run starts.")
 
     def values_snapshot() -> dict[str, str]:
@@ -2079,12 +2100,24 @@ def _build_gui() -> int:
             and progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path)
             and stop_available(phits_progress_validation_summary))
 
+    def cancel_button_ready() -> bool:
+        return bool(execution_guard.active_stage == "run_segments"
+            and phits_control is not None and phits_control.process is not None
+            and not phits_cancel_sent and phits_preflight is not None
+            and not phits_preflight["child_committed"]
+            and phits_preflight["phase"] in {"preparing", "verifying"}
+            and progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path))
+
     def refresh_action_button_states() -> None:
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
+        if rtdose_state == RTDOSE_PHITS_INCOMPLETE or nav_status["rtdose"].get() == "PHITS incomplete":
+            nav_status["rtdose"].set(rtdose_nav_status(rtdose_state))
         for stage_key, button in action_buttons.items():
             if stage_key == "stop_segments":
                 enabled = stop_button_ready()
+            elif stage_key == "cancel_preparation":
+                enabled = cancel_button_ready()
             elif stage_key == "retry_segments":
                 candidate = read_summary(Path(values["workspace_root"].get()) / "analysis/segment_execution_summary.json")
                 enabled = bool(not busy and tool_profile_resolution.ready_for_stage("run_segments")
@@ -2107,6 +2140,7 @@ def _build_gui() -> int:
                     not busy
                     and recovery_inspection is not None
                     and recovery_inspection.can_create_rtdose
+                    and rtdose_action_enabled("recover_rtdose", rtdose_state)
                     and all(
                         tool_profile_resolution.ready_for_stage(key)
                         for key in sequence
@@ -3413,6 +3447,7 @@ def _build_gui() -> int:
         )
 
     def refresh_phits_progress() -> None:
+        nonlocal phits_preflight
         nonlocal phits_progress_run_id
         nonlocal phits_progress_anchor_key
         nonlocal phits_progress_anchor_elapsed
@@ -3433,6 +3468,32 @@ def _build_gui() -> int:
             return
         summary = read_summary(phits_progress_summary_path)
         workspace_root = phits_progress_summary_path.parent.parent
+        from dicomxphits.segment_preflight import read_receipt
+        try:
+            receipt = read_receipt(workspace_root, nonce=phits_control.nonce)
+            phits_preflight = phits_preflight_tracker.accept(
+                receipt, root=workspace_root, nonce=phits_control.nonce)
+        except (OSError, ValueError, TypeError):
+            phits_preflight = None
+        cancel_button = action_buttons.get("cancel_preparation")
+        if cancel_button is not None:
+            cancel_button.state(["!disabled"] if cancel_button_ready() else ["disabled"])
+        if phits_preflight is not None:
+            phits_progress_run_id = phits_preflight["run_id"]
+            if not phits_preflight["child_committed"]:
+                phits_progress_status.set(
+                    f"PHITS not started; {phits_preflight['phase']}; "
+                    f"scanned {phits_preflight['scanned_files']} files / "
+                    f"{phits_preflight['scanned_bytes']} bytes; "
+                    f"elapsed {_format_progress_duration(phits_preflight['elapsed_seconds'])}. "
+                    "No completion-time estimate. Sumtally remains disabled.")
+                phits_observation_status.set("Observation unavailable: no PHITS child committed.")
+                if phits_preflight["phase"] == "cancelled_before_launch":
+                    phits_stop_status.set("Preparation cancellation recorded; waiting for controller exit.")
+                elif not phits_cancel_sent:
+                    phits_stop_status.set("Cancel preparation is available before the first PHITS launch.")
+                root.after(250, refresh_phits_progress)
+                return
         (
             selected,
             phits_progress_validation_summary,
@@ -3466,6 +3527,7 @@ def _build_gui() -> int:
                 selected,
                 process_active=True,
                 live_elapsed_seconds=live_elapsed,
+                verification_pending=phits_preflight is not None and phits_preflight["phase"] == "verifying",
             )
             if display is not None:
                 phits_progress_status.set(display)
@@ -3474,6 +3536,15 @@ def _build_gui() -> int:
             elif not phits_stop_sent:
                 phits_stop_status.set("Stop after current segment is available." if stop_available(selected)
                     else "Stop unavailable: this invocation lacks supported retry/control evidence.")
+            if phits_preflight is not None and phits_preflight["phase"] == "verifying":
+                phits_progress_status.set(
+                    f"{display or ''} Scanned {phits_preflight['scanned_files']} files / "
+                    f"{phits_preflight['scanned_bytes']} bytes. Sumtally remains disabled.")
+                if selected.get("stop_requested") is not None:
+                    phits_stop_status.set("Stop acknowledged; required result verification remains pending.")
+            if (phits_preflight is not None and phits_preflight["cancel_rejected_request_id"] is not None
+                and not phits_stop_sent and selected.get("stop_requested") is None):
+                phits_stop_status.set("Preparation cancellation rejected: a segment was committed. Use Stop after current segment.")
         button = action_buttons.get("stop_segments")
         if button is not None:
             button.state(["!disabled"] if stop_button_ready() else ["disabled"])
@@ -3551,6 +3622,22 @@ def _build_gui() -> int:
             set_busy(None)
             return
         if spec.key == "run_segments":
+            if result.return_code == 5:
+                from dicomxphits.segment_preflight import validate_gui_cancellation
+                try:
+                    receipt = validate_gui_cancellation(result.summary,
+                        root=phits_progress_summary_path.parent.parent,
+                        nonce=phits_control.nonce, run_id=phits_progress_run_id,
+                        request_id=phits_control.cancel_request_id)
+                except (ValueError, TypeError, OSError) as exc:
+                    finish_stage_error(spec, str(exc), validation=False)
+                    return
+                nav_status[stage_to_nav[spec.key]].set("Preparation cancelled")
+                phits_progress_status.set("Preparation cancelled; no PHITS launched. Sumtally remains disabled.")
+                phits_stop_status.set("A new explicit preparation check is required before execution.")
+                append("PHITS preparation cancelled before first launch; no calculation result was produced.")
+                set_busy(None)
+                return
             if verified_user_stop(result, expected_run_id=phits_progress_run_id,
                 prior_run_id=phits_progress_prior_run_id):
                 finish_phits_progress(result.summary)
@@ -3627,6 +3714,7 @@ def _build_gui() -> int:
 
     def start_stage(stage_key: str, *, retry_plan: dict | None = None) -> None:
         nonlocal phits_control, phits_stop_sent
+        nonlocal phits_cancel_sent, phits_preflight, phits_preflight_tracker
         nonlocal phits_progress_run_id
         nonlocal phits_progress_prior_run_id
         nonlocal phits_progress_summary_path
@@ -3671,6 +3759,9 @@ def _build_gui() -> int:
             from dicomxphits.segment_stop import ControllerPipe
             phits_control = ControllerPipe()
             phits_stop_sent = False
+            phits_cancel_sent = False
+            phits_preflight = None
+            phits_preflight_tracker = ReceiptTracker()
             phits_stop_status.set("Waiting for owned stop-capable evidence.")
             phits_progress_summary_path = workspace / spec.summary_relative_path
             prior_summary = read_summary(phits_progress_summary_path)
@@ -3700,6 +3791,32 @@ def _build_gui() -> int:
             root.after(0, lambda: finish_stage_success(spec, result))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def request_preparation_cancel() -> None:
+        nonlocal phits_cancel_sent
+        if not cancel_button_ready():
+            return
+        client = phits_control
+        run_id = phits_preflight["run_id"]
+        workspace = str(phits_progress_summary_path.parent.parent.resolve())
+        phits_cancel_sent = True
+        phits_stop_status.set("Preparation cancellation sending; not yet acknowledged.")
+        refresh_action_button_states()
+
+        def send():
+            try:
+                client.send(workspace, run_id, cancel_preparation=True)
+                message = "Preparation cancellation sent; waiting for durable acknowledgement."
+            except (OSError, ValueError) as exc:
+                message = f"Preparation cancellation delivery failed: {exc}"
+            def delivered():
+                if (phits_control is client and execution_guard.active_stage == "run_segments"
+                    and progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path)
+                    and phits_preflight is not None and phits_preflight["run_id"] == run_id
+                    and phits_preflight["phase"] != "cancelled_before_launch"):
+                    phits_stop_status.set(message)
+            root.after(0, delivered)
+        threading.Thread(target=send, daemon=True).start()
 
     def request_segment_stop() -> None:
         nonlocal phits_stop_sent
@@ -3904,6 +4021,9 @@ def _build_gui() -> int:
     stop_button = ttk.Button(phits_frame, text="Stop after current segment", command=request_segment_stop)
     stop_button.grid(row=7, column=2, pady=(8, 0), sticky="e")
     action_buttons["stop_segments"] = stop_button
+    cancel_button = ttk.Button(phits_frame, text="Cancel preparation", command=request_preparation_cancel)
+    cancel_button.grid(row=7, column=1, pady=(8, 0), sticky="e")
+    action_buttons["cancel_preparation"] = cancel_button
     ttk.Label(phits_frame, textvariable=phits_stop_status, wraplength=760,
         style="Surface.TLabel").grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 0))
 

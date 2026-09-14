@@ -381,6 +381,8 @@ def validate_sumtally_manifest_binding(
     generation: dict[str, Any],
     execution: dict[str, Any],
 ) -> dict[str, Any]:
+    from dicomxphits.segment_preflight import require_finished_preflight
+    require_finished_preflight(workspace_root)
     manifest_path = workspace_root / "segments" / "segment_manifest.json"
     manifest = load_json_object(manifest_path)
     expected_normalization_evidence = plan_mu_normalization_evidence(manifest)
@@ -1192,6 +1194,43 @@ def prepare_rtdose(
     output_dicom_dose_unit: str = DEFAULT_OUTPUT_DICOM_DOSE_UNIT,
     command_argv: list[str] | None = None,
 ) -> dict[str, Any]:
+    root = workspace_root.expanduser().resolve()
+    # The guard's execution lease spans the Sumtally/current-result gate, all
+    # prepared inputs, revalidation, and terminal publication.
+    with WorkspaceOutputGuard(root):
+        return _prepare_rtdose_locked(
+            workspace_root=root,
+            paths=paths,
+            paths_config=paths_config,
+            template_dicom=template_dicom,
+            rtplan_path=rtplan_path,
+            ct_reference_dicom=ct_reference_dicom,
+            generated_ct_reference_dicom=generated_ct_reference_dicom,
+            smoke_dummy_ct_reference=smoke_dummy_ct_reference,
+            reference_dicom_for_identity=reference_dicom_for_identity,
+            phits_out=phits_out,
+            input_dose_unit=input_dose_unit,
+            output_dicom_dose_unit=output_dicom_dose_unit,
+            command_argv=command_argv,
+        )
+
+
+def _prepare_rtdose_locked(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    paths_config: dict[str, Any],
+    template_dicom: Path,
+    rtplan_path: Path | None = None,
+    ct_reference_dicom: Path | None = None,
+    generated_ct_reference_dicom: Path | None = None,
+    smoke_dummy_ct_reference: Path | None = None,
+    reference_dicom_for_identity: Path | None = None,
+    phits_out: Path | None = None,
+    input_dose_unit: str = DEFAULT_INPUT_DOSE_UNIT,
+    output_dicom_dose_unit: str = DEFAULT_OUTPUT_DICOM_DOSE_UNIT,
+    command_argv: list[str] | None = None,
+) -> dict[str, Any]:
     summary_path = prepare_summary_path(workspace_root)
     try:
         generation, execution = load_sumtally_summaries(workspace_root)
@@ -1497,6 +1536,29 @@ def run_phits2dicom(
 
 
 def run_rtdose(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    command_argv: list[str] | None = None,
+    runner=subprocess.Popen,
+) -> dict[str, Any]:
+    from dicomxphits.workspace_execution import WorkspaceExecutionLease
+
+    root = workspace_root.expanduser().resolve()
+    # Keep current-result validation, conversion, post-processing, and terminal
+    # publication under one ownership interval.
+    with WorkspaceOutputGuard(root):
+        with WorkspaceExecutionLease(root) as lease:
+            with lease.invocation():
+                return _run_rtdose_locked(
+                    workspace_root=root,
+                    paths=paths,
+                    command_argv=command_argv,
+                    runner=lease.popen if runner is subprocess.Popen else runner,
+                )
+
+
+def _run_rtdose_locked(
     *,
     workspace_root: Path,
     paths: ExternalToolPaths,

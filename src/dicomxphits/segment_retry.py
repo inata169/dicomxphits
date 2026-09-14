@@ -6,10 +6,15 @@ import json
 import os
 import re
 from copy import deepcopy
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from dicomxphits.safe_output import WorkspaceOutputGuard
-from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
+from dicomxphits.sumtally_inputs import (
+    checked_file_bytes,
+    checked_text_lines,
+    file_sha256,
+    manifest_sha256,
+)
 from dicomxphits.workspace_execution import LOCK_NAME, WorkspaceExecutionLease
 
 BINDING_SCHEMA = "dicomxphits_segment_execution_binding_v1"
@@ -42,12 +47,44 @@ def _evidence(root, paths):
              "sha256": file_sha256(path)} for path in sorted(set(paths))]
 
 
+def _is_link_or_reparse(path):
+    return (path.is_symlink()
+        or bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400))
+
+
+def _has_link_or_reparse_component(path):
+    candidate = Path(os.path.abspath(path))
+    try:
+        return any(
+            _is_link_or_reparse(component)
+            for component in (candidate, *candidate.parents)
+        )
+    except OSError:
+        return True
+
+
+def _selected_executable_evidence(root, paths):
+    executable = Path(paths.phits_executable_path or "")
+    installation = Path(paths.phits_root_folder or "")
+    if (not executable.is_absolute() or not installation.is_absolute()
+        or not executable.is_file() or not installation.is_dir()
+        or _has_link_or_reparse_component(executable)
+        or _has_link_or_reparse_component(installation)
+        or installation.resolve() == Path(installation.anchor)
+        or installation.resolve() == root or root in installation.resolve().parents):
+        return None
+    return {"root": str(installation.resolve()),
+        "executable": str(executable.resolve()),
+        "executable_sha256": file_sha256(executable),
+        "scope": "selected_executable"}
+
+
 def capture_binding(root, manifest, paths, *, include_runtime=True):
     """Capture actual staged dependencies; unavailable tool evidence forbids retry.
 
-The explicitly configured installation is the bounded runtime dependency set.
-No system lookup or executable-name search is performed. Workspace contents are
-bound separately and excluded from the installation digest when nested there.
+Only the explicitly selected executable is bound as runtime identity.  No
+system lookup, executable-name search, or installation-tree enumeration is
+performed. Workspace contents are bound separately.
 """
     api = _api()
     root = root.resolve()
@@ -72,11 +109,16 @@ bound separately and excluded from the installation digest when nested there.
                 workspace_root=root, phits_input=source, guard=guard)
             input_files.update(inputs)
             writes = api.persistent_segment_outputs(expected_output=expected, declared_outputs=outputs)
-            required = set(outputs + [api.phits_error_output_path(p) for p in outputs])
+            # PHITS may embed a secondary tally's relative error in its primary
+            # output (for example the PDD ``r.err`` column).  The established
+            # segment-success gate requires a separate error file only for the
+            # manifest-selected 3D output.
+            required = set(outputs + [api.phits_error_output_path(expected)])
             required.update([expected.parent / "phits_stdout.txt",
                 expected.parent / "phits_stderr.txt", expected.parent / api.ROOT_PHITS_OUT])
             for path in inputs:
-                text = path.read_text(encoding="utf-8", errors="strict")
+                with checked_text_lines(path) as lines:
+                    text = lines.read()
                 canonical_libpath = re.fullmatch(
                     r"\s*file\s*\(1\)\s*=\s*(.*?)\s+# PHITS install folder name\s*",
                     text,
@@ -116,6 +158,8 @@ bound separately and excluded from the installation digest when nested there.
         all_inputs = {p.resolve().relative_to(root).as_posix() for p in input_files}
         all_inputs.update(PREPARATION_FILES)
         all_inputs.update({"segments/segment_manifest.json", api.SUMMARY_RELATIVE_PATH.as_posix()})
+        from dicomxphits.segment_preflight import RELATIVE_PATH as PREFLIGHT_PATH
+        all_inputs.add(PREFLIGHT_PATH.as_posix())
         write_owner = {}
         for segment in segments:
             for relative in segment["writes"]:
@@ -129,35 +173,10 @@ bound separately and excluded from the installation digest when nested there.
         if all_inputs.intersection({api.ROOT_BATCH_OUT, api.ROOT_PHITS_OUT, LOCK_NAME}):
             raise ValueError("Segment cleanup collides with a bound input")
     tool = None
-    executable = Path(paths.phits_executable_path or "")
-    installation = Path(paths.phits_root_folder or "")
     if not include_runtime:
         pass
-    elif (not executable.is_absolute() or not installation.is_absolute()
-        or not executable.is_file() or not installation.is_dir()
-        or installation.resolve() == Path(installation.anchor)
-        or installation.resolve() == root or root in installation.resolve().parents):
+    elif (tool := _selected_executable_evidence(root, paths)) is None:
         unavailable.append("Configured PHITS installation identity is unavailable")
-    else:
-        files = []
-        installation = installation.resolve()
-        for directory, dirs, names in os.walk(installation, followlinks=False):
-            base = Path(directory)
-            for name in list(dirs):
-                candidate = base / name
-                if candidate.resolve() == root:
-                    dirs.remove(name)
-                elif candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
-                    raise ValueError("Linked runtime dependency is not supported")
-            for name in names:
-                candidate = base / name
-                if candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
-                    raise ValueError("Linked runtime dependency is not supported")
-                files.append({"path": candidate.relative_to(installation).as_posix(),
-                    "sha256": file_sha256(candidate)})
-        tool = {"root": str(installation), "executable": str(executable.resolve()),
-            "executable_sha256": file_sha256(executable),
-            "files": sorted(files, key=lambda item: item["path"])}
     return {"schema_version": BINDING_SCHEMA, "workspace_root": str(root),
         "manifest_sha256": manifest_sha256(manifest), "segment_ids": ids,
         "segments": segments, "preparation": prep, "tool": tool,
@@ -207,6 +226,91 @@ def check_binding_shape(binding):
                 raise ValueError("Duplicate segment output paths")
     if any(not isinstance(reason, str) for reason in binding["retry_unavailable"]):
         raise ValueError("Invalid retry availability")
+    tool = binding.get("tool")
+    if tool is not None:
+        if not isinstance(tool, dict):
+            raise ValueError("Malformed execution tool binding")
+        common = {"root", "executable", "executable_sha256"}
+        keys = set(tool)
+        historical = keys == common | {"files"}
+        bounded = keys == common | {"scope"}
+        if not historical and not bounded:
+            raise ValueError("Malformed execution tool binding")
+        if (not isinstance(tool.get("root"), str) or not tool["root"]
+            or not isinstance(tool.get("executable"), str) or not tool["executable"]
+            or re.fullmatch(r"[0-9a-f]{64}", str(tool.get("executable_sha256"))) is None):
+            raise ValueError("Malformed execution tool binding")
+        if historical:
+            files(tool["files"])
+        elif tool["scope"] != "selected_executable":
+            raise ValueError("Unsupported execution tool binding scope")
+
+
+def comparable_binding(binding):
+    """Return the bounded semantic view used for old/new evidence comparison."""
+    check_binding_shape(binding)
+    value = deepcopy(binding)
+    tool = value.get("tool")
+    if tool is not None:
+        # Historical v1 evidence included a full installation membership list.
+        # Keep that evidence immutable on disk, but do not enumerate or compare
+        # installation siblings when reading it under the bounded contract.
+        tool.pop("files", None)
+        tool["scope"] = "selected_executable"
+    return value
+
+
+def _required_error_companions(segment):
+    required = set(segment["required_outputs"])
+    writes = set(segment["writes"])
+    companions = set()
+    for value in required.intersection(writes):
+        path = PurePosixPath(value)
+        if not path.stem.endswith("_err"):
+            continue
+        primary = path.with_name(path.stem.removesuffix("_err") + path.suffix).as_posix()
+        if primary in required:
+            companions.add(value)
+    return companions
+
+
+def _normalize_historical_secondary_requirements(first, second):
+    first_by_id = {item["segment_id"]: item for item in first["segments"]}
+    second_by_id = {item["segment_id"]: item for item in second["segments"]}
+    for identifier in first_by_id.keys() & second_by_id.keys():
+        first_segment = first_by_id[identifier]
+        second_segment = second_by_id[identifier]
+        first_errors = _required_error_companions(first_segment)
+        second_errors = _required_error_companions(second_segment)
+        if len(first_errors) == 1 and first_errors < second_errors:
+            extras = second_errors - first_errors
+            second_segment["required_outputs"] = [
+                value for value in second_segment["required_outputs"] if value not in extras
+            ]
+        elif len(second_errors) == 1 and second_errors < first_errors:
+            extras = first_errors - second_errors
+            first_segment["required_outputs"] = [
+                value for value in first_segment["required_outputs"] if value not in extras
+            ]
+
+
+def bindings_match(first, second):
+    first = comparable_binding(first)
+    second = comparable_binding(second)
+    # Older v4/v5 bindings required an error companion for every declared
+    # tally. Comparison accepts only the extra secondary companions while
+    # preserving the single manifest-primary companion required today.
+    _normalize_historical_secondary_requirements(first, second)
+    return first == second
+
+
+def validate_selected_executable(root, binding, paths):
+    """Recheck only the selected executable at the child-commit boundary."""
+    check_binding_shape(binding)
+    expected = comparable_binding(binding).get("tool")
+    observed = _selected_executable_evidence(Path(root).resolve(), paths)
+    if expected is None or observed != expected:
+        raise ValueError("Selected PHITS executable changed before child commitment")
 
 
 def validate_binding(root, manifest, binding, paths=None, *, local_only=False):
@@ -228,25 +332,52 @@ def validate_binding(root, manifest, binding, paths=None, *, local_only=False):
         # is not authority to read tools on another computer after relocation.
         expected["workspace_root"] = str(root)
         for value in (expected, observed):
-            value.pop("tool", None)
-            value.pop("retry_unavailable", None)
+            value["tool"] = None
+            value["retry_unavailable"] = []
             for segment in value["segments"]:
                 segment.pop("environment_sha256", None)
-    if observed != expected:
+    if not bindings_match(observed, expected):
         raise ValueError("Execution inputs, dependencies, or runtime changed; prepare a new workspace")
 
 
 def result_evidence(root, segment_binding):
     paths = [_local_path(root, item) for item in segment_binding["required_outputs"]]
     # Bind optional outputs if present as well, so retained logs are protected.
-    paths.extend(_local_path(root, item) for item in segment_binding["writes"]
-        if _local_path(root, item).is_file())
+    # batch.out is PHITS' mutable control/progress channel, not immutable result
+    # evidence; it remains guarded and retained by the execution path.
+    for item in segment_binding["writes"]:
+        path = _local_path(root, item)
+        if path.name != _api().ROOT_BATCH_OUT and path.is_file():
+            paths.append(path)
     with WorkspaceOutputGuard(root, read_only=True) as guard:
         for path in paths:
             guard.prepare(path)
             if not path.is_file():
                 raise ValueError("Required completed segment artifact is missing")
         return _evidence(root, paths)
+
+
+def result_evidence_matches(root, segment_binding, recorded):
+    current = result_evidence(root, segment_binding)
+    if recorded == current:
+        return True
+    if not isinstance(recorded, list):
+        return False
+    mutable = {
+        item for item in segment_binding["writes"]
+        if Path(item).name == _api().ROOT_BATCH_OUT
+    }
+    # Historical summaries and retained entries may contain batch.out digests.
+    # Preserve the stored evidence, but ignore only those exact mutable paths
+    # when comparing it to the current bounded result contract.
+    def valid_mutable_evidence(item):
+        return (isinstance(item, dict)
+            and set(item) == {"path", "sha256"}
+            and item.get("path") in mutable
+            and isinstance(item.get("sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None)
+    normalized = [item for item in recorded if not valid_mutable_evidence(item)]
+    return normalized == current
 
 
 def validate_results(root, summary):
@@ -257,7 +388,8 @@ def validate_results(root, summary):
         if result["status"] != "success":
             continue
         contract = by_id.get(result["segment_id"])
-        if contract is None or result.get("output_evidence") != result_evidence(root, contract):
+        if (contract is None or not result_evidence_matches(
+            root, contract, result.get("output_evidence"))):
             raise ValueError("Completed segment artifacts changed; prepare a new workspace")
         require_clean_phits_geometry_diagnostics(result["geometry_diagnostics"])
 
@@ -305,7 +437,7 @@ def plan_incomplete(root, paths, *, expected_summary_sha256=None):
         source_path = api.summary_path(root)
         with WorkspaceOutputGuard(root, read_only=True) as guard:
             guard.prepare(source_path)
-            source_bytes = source_path.read_bytes()
+            source_bytes = checked_file_bytes(source_path)
         source_digest = hashlib.sha256(source_bytes).hexdigest()
         if expected_summary_sha256 is not None and source_digest != expected_summary_sha256:
             raise ValueError("Retry preview changed; create a new preview")
@@ -346,12 +478,13 @@ def validate_parent(root, summary, *, seen=None):
         raise ValueError("Unsafe attempt history path")
     with WorkspaceOutputGuard(root, read_only=True) as guard:
         guard.prepare(path)
-        data = path.read_bytes()
+        data = checked_file_bytes(path)
     if hashlib.sha256(data).hexdigest() != parent.get("sha256"):
         raise ValueError("Attempt history digest mismatch")
     old = json.loads(data)
     _api().validate_segment_execution_summary(old, require_success=False)
-    if old["execution_binding"] != summary["execution_binding"] or old["run_id"] == summary["run_id"]:
+    if (not bindings_match(old["execution_binding"], summary["execution_binding"])
+        or old["run_id"] == summary["run_id"]):
         raise ValueError("Attempt history binding mismatch")
     by_id = {i["segment_id"]: i for i in old["segments"]}
     for item in summary["segments"]:

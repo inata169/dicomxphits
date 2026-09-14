@@ -9,6 +9,7 @@ import pytest
 
 from dicomxphits import gui
 from dicomxphits.phits_observation import RELATIVE_PATH
+from dicomxphits.segment_stop import ControllerPipe
 from test_phits_live_observation import observer_fixture
 
 
@@ -51,6 +52,9 @@ def test_real_tk_observation_updates_stale_resets_and_layout(tmp_path, monkeypat
         refresh = state["refresh_phits_progress"]
         cells = dict(zip(refresh.__code__.co_freevars, refresh.__closure__))
         cells["phits_progress_summary_path"].cell_contents = tmp_path / "analysis/segment_execution_summary.json"
+        # Match the owned controller initialized by run_selected before refresh.
+        # Construction does not launch a process; Popen remains forbidden above.
+        cells["phits_control"].cell_contents = ControllerPipe()
         status = state["phits_observation_status"]
         presentation = state["observation_presentation"]
         guard = state["execution_guard"]
@@ -79,7 +83,8 @@ def test_real_tk_observation_updates_stale_resets_and_layout(tmp_path, monkeypat
             guard.begin("run_segments")
             paint()
             assert "remaining batches 9" in status.get()
-            assert "median 10%" in status.get() and "provisional" in status.get()
+            assert "Isocenter voxel r.err 10%" in status.get()
+            assert "single reference voxel" in status.get() and "provisional" in status.get()
             labels = [w for w in state["phits_frame"].winfo_children()
                 if "textvariable" in w.keys() and str(w.cget("textvariable")) == str(status)]
             assert len(labels) == 1 and labels[0].winfo_ismapped()
@@ -104,7 +109,7 @@ def test_real_tk_observation_updates_stale_resets_and_layout(tmp_path, monkeypat
             review_pause()
             summary["run_id"] = "different-invocation"
             paint()
-            assert "unavailable" in status.get() and "median" not in status.get()
+            assert "unavailable" in status.get() and "Isocenter voxel" not in status.get()
             state["values"]["workspace_root"].set(str(tmp_path / "different"))
             paint()
             assert "workspace selection changed" in status.get()

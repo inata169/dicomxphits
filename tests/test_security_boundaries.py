@@ -180,6 +180,45 @@ def test_workspace_copy_new_only_preserves_an_existing_regular_file(tmp_path):
     assert destination.read_bytes() == b"preserve"
 
 
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_workspace_copy_checkpoint_is_bounded_and_cleans_cancelled_output(
+    tmp_path,
+    overwrite,
+):
+    case_root = tmp_path / "case"
+    case_root.mkdir()
+    source = case_root / "staged.out"
+    destination = case_root / "final.out"
+    source.write_bytes(b"x" * (2 * 1024 * 1024 + 17))
+    if overwrite:
+        destination.write_bytes(b"preserve")
+    chunks = []
+
+    class CancelCopy(BaseException):
+        pass
+
+    def checkpoint(*, files=0, size=0):
+        if size:
+            chunks.append(size)
+            if len(chunks) == 2:
+                raise CancelCopy()
+
+    with pytest.raises(CancelCopy):
+        with WorkspaceOutputGuard(case_root) as guard:
+            guard.copy_file(
+                source,
+                destination,
+                overwrite=overwrite,
+                checkpoint=checkpoint,
+            )
+
+    assert chunks == [1024 * 1024, 1024 * 1024]
+    if overwrite:
+        assert destination.read_bytes() == b"preserve"
+    else:
+        assert not destination.exists()
+
+
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are unavailable")
 @pytest.mark.parametrize("writer", ["write_bytes", "copy_file"])
 def test_workspace_overwrite_rejects_existing_fifo(tmp_path, writer):

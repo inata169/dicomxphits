@@ -11,10 +11,12 @@ from pathlib import Path
 import secrets
 import shutil
 import stat
-from typing import Any
+import time
+from typing import Any, Callable
 
 
 FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
+_COPY_CHUNK_BYTES = 1024 * 1024
 
 
 class UnsafeWorkspacePathError(ValueError):
@@ -356,8 +358,22 @@ class WorkspaceOutputGuard:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-            self.prepare_file_target(target)
-            os.replace(temporary, target)
+            # Only the frequently polled preflight receipt gets bounded Windows
+            # sharing retries. Keep the same bytes, lease and directory guards;
+            # neither execution nor other output publication is retried.
+            attempts = 3 if (
+                os.name == "nt"
+                and target == self.case_root / "analysis/segment_preflight.json"
+            ) else 1
+            for attempt in range(attempts):
+                self.prepare_file_target(target)
+                try:
+                    os.replace(temporary, target)
+                    break
+                except OSError as exc:
+                    if getattr(exc, "winerror", None) not in (5, 32) or attempt + 1 == attempts:
+                        raise
+                    time.sleep(0.05)
         finally:
             if _lexists(temporary):
                 self.unlink(temporary)
@@ -369,9 +385,12 @@ class WorkspaceOutputGuard:
         destination: Path,
         *,
         overwrite: bool = True,
+        checkpoint: Callable[..., None] | None = None,
     ) -> Path:
         """Copy a guarded regular file using exclusive or atomic final creation."""
 
+        if checkpoint is not None:
+            checkpoint()
         source = self.prepare(source)
         if not source.is_file():
             raise UnsafeWorkspacePathError(f"Copy source is not a regular file: {source}")
@@ -391,10 +410,17 @@ class WorkspaceOutputGuard:
                     descriptor, "wb"
                 ) as target_stream:
                     descriptor = None
-                    shutil.copyfileobj(source_stream, target_stream)
+                    if checkpoint is None:
+                        shutil.copyfileobj(source_stream, target_stream)
+                    else:
+                        while chunk := source_stream.read(_COPY_CHUNK_BYTES):
+                            target_stream.write(chunk)
+                            checkpoint(size=len(chunk))
                     target_stream.flush()
                     os.fsync(target_stream.fileno())
-            except Exception:
+                    if checkpoint is not None:
+                        checkpoint(files=1)
+            except BaseException:
                 if descriptor is not None:
                     os.close(descriptor)
                 if created and _lexists(target):
@@ -414,9 +440,16 @@ class WorkspaceOutputGuard:
             with _open_regular_file_for_read(source) as source_stream, os.fdopen(
                 descriptor, "wb"
             ) as target_stream:
-                shutil.copyfileobj(source_stream, target_stream)
+                if checkpoint is None:
+                    shutil.copyfileobj(source_stream, target_stream)
+                else:
+                    while chunk := source_stream.read(_COPY_CHUNK_BYTES):
+                        target_stream.write(chunk)
+                        checkpoint(size=len(chunk))
                 target_stream.flush()
                 os.fsync(target_stream.fileno())
+                if checkpoint is not None:
+                    checkpoint(files=1)
             self.prepare_file_target(target)
             os.replace(temporary, target)
         finally:
