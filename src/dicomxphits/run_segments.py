@@ -847,7 +847,7 @@ def _run_segments_locked(
 ):
     from dicomxphits.segment_retry import (
         bindings_match, capture_binding, result_evidence, validate_binding,
-        validate_results,
+        validate_results, validate_selected_executable,
     )
     workspace_root = workspace_root.expanduser().resolve()
     summary_file = summary_path(workspace_root)
@@ -1032,6 +1032,9 @@ def _run_segments_locked(
             poll_stop()
             if stop_requested is not None:
                 break
+            # Result verification may hash large retained outputs. Recheck the
+            # bounded executable after that work, at the child-commit boundary.
+            validate_selected_executable(workspace_root, execution_binding, paths)
             if preparation is not None:
                 preparation.commit()
             segment_started_tick = float(monotonic_clock())

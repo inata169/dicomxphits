@@ -477,6 +477,39 @@ def test_same_size_same_mtime_selected_executable_mutation_is_detected(tmp_path)
         validate_binding(root, manifest, binding, paths)
 
 
+def test_selected_executable_is_rechecked_after_result_validation_before_commit(
+    tmp_path, monkeypatch,
+):
+    from dicomxphits import segment_retry
+
+    root, _, paths = workspace_fixture(tmp_path, segment_count=1)
+    executable = Path(paths.phits_executable_path)
+    stamp = executable.stat()
+    original = segment_retry.validate_results
+    calls = []
+
+    def replace_after_validation(workspace_root, summary):
+        original(workspace_root, summary)
+        calls.append(True)
+        replacement = b"changed executable identity, never launched"
+        executable.write_bytes(replacement[:stamp.st_size].ljust(stamp.st_size, b"x"))
+        os.utime(executable, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+
+    monkeypatch.setattr(segment_retry, "validate_results", replace_after_validation)
+    with pytest.raises(ValueError, match="changed before child commitment"):
+        run_segments(
+            workspace_root=root,
+            paths=paths,
+            preflight_nonce="nonce",
+            run_id_factory=lambda: "preflight-run",
+            runner=lambda *a, **k: pytest.fail("changed executable was launched"),
+        )
+    assert calls == [True]
+    receipt = read_receipt(root, nonce="nonce")
+    assert receipt["phase"] == "failed"
+    assert receipt["child_committed"] is False
+
+
 def test_runtime_binding_hashes_selected_executable_not_installation_siblings(tmp_path, monkeypatch):
     from dicomxphits import segment_retry
     root, manifest, paths = workspace_fixture(tmp_path)

@@ -46,6 +46,21 @@ def _is_link_or_reparse(path):
         or bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400))
 
 
+def _selected_executable_evidence(root, paths):
+    executable = Path(paths.phits_executable_path or "")
+    installation = Path(paths.phits_root_folder or "")
+    if (not executable.is_absolute() or not installation.is_absolute()
+        or not executable.is_file() or not installation.is_dir()
+        or _is_link_or_reparse(executable) or _is_link_or_reparse(installation)
+        or installation.resolve() == Path(installation.anchor)
+        or installation.resolve() == root or root in installation.resolve().parents):
+        return None
+    return {"root": str(installation.resolve()),
+        "executable": str(executable.resolve()),
+        "executable_sha256": file_sha256(executable),
+        "scope": "selected_executable"}
+
+
 def capture_binding(root, manifest, paths, *, include_runtime=True):
     """Capture actual staged dependencies; unavailable tool evidence forbids retry.
 
@@ -139,21 +154,10 @@ performed. Workspace contents are bound separately.
         if all_inputs.intersection({api.ROOT_BATCH_OUT, api.ROOT_PHITS_OUT, LOCK_NAME}):
             raise ValueError("Segment cleanup collides with a bound input")
     tool = None
-    executable = Path(paths.phits_executable_path or "")
-    installation = Path(paths.phits_root_folder or "")
     if not include_runtime:
         pass
-    elif (not executable.is_absolute() or not installation.is_absolute()
-        or not executable.is_file() or not installation.is_dir()
-        or _is_link_or_reparse(executable) or _is_link_or_reparse(installation)
-        or installation.resolve() == Path(installation.anchor)
-        or installation.resolve() == root or root in installation.resolve().parents):
+    elif (tool := _selected_executable_evidence(root, paths)) is None:
         unavailable.append("Configured PHITS installation identity is unavailable")
-    else:
-        installation = installation.resolve()
-        tool = {"root": str(installation), "executable": str(executable.resolve()),
-            "executable_sha256": file_sha256(executable),
-            "scope": "selected_executable"}
     return {"schema_version": BINDING_SCHEMA, "workspace_root": str(root),
         "manifest_sha256": manifest_sha256(manifest), "segment_ids": ids,
         "segments": segments, "preparation": prep, "tool": tool,
@@ -239,6 +243,15 @@ def comparable_binding(binding):
 
 def bindings_match(first, second):
     return comparable_binding(first) == comparable_binding(second)
+
+
+def validate_selected_executable(root, binding, paths):
+    """Recheck only the selected executable at the child-commit boundary."""
+    check_binding_shape(binding)
+    expected = comparable_binding(binding).get("tool")
+    observed = _selected_executable_evidence(Path(root).resolve(), paths)
+    if expected is None or observed != expected:
+        raise ValueError("Selected PHITS executable changed before child commitment")
 
 
 def validate_binding(root, manifest, binding, paths=None, *, local_only=False):
