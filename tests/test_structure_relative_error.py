@@ -12,6 +12,7 @@ import dicomxphits.gui as gui_module
 import dicomxphits.structure_relative_error as module
 from dicomxphits.gui import (
     GuiValidationError,
+    StructureEvaluationRequestGuard,
     structure_evaluation_enabled,
     structure_roi_number,
 )
@@ -386,6 +387,19 @@ def test_gui_action_requires_verified_sumtally_and_explicit_inputs(
     assert structure_roi_number(" 7 ") == 7
     with pytest.raises(GuiValidationError):
         structure_roi_number("PTV")
+
+
+def test_gui_result_ticket_rejects_changed_or_changed_back_inputs() -> None:
+    guard = StructureEvaluationRequestGuard()
+    original = ("workspace", "RTSTRUCT.dcm", "7", "RTPLAN.dcm", "CT.dcm")
+    ticket = guard.begin(original)
+
+    assert guard.is_current(ticket, original) is True
+    assert guard.is_current(ticket, (*original[:2], "8", *original[3:])) is False
+
+    guard.invalidate()
+
+    assert guard.is_current(ticket, original) is False
 
 
 def test_relocation_rebinds_only_combined_pair_paths(tmp_path: Path) -> None:

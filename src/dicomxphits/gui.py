@@ -207,6 +207,27 @@ class StageExecutionGuard:
         self.active_stage = None
 
 
+@dataclass
+class StructureEvaluationRequestGuard:
+    """Bind one background result to the unchanged GUI input generation."""
+
+    generation: int = 0
+
+    def begin(self, inputs: Sequence[str]) -> tuple[int, tuple[str, ...]]:
+        self.generation += 1
+        return self.generation, tuple(inputs)
+
+    def invalidate(self) -> None:
+        self.generation += 1
+
+    def is_current(
+        self,
+        ticket: tuple[int, tuple[str, ...]],
+        inputs: Sequence[str],
+    ) -> bool:
+        return ticket == (self.generation, tuple(inputs))
+
+
 def structure_roi_number(value: str) -> int:
     """Parse one explicit DICOM ROINumber without name-based inference."""
 
@@ -2109,6 +2130,7 @@ def _build_gui() -> int:
         )
     )
     structure_frame = None
+    structure_evaluation_guard = StructureEvaluationRequestGuard()
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
     recovery_inspection: WorkspaceRecoveryInspection | None = None
@@ -2140,6 +2162,15 @@ def _build_gui() -> int:
         if not workspace:
             return RTDOSE_NOT_PREPARED
         return rtdose_stage_state(Path(workspace).expanduser())
+
+    def current_structure_evaluation_inputs() -> tuple[str, ...]:
+        return (
+            values["workspace_root"].get().strip(),
+            structure_rtstruct_path.get().strip(),
+            structure_roi_number_value.get().strip(),
+            values["rtplan_path"].get().strip(),
+            values["ct_reference_dicom"].get().strip(),
+        )
 
     def stop_button_ready() -> bool:
         return bool(execution_guard.active_stage == "run_segments"
@@ -4057,13 +4088,33 @@ def _build_gui() -> int:
                 values["ct_reference_dicom"].get()
             ).expanduser(),
         }
+        request_ticket = structure_evaluation_guard.begin(
+            current_structure_evaluation_inputs()
+        )
         set_busy("evaluate_structure_rerr")
         structure_result_status.set(
             "Evaluating the explicitly selected ROI against verified combined evidence…"
         )
         append(f"Post-completion Structure r.err: ROI {roi_number} requested")
 
+        def request_is_current() -> bool:
+            return structure_evaluation_guard.is_current(
+                request_ticket,
+                current_structure_evaluation_inputs(),
+            )
+
+        def discard_stale_completion() -> None:
+            append(
+                "Post-completion Structure r.err result discarded because "
+                "its GUI inputs changed after the request.",
+                "warning",
+            )
+            set_busy(None)
+
         def finish_success(result: dict[str, object]) -> None:
+            if not request_is_current():
+                discard_stale_completion()
+                return
             from dicomxphits.structure_relative_error import (
                 format_structure_relative_error,
             )
@@ -4077,6 +4128,9 @@ def _build_gui() -> int:
             set_busy(None)
 
         def finish_error(message: str) -> None:
+            if not request_is_current():
+                discard_stale_completion()
+                return
             structure_result_status.set(f"Unavailable: {message}")
             append(
                 f"Post-completion Structure r.err unavailable: {message}",
@@ -4298,12 +4352,22 @@ def _build_gui() -> int:
         nav_status["rtdose"].set(rtdose_nav_status(state))
         refresh_action_button_states()
 
-    values["workspace_root"].trace_add("write", refresh_rtdose_workflow_state)
-    for variable in (structure_rtstruct_path, structure_roi_number_value):
-        variable.trace_add(
-            "write",
-            lambda *_args: refresh_action_button_states(),
+    def invalidate_structure_evaluation(*_args: object) -> None:
+        structure_evaluation_guard.invalidate()
+        structure_result_status.set(
+            "Unavailable: evaluation inputs changed; request evaluation again."
         )
+        refresh_action_button_states()
+
+    values["workspace_root"].trace_add("write", refresh_rtdose_workflow_state)
+    for variable in (
+        values["workspace_root"],
+        structure_rtstruct_path,
+        structure_roi_number_value,
+        values["rtplan_path"],
+        values["ct_reference_dicom"],
+    ):
+        variable.trace_add("write", invalidate_structure_evaluation)
     refresh_rtdose_workflow_state()
     refresh_action_button_states()
 
