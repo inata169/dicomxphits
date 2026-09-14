@@ -13,14 +13,17 @@ import pydicom
 import pytest
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 
+from dicomxphits.ct2phits_datfiles import RAW_CT2PHITS_NAMES
 from dicomxphits.replace_ct_layer_with_water import (
     PhantomCtDerivationError,
     _boundary_connected,
     _replacement_analysis,
     derive_phantom_ct,
     load_ct_series,
+    load_rtstruct_roi_mask_by_number,
     load_rtstruct_masks,
 )
+from dicomxphits.structure_relative_error import _frozen_ct_series
 
 
 def _uid() -> str:
@@ -296,6 +299,125 @@ def _case(tmp_path: Path, **ct_options: object) -> dict[str, object]:
     ct = _write_ct_series(tmp_path / "ct", **ct_options)
     rtstruct = _write_rtstruct(tmp_path / "RTSTRUCT.dcm", ct)
     return {"ct": ct, "rtstruct": rtstruct, "output": tmp_path / "derived"}
+
+
+def test_rtstruct_roi_mask_uses_explicit_unique_roi_number(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    series = load_ct_series(case["ct"]["root"])
+
+    mask, roi_name, source_sha256 = load_rtstruct_roi_mask_by_number(
+        case["rtstruct"],
+        series=series,
+        roi_number=1,
+    )
+
+    assert roi_name == "Water_CC13_2cm"
+    assert mask.shape == (4, 64, 64)
+    assert np.any(mask)
+    assert source_sha256 == _sha256(case["rtstruct"])
+
+
+def test_rtstruct_roi_mask_rejects_duplicate_selected_number(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    series = load_ct_series(case["ct"]["root"])
+    dataset = pydicom.dcmread(case["rtstruct"])
+    duplicate = Dataset()
+    duplicate.ROINumber = 1
+    duplicate.ReferencedFrameOfReferenceUID = case["ct"]["frame_uid"]
+    duplicate.ROIName = "Duplicate label"
+    dataset.StructureSetROISequence.append(duplicate)
+    _save_dataset(dataset, case["rtstruct"])
+
+    with pytest.raises(PhantomCtDerivationError, match="exactly once"):
+        load_rtstruct_roi_mask_by_number(
+            case["rtstruct"],
+            series=series,
+            roi_number=1,
+        )
+
+
+def test_structure_evaluation_ct_series_requires_frozen_digest_evidence(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "ct2phits-workspace"
+    snapshot.mkdir()
+    ct = _write_ct_series(snapshot / "CT")
+    datfiles = snapshot / "DATfiles"
+    datfiles.mkdir()
+    raw_hashes = {}
+    for name in RAW_CT2PHITS_NAMES:
+        path = datfiles / name
+        path.write_text(f"synthetic {name}\n", encoding="utf-8")
+        raw_hashes[name] = _sha256(path)
+    copied_files = [f"CT/{path.name}" for path in ct["paths"]]
+    copied_sha256 = {
+        relative: _sha256(path)
+        for relative, path in zip(copied_files, ct["paths"], strict=True)
+    }
+    manifest = {
+        "status": "completed",
+        "ct_series": {
+            "series_instance_uid": ct["series_uid"],
+            "frame_of_reference_uid": ct["frame_uid"],
+            "slice_count": len(ct["paths"]),
+            "rows": 64,
+            "columns": 64,
+            "copied_files": copied_files,
+            "sha256": copied_sha256,
+            "ct_origin_dicom_cm": [0.0, 0.0, 0.0],
+        },
+        "rtplan": {"isocenter_dicom_cm": [0.0, 0.0, 0.0]},
+    }
+    (snapshot / "ct2phits_workspace_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    (snapshot / "ct2phits_execution_summary.json").write_text(
+        json.dumps(
+            {"status": "completed", "raw_datfiles_sha256": raw_hashes}
+        ),
+        encoding="utf-8",
+    )
+    calculation = tmp_path / "calculation-workspace"
+    analysis = calculation / "analysis"
+    analysis.mkdir(parents=True)
+    (analysis / "public_preparation_workspace_summary.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "dicomxphits_public_prepare_3dcrt_workspace_v1",
+                "returncode": 0,
+                "phits_generation": {
+                    "ct_voxel_assets": {
+                        "status": "validated_and_copied",
+                        "source_contract": "raw_ct2phits_datfiles_plus_ct_reference",
+                        "frame_of_reference_match": True,
+                        "raw_datfiles_sha256": raw_hashes,
+                        "ct_slice_count": len(ct["paths"]),
+                        "ct_origin_dicom_cm": [0.0, 0.0, 0.0],
+                        "rtplan_isocenter_dicom_cm": [0.0, 0.0, 0.0],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    series, evidence = _frozen_ct_series(
+        ct["paths"][0],
+        workspace_root=calculation,
+    )
+
+    assert series.series_uid == ct["series_uid"]
+    assert len(evidence["ct_series_evidence_sha256"]) == 64
+    ct["paths"][1].write_bytes(ct["paths"][1].read_bytes() + b"changed")
+    with pytest.raises(
+        Exception,
+        match="digest evidence",
+    ):
+        _frozen_ct_series(
+            ct["paths"][0],
+            workspace_root=calculation,
+        )
 
 
 def _derive(case: dict[str, object], **overrides: object):

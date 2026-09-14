@@ -6,7 +6,6 @@ Provide optional, read-only remaining-batch and single Isocenter-voxel
 relative-error observations for owned PHITS 3.35 Windows OpenMP segments
 without changing calculation inputs, execution authority, completion evidence
 or downstream safety gates.
-
 ## Requirements
 ### Requirement: Owned Non-Authoritative Observation
 
@@ -70,15 +69,16 @@ tolerance or change the existing mesh/coordinate mapping. If isocenter is
 outside the mesh or lies on a bin boundary, the pair is incomplete or
 mismatched, or the selected dose/error value is zero, negative, malformed or
 non-finite, the relative-error detail SHALL be unavailable. The observer MUST
-NOT substitute a value from
-`deposit-pdd.out`, compute full-mesh minimum, maximum, median, mean, standard
-deviation or coverage, inspect DICOM RT Structure contours, or calculate
-structure-based statistics.
+NOT substitute a value from `deposit-pdd.out`, compute full-mesh minimum,
+maximum, median, mean, standard deviation or coverage, inspect DICOM RT
+Structure contours, or calculate structure-based statistics.
 
 The displayed value SHALL be identified as a provisional single Isocenter-voxel
 reference, not whole-volume, ROI, combined-dose or clinical uncertainty and not
 completion, convergence or automatic-stopping evidence. Tally and variance
-settings MUST NOT change.
+settings MUST NOT change. Any future RT Structure relative-error evaluation
+SHALL remain a separate post-completion capability and MUST NOT replace or
+augment this live observation.
 
 #### Scenario: Unique Isocenter-containing voxel is evaluable
 
@@ -108,7 +108,14 @@ settings MUST NOT change.
 
 - **WHEN** PDD relative error, other mesh cells or RT Structure data are present
 - **THEN** they do not replace or augment the single primary 3D Isocenter-voxel
-  reference in this change
+  live reference
+
+#### Scenario: Post-completion Structure evaluation exists
+
+- **WHEN** a separately approved post-completion Structure evaluation is
+  available
+- **THEN** its statistics remain outside the live observation and do not alter
+  live progress, convergence, stopping, completion, or downstream authority
 
 ### Requirement: Bounded Provisional Snapshots and Reset
 

@@ -770,6 +770,17 @@ def normalize_relocated_sumtally_summaries(
                 recorded_workspace_root=recorded_root,
                 current_workspace_root=current_root,
             )
+        combined_relative_error = normalized.get(
+            "combined_relative_error_evidence"
+        )
+        if isinstance(combined_relative_error, dict):
+            for key in ("dose_path", "error_path"):
+                _rebind_present_path(
+                    combined_relative_error,
+                    key,
+                    recorded_workspace_root=recorded_root,
+                    current_workspace_root=current_root,
+                )
         normalized["workspace_root"] = str(current_root)
         normalized_summaries.append(normalized)
     return normalized_summaries[0], normalized_summaries[1]

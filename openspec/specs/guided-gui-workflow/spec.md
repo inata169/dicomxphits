@@ -635,10 +635,14 @@ Isocenter-voxel relative-error detail SHALL come only from the invocation-bound
 observation sidecar under the `phits-live-observation` contract, in a separately
 labelled provisional detail area. The relative-error label MUST identify a
 single reference voxel and MUST NOT imply whole-volume, ROI, combined-dose or
-clinical uncertainty. The GUI MUST NOT display PDD-derived, full-mesh aggregate
-or RT Structure relative-error statistics in this change. Observation MUST NOT
-claim statistical convergence, a verified PHITS result still being written, or
-replace the segment-based ETA calculation.
+clinical uncertainty. The live progress presentation MUST NOT display
+PDD-derived, full-mesh aggregate or RT Structure relative-error statistics.
+RT Structure relative-error statistics SHALL appear only in a distinct
+`Post-completion Structure r.err` section on the Sumtally page after verified
+all-active-segment Sumtally success and an explicit user action. They MUST NOT
+replace or augment the live Isocenter-voxel detail. Observation MUST NOT claim statistical
+convergence, a verified PHITS result still being written, or replace the
+segment-based ETA calculation.
 
 A persisted running record whose invocation is not owned by an active GUI
 process SHALL be presented as interrupted and incomplete rather than currently
@@ -695,6 +699,14 @@ enable Sumtally.
   is outside the mesh or on a bin boundary
 - **THEN** the GUI labels that limitation without interpolation or another-
   source fallback while preserving normal progress and stop/retry controls
+
+#### Scenario: Post-completion Structure statistics are available
+
+- **WHEN** an explicitly requested post-completion evaluation reports RT
+  Structure relative-error statistics from verified Sumtally success
+- **THEN** the GUI presents them only in the distinct Sumtally-page section,
+  outside live PHITS progress, and does not use them as convergence, stopping,
+  completion, or downstream evidence
 
 ### Requirement: Guided Incomplete Segment Execution
 
