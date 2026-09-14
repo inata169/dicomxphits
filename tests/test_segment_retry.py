@@ -222,6 +222,32 @@ def test_historical_batch_digest_is_ignored_by_downstream_validation(tmp_path):
     validate_segment_execution_for_downstream(root, manifest, result)
 
 
+@pytest.mark.parametrize("validation", ["retry", "downstream"])
+def test_duplicate_historical_batch_evidence_is_rejected(tmp_path, validation):
+    from dicomxphits.sumtally_inputs import file_sha256
+
+    if validation == "retry":
+        root, _, paths, result = partial(tmp_path)
+    else:
+        root, _, paths = workspace_fixture(tmp_path, segment_count=1)
+        result = run_segments(
+            workspace_root=root, paths=paths, runner=runner_for(root))
+    segment = result["segments"][0]
+    batch_path = Path(segment["batch_out_path"])
+    batch_relative = batch_path.relative_to(root).as_posix()
+    segment["output_evidence"].extend([
+        {"path": batch_relative, "sha256": file_sha256(batch_path)},
+        {"path": batch_relative, "sha256": "0" * 64},
+    ])
+    if validation == "retry":
+        summary_path(root).write_text(json.dumps(result), encoding="utf-8")
+        with pytest.raises(ValueError, match="artifacts changed"):
+            plan_incomplete(root, paths)
+    else:
+        with pytest.raises(ValueError, match="artifacts changed"):
+            validate_results(root, result)
+
+
 @pytest.mark.parametrize("malformed", [
     "not evidence",
     {},
