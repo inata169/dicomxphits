@@ -1505,6 +1505,29 @@ def run_rtdose(
     command_argv: list[str] | None = None,
     runner=subprocess.Popen,
 ) -> dict[str, Any]:
+    from dicomxphits.workspace_execution import WorkspaceExecutionLease
+
+    root = workspace_root.expanduser().resolve()
+    # Keep current-result validation, conversion, post-processing, and terminal
+    # publication under one ownership interval.
+    with WorkspaceOutputGuard(root):
+        with WorkspaceExecutionLease(root) as lease:
+            with lease.invocation():
+                return _run_rtdose_locked(
+                    workspace_root=root,
+                    paths=paths,
+                    command_argv=command_argv,
+                    runner=lease.popen if runner is subprocess.Popen else runner,
+                )
+
+
+def _run_rtdose_locked(
+    *,
+    workspace_root: Path,
+    paths: ExternalToolPaths,
+    command_argv: list[str] | None = None,
+    runner=subprocess.Popen,
+) -> dict[str, Any]:
     summary_path = execution_summary_path(workspace_root)
     execution_started = False
     try:

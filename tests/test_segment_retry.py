@@ -343,7 +343,8 @@ def test_concurrent_owner_blocks_another_thread_without_changing_evidence(tmp_pa
     assert summary_path(root).read_bytes() == before
 
 
-def test_lock_is_retained_by_child_after_controller_exits(tmp_path):
+@pytest.mark.parametrize("launcher", ["run", "popen"])
+def test_lock_is_retained_by_child_after_controller_exits(tmp_path, launcher):
     root = tmp_path / "workspace"
     root.mkdir()
     child_done = tmp_path / "done"
@@ -355,11 +356,23 @@ def test_lock_is_retained_by_child_after_controller_exits(tmp_path):
         "import os,sys,threading,time,pathlib",
         "from dicomxphits.workspace_execution import WorkspaceExecutionLease",
         "lease=WorkspaceExecutionLease(pathlib.Path(sys.argv[1])); lease.__enter__()",
-        "threading.Thread(target=lambda: lease.run([sys.executable,'-c',sys.argv[4],sys.argv[2],sys.argv[3]])).start()",
+        "def launch():",
+        "    result=getattr(lease,sys.argv[5])([sys.executable,'-c',sys.argv[4],sys.argv[2],sys.argv[3]])",
+        "    if hasattr(result,'wait'): result.wait()",
+        "threading.Thread(target=launch).start()",
         "while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)",
         "os._exit(0)",
     ])
-    process = subprocess.Popen([sys.executable, "-c", controller, str(root), str(child_done), str(ready), child])
+    process = subprocess.Popen([
+        sys.executable,
+        "-c",
+        controller,
+        str(root),
+        str(child_done),
+        str(ready),
+        child,
+        launcher,
+    ])
     try:
         process.wait(timeout=10)
         assert ready.exists()

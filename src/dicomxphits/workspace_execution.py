@@ -120,6 +120,20 @@ class WorkspaceExecutionLease:
                 os.set_handle_inheritable(self.handle, False)
         return execute(command, pass_fds=(self.handle,), **kwargs)
 
+    def popen(self, command, **kwargs):
+        """Start one direct child while inheriting execution ownership."""
+        if self.handle is None:
+            raise WorkspaceBusyError("Execution ownership has been released")
+        if os.name == "nt":
+            startup = subprocess.STARTUPINFO()
+            startup.lpAttributeList = {"handle_list": [self.handle]}
+            os.set_handle_inheritable(self.handle, True)
+            try:
+                return subprocess.Popen(command, startupinfo=startup, **kwargs)
+            finally:
+                os.set_handle_inheritable(self.handle, False)
+        return subprocess.Popen(command, pass_fds=(self.handle,), **kwargs)
+
     @contextmanager
     def invocation(self):
         if self.executing:

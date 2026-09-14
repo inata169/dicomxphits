@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,6 +30,7 @@ from dicomxphits.prepare_rtdose import (
     select_ct_reference,
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError
+from dicomxphits.workspace_execution import WorkspaceBusyError, WorkspaceExecutionLease
 from dicomxphits.sumtally_inputs import (
     ACTIVE_TREATMENT_INPUT_DOSE_STATE,
     ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
@@ -1515,6 +1517,94 @@ def test_run_requires_executable_and_detects_new_dicom(tmp_path):
     assert summary["coordinate_placement_validation"]["maximum_absolute_component_residual_mm"] <= 1.0e-6
     assert summary["dose_semantics"]["absolute_calibration_approved"] is True
     assert Path(summary["stdout_path"]).read_text(encoding="utf-8") == "ok"
+
+
+def test_run_rtdose_holds_one_lease_from_current_result_gate_through_launch(
+    monkeypatch,
+    tmp_path,
+):
+    workspace, files = write_workspace(tmp_path)
+    template = tmp_path / "template.dcm"
+    ct = tmp_path / "ct_reference.dcm"
+    exe = tmp_path / "phits2dicom"
+    write_dicom(template, modality="RTDOSE")
+    write_dicom(ct, modality="CT")
+    exe.write_text("exe", encoding="utf-8")
+    prepare_rtdose(
+        workspace_root=workspace,
+        paths=paths(phits2dicom=str(exe)),
+        paths_config={},
+        template_dicom=template,
+        ct_reference_dicom=ct,
+        phits_out=files["phits_out"],
+        command_argv=["prepare"],
+    )
+    gate_reached = threading.Event()
+    release_gate = threading.Event()
+    runner_reached = threading.Event()
+    release_runner = threading.Event()
+    original_gate = prepare_rtdose_module.validate_sumtally_manifest_binding
+    outcome = {}
+
+    def paused_gate(*args, **kwargs):
+        result = original_gate(*args, **kwargs)
+        gate_reached.set()
+        if not release_gate.wait(5):
+            raise TimeoutError("synthetic RTDOSE gate was not released")
+        return result
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, input):
+            staged_dose = Path(input.splitlines()[3])
+            write_coordinate_rtdose(staged_dose.with_suffix(".dcm"))
+            return "ok", None
+
+    def paused_runner(*args, **kwargs):
+        runner_reached.set()
+        if not release_runner.wait(5):
+            raise TimeoutError("synthetic RTDOSE runner was not released")
+        return FakeProc()
+
+    def invoke():
+        try:
+            outcome["summary"] = run_rtdose(
+                workspace_root=workspace,
+                paths=paths(phits2dicom=str(exe)),
+                command_argv=["run"],
+                runner=paused_runner,
+            )
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    monkeypatch.setattr(
+        prepare_rtdose_module,
+        "validate_sumtally_manifest_binding",
+        paused_gate,
+    )
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    try:
+        assert gate_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_gate.set()
+        assert runner_reached.wait(5)
+        with pytest.raises(WorkspaceBusyError):
+            with WorkspaceExecutionLease(workspace):
+                pass
+        release_runner.set()
+        thread.join(10)
+    finally:
+        release_gate.set()
+        release_runner.set()
+        thread.join(10)
+
+    assert not thread.is_alive()
+    assert "error" not in outcome
+    assert outcome["summary"]["stage_status"] == "success"
 
 
 def test_run_rebinds_verified_prepared_evidence_after_workspace_relocation(
