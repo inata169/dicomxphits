@@ -247,18 +247,35 @@ def parse_tally(raw, expected, role, deadline):
     return output, metadata
 
 
-def paired_statistics(dose_raw, error_raw, mesh, maxcas, deadline):
+def isocenter_flat_index(mesh):
+    """Locate the unique xyz cell whose open interior contains isocenter."""
+    indices = []
+    zero = Decimal(0)
+    for (raw_lo, raw_hi), count in zip(mesh.bounds, mesh.counts):
+        lo, hi = Decimal(str(raw_lo)), Decimal(str(raw_hi))
+        require(lo < zero < hi, "isocenter-unavailable")
+        step = (hi - lo) / Decimal(count)
+        scaled = (zero - lo) / step
+        # An isocenter on a bin boundary belongs to neither open interior.
+        require(scaled != scaled.to_integral_value(), "isocenter-unavailable")
+        index = int(scaled)
+        require(0 <= index < count, "isocenter-unavailable")
+        require(lo + step * index < zero < lo + step * (index + 1),
+                "isocenter-unavailable")
+        indices.append(index)
+    x, y, z = indices
+    nx, ny, _nz = mesh.counts
+    # PHITS xyz/xy pages list x ascending and y descending for each z page.
+    return (z * mesh.counts[1] + (mesh.counts[1] - 1 - y)) * nx + x
+
+
+def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline):
     dose, dm = parse_tally(dose_raw, mesh, "dose", deadline)
     error, em = parse_tally(error_raw, mesh, "error", deadline)
     require(dm == em and dm["maxcas"] == maxcas, "pair-mismatch")
-    mask = (dose > 0) & (error > 0)
-    valid = int(np.count_nonzero(mask))
-    require(valid > 0, "no-evaluable-cells")
-    values = error[mask]
-    result = {"total_cells": mesh.cells, "valid_cells": valid,
-              "excluded_cells": mesh.cells-valid, "coverage": valid/mesh.cells,
-              "median_percent": float(np.median(values))*100,
-              "maximum_percent": float(np.max(values))*100}
+    index = isocenter_flat_index(mesh)
+    require(dose[index] > 0 and error[index] > 0, "isocenter-unavailable")
+    result = {"relative_error_percent": float(error[index]) * 100}
     require(all(math.isfinite(v) for v in result.values()), "invalid-numeric")
     checkpoint(deadline)
     return result

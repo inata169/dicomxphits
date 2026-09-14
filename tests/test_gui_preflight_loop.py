@@ -44,8 +44,7 @@ def _exercise_hidden_tk(tmp_path, monkeypatch, read_fails):
     import dicomxphits.segment_stop as stop_module
 
     workspace, _, paths = workspace_fixture(tmp_path)
-    library = Path(paths.phits_root_folder) / "synthetic-blocked-library"
-    library.write_bytes(b"synthetic runtime")
+    selected_executable = Path(paths.phits_executable_path)
     blocked = threading.Event()
     release = threading.Event()
     sent = threading.Event()
@@ -86,7 +85,7 @@ def _exercise_hidden_tk(tmp_path, monkeypatch, read_fails):
 
     def opened(path, *args, **kwargs):
         stream = original_open(path, *args, **kwargs)
-        return BlockedRead(stream) if path == library else stream
+        return BlockedRead(stream) if path == selected_executable else stream
 
     class FakePipe:
         nonce = "gui-nonce"

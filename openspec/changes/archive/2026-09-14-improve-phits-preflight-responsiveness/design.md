@@ -2,11 +2,20 @@
 
 ## Decisions and limits
 
-Preserve the complete runtime binding. Removing files or replacing SHA-256 with
-size/mtime would weaken current guarantees without a proven dependency model.
-Do not clone an installation, discover a new installation, or add a persistent
-hash cache. The current task improves visibility and control responsiveness,
-not the throughput of a full successful calculation.
+Do not recursively enumerate or hash the configured PHITS installation. The
+execution binding covers the exact explicitly selected PHITS executable plus
+the existing workspace-local inputs and evidence. Before every PHITS child
+commitment, resolve the selected executable, require the existing absolute-path,
+regular-file and configured-path safety checks, calculate its SHA-256, and
+match the invocation-bound executable path and digest. Do not search for an
+executable, infer dependencies from filenames, clone an installation or add a
+persistent hash cache.
+
+Files elsewhere in the configured installation are outside this binding. Their
+addition, removal or mutation does not by itself reject execution or retry, and
+the workflow makes no claim to detect it. This is an explicit reduction of the
+old installation-wide identity contract, justified by the observed repeated-scan
+cost. It does not reduce workspace input, result or downstream validation.
 
 The old stop contract requires retry-capable evidence. Do not fabricate that
 evidence during an incomplete scan. Introduce a distinct preflight receipt at
@@ -31,11 +40,13 @@ existing execution-summary and downstream validators still decide eligibility.
 
 ## State and control
 
-1. Acquire ownership; publish `preparing` before a recursive scan. Missing or
-   malformed identity/evidence fails closed and cannot unlock a control.
-2. Enumerate and hash with checkpoints before each entry/open and between reads
-   of at most 1 MiB. Publish bounded progress at most four times per second;
-   show counts already read, not a percentage based on an invented total.
+1. Acquire ownership; publish `preparing` before bounded binding checks. Missing
+   or malformed identity/evidence fails closed and cannot unlock a control.
+2. Hash only the selected executable and bound workspace files, with control
+   checkpoints before each file open and between reads of at most 1 MiB. Publish
+   bounded progress at most four times per second; show counts already read,
+   not a percentage based on an invented total. Do not walk the installation
+   tree to obtain membership or totals.
 3. Before the first child commitment, Cancel preparation and commitment share
    the same serialization boundary. Acknowledgement prevents all child launch.
    Abort only preparation work; close scanner handles and persist cancellation
@@ -44,9 +55,11 @@ existing execution-summary and downstream validators still decide eligibility.
    never convert it silently into a kill or segment stop. The existing explicit
    Stop after current segment remains the available action.
 5. During subsequent verification, service existing boundary-stop requests at
-   scanner checkpoints. Acknowledgement prevents another commitment, but all
-   validation required for committed/retained results and terminal v5 stopping
-   still finishes. Show `verifying results`, not an invented active segment.
+   bounded hashing checkpoints. Acknowledgement prevents another commitment,
+   but all validation required for committed/retained results and terminal v5
+   stopping still finishes. Show `verifying results`, not an invented active
+   segment. Recheck the selected executable immediately before any next child
+   commitment, not by rescanning its installation.
 
 A blocked OS read is not an opportunity to kill a thread or process. The
 checkpoint bound is a work bound, not a universal wall-clock deadline. Display
@@ -88,12 +101,44 @@ retained and hashed when PHITS produces them, but their absence alone does not
 invalidate an otherwise completed segment. This does not change PHITS inputs,
 tally physics or dose processing.
 
+PHITS `batch.out` is different from those immutable result artifacts. It is a
+control/progress file whose bytes may change during execution or through an
+explicit user edit. The observer may read it and publication may retain a
+snapshot, subject to the same containment and no-link protections, but its path,
+digest or remaining-batch value is not required completion evidence and is not
+compared as immutable retained-result evidence. In particular, changing
+`0 <--- number of remaining batches` to `-1 <--- number of remaining batches`
+does not by itself produce an artifact-mutation error. Any resulting nonzero
+process exit, missing required output, invalid geometry evidence, incomplete
+summary, stopped state or failed ownership/evidence check still fails closed.
+
+For provisional relative-error presentation, use the error value from the
+manifest-selected primary 3D dose companion only. Continue requiring a complete
+matching primary-dose/error pair to establish supported mesh identity and data
+integrity. The Isocenter voxel is the unique cell whose existing PHITS mesh-bin
+interior contains `(0, 0, 0)` in the already defined isocenter-origin coordinate
+system. Do not interpolate, select a nearest cell, change coordinate transforms
+or introduce a physical tolerance. If isocenter is outside the configured mesh
+or lies on a bin boundary, or the selected dose/error value is not evaluable
+under the existing numeric checks, display the observation as unavailable.
+
+Report only that provisional Isocenter-voxel `r.err` percentage and sample age.
+Do not calculate or display full-mesh minimum, maximum, median, mean, standard
+deviation or coverage. Do not read `deposit-pdd.out` for the representative
+value and do not inspect DICOM RT Structure contours or calculate structure-
+based statistics. The label must state that the value is a single reference
+voxel, not whole-volume or clinical uncertainty and not completion evidence.
+
 ## Compatibility and approval boundary
 
 All preflight readers must reject unknown versions and stale workspace/run
 bindings. They must not read an installation merely because a historical
 receipt names it. Downstream gates explicitly recognize the new non-success
 receipt; older readers must not receive fabricated v5 success/stopped evidence.
-Install-wide scanning is retained, including its known cost. Any proposal to
-reduce its scope must establish complete runtime dependencies and mutation
-detection before a separate human decision. This proposal grants no such work.
+New execution evidence explicitly identifies the bounded executable scope rather
+than recording an installation membership list. Compatibility readers continue
+to parse historical execution summaries and preserve their workspace/result
+meaning without rewriting them. Any new child launch, including selective retry,
+must bind the currently selected executable under the revised scope and must not
+reintroduce an installation-wide scan; historical installation membership is not
+silently represented as newly verified bounded evidence.

@@ -1,5 +1,78 @@
 # Verification plan
 
+## Revised bounded-runtime contract (2026-09-14; awaiting approval)
+
+The completed real GUI boundary-stop attempt established the functional stop
+outcome but failed performance acceptance because repeated recursive membership
+and SHA-256 scans of the configured PHITS installation dominated controller
+elapsed time. That invocation is complete and its approval is consumed. Do not
+rerun it to implement or test this revision.
+
+The accepted functional evidence records one PHITS child with exit 0, one
+validated segment, three pending segments, zero failed segments, controller
+exit 4, Sumtally disabled, released workspace ownership and unchanged frozen
+inputs. PHITS ran for about 96.89 seconds, while the controller took about
+2142.719 seconds. These real results remain distinct from future fake-runner
+and synthetic Tk validation.
+
+Before runtime changes, strictly validate the revised proposal and deltas. After
+fresh human approval, synthetic tests SHALL demonstrate all of the following:
+
+- No preparation, per-segment, terminal or retry validation recursively lists
+  or hashes the configured PHITS installation. A large unrelated sibling tree
+  must not affect the captured binding or trigger scan callbacks.
+- The explicitly selected PHITS executable is resolved, checked as the accepted
+  file and SHA-256 bound, then rechecked immediately before each child commitment.
+  Missing, replaced or changed executable evidence fails before that child.
+- Existing workspace input/preparation membership and SHA-256 checks still
+  detect add/remove/rename/content changes covered by the current workspace
+  contract, including same-size/same-mtime mutations.
+- Every declared primary output remains required. Only the manifest-selected
+  primary 3D dose output requires a separate error companion; a secondary PDD
+  with embedded relative error remains valid without a separate companion, and
+  any optional produced error companion remains included in immutable evidence.
+- `batch.out` may be monitored and retained but is excluded from required and
+  immutable result evidence. Changing its remaining-batch line from `0` to `-1`
+  alone neither causes an artifact-mutation error nor authorizes completion.
+- Live observation uses the complete matching manifest-selected primary 3D
+  dose/error pair and displays only the `r.err` of the unique mesh-bin interior
+  containing existing local isocenter `(0, 0, 0)`. It does not display full-mesh
+  statistics and does not read PDD or RT Structure data for a replacement value.
+- A mesh that excludes isocenter or places it on a bin boundary, an incomplete/
+  mismatched pair or a non-evaluable selected value reports relative-error
+  detail as unavailable without interpolation, nearest-neighbour selection or
+  fallback.
+- Zero child exit, required outputs, clean geometry evidence, durable summary,
+  stop/completion state, workspace ownership and downstream eligibility remain
+  independently required. Missing/partial output, nonzero exit, failed,
+  stopped, incomplete or unverified evidence never reaches Sumtally as success.
+- Path escape, links, unsafe publication, stale identity and receipt failures
+  continue to fail closed for the executable, workspace inputs, required
+  outputs, optional retained artifacts and mutable `batch.out` snapshots.
+
+Use fake runners and synthetic Tk tests for implementation verification. Run
+focused tests first, then repository-venv compilation, Tk-enabled full pytest
+with a distinct fresh short ASCII basetemp per pytest invocation, public-tree
+audit, strict active/current OpenSpec validation and Git diff/status checks.
+No real external tool or GUI action is part of this revision. If later evidence
+shows that a new real PHITS invocation is necessary, freeze its exact inputs,
+conditions, destination and digests and obtain separate one-invocation approval.
+
+Proposal-only validation on 2026-09-14 passed:
+
+- `openspec.cmd validate improve-phits-preflight-responsiveness --strict`:
+  change valid.
+- `openspec.cmd validate --specs --strict`: 16 passed, 0 failed.
+
+After the approved Isocenter-voxel direction was added, both commands were run
+again with the same passing results. The revised default-mesh case uses the
+unique bin interior containing isocenter; it does not incorrectly require a
+voxel centre at zero.
+
+No runtime code, test code or current specification was changed, and no fake
+runner, synthetic Tk, Computer Use or real external tool was executed. Runtime
+implementation remains blocked on fresh approval of this revised contract.
+
 ## Real boundary-stop attempt did not meet acceptance (2026-09-11)
 
 The separately approved fresh one-invocation attempt performed one normal GUI
@@ -1611,17 +1684,32 @@ DICOMXPHITS_TEST_TK=1 and a distinct new short ASCII basetemp per pytest command
 
 ## Synthetic implementation acceptance
 
-- Many small files and one large fake runtime file: progress precedes scan
-  completion; assert checkpoints between entries and reads no larger than 1 MiB.
-  Instrument work counts, not a hardware-dependent whole-tree deadline.
+- Many bound workspace files and one large bound file: progress precedes scan
+  completion; assert checkpoints before file opens and between reads no larger
+  than 1 MiB. Instrument work counts, not a hardware-dependent deadline.
+- A large synthetic installation sibling tree is never enumerated or hashed;
+  only the selected executable is path-checked and digest-bound at launch.
 - Inject a cancellation at each checkpoint: no child starts, receipt is durable,
   exit is 5, no complete binding is invented and no downstream gate opens.
 - Deterministically race first commitment and cancellation in both orders;
   accepted cancellation prevents commitment, committed execution rejects it.
 - Stop during a later binding scan: acknowledgement occurs without waiting for
   the whole scan, but committed-result validation/publication is not skipped.
-- Add/remove/rename/change runtime files (including same-size/same-mtime changes),
-  input includes, calibration and outputs: preserve existing fail-closed checks.
+- Replace or change the selected executable and add/remove/rename/change bound
+  workspace inputs, calibration and required outputs (including same-size/
+  same-mtime changes): preserve applicable fail-closed checks. Unrelated
+  installation siblings remain outside the binding by design.
+- Change `batch.out` from remaining batches `0` to `-1` before later result
+  validation: no artifact-mutation error follows from those bytes alone, while
+  missing required output, nonzero exit or incomplete/stopped/failed evidence
+  still blocks normal completion and downstream use.
+- For a complete primary 3D pair whose unique mesh-bin interior contains
+  `(0, 0, 0)`, publish only that cell's provisional `r.err` percentage and sample
+  age. Assert that full-mesh min/max/median/mean/SD/coverage, PDD-derived values
+  and RT Structure statistics are absent.
+- When isocenter is outside the mesh or on a bin boundary, or the pair is
+  invalid/mismatched, report unavailable without interpolation, nearest-cell or
+  other-source fallback.
 - Persistence failure, stale nonce/run/root, unknown schema, controller death,
   duplicate requests and blocking I/O: never fabricate acceptance/terminal state,
   release ownership prematurely or start another child.
@@ -1636,18 +1724,75 @@ DICOMXPHITS_TEST_TK=1 and a distinct new short ASCII basetemp per pytest command
   Synthetic responsiveness target: acknowledgement within 1 second with a
   yielding fake scanner; separately assert checkpoint bounds without sleeps.
 
-## Private real-GUI acceptance, separately authorized
+## Revised bounded-runtime implementation acceptance (2026-09-14)
 
-Freeze exact installation/workspace/input/plan digests outside Git. Never reuse
-previous stopped/failed workspaces or staging without explicit approval.
-Separately approve each execution. First verify cancellation while preparing:
-no PHITS launch and no need to finish the full scan. Then, under a new explicit
-approval, verify a committed segment finishes naturally after a boundary-stop
-request, remaining work stays pending and Sumtally stays disabled. Record
-preflight, acknowledgement, validation and total elapsed times independently.
-Do not confuse this with batch/r.err, selective-retry or full release acceptance;
-those require their own evidence. No automatic rerun or history increase.
+The human approved the Isocenter-voxel presentation and then authorized the
+revised safe runtime implementation and synthetic verification as one bounded
+work unit. The implementation now emits explicit `selected_executable` tool
+scope, hashes only that file plus the previously bound workspace evidence, and
+normalizes historical installation-tree bindings only for comparison without
+rewriting their stored summaries. Installation sibling add/remove/rename and
+content changes are not inspected. The selected executable retains absolute-
+path, regular-file/no-link and SHA-256 checks before each child commitment.
+
+`batch.out` remains path-guarded, copied and available to the optional live
+observer, but is absent from immutable result evidence. A retained segment's
+authored `0` to `-1` edit therefore did not raise artifact mutation or authorize
+completion. Existing tests also confirmed that missing outputs, nonzero exit,
+invalid geometry, stopped/incomplete state, bad ownership/evidence and
+downstream eligibility continue to fail closed. Every declared primary output
+remains required; the selected primary 3D error companion remains required;
+the established PDD embedded-`r.err` case without a secondary companion passed.
+
+Live observation parses a complete matching manifest-selected primary 3D
+dose/error pair and publishes only the positive finite `r.err` percentage from
+the unique xyz/xy data cell whose open mesh-bin interior contains local
+isocenter `(0, 0, 0)`. Authored ordering coverage selects a nontrivial flattened
+cell. Outside-mesh, boundary, zero-value, damaged, mismatched and stale cases
+remain unavailable; the GUI contains no full-mesh statistics, PDD value or RT
+Structure fallback. This is a provisional single-reference-voxel display and
+does not affect completion, convergence, physics or downstream evidence.
+
+Focused synthetic validation used the repository `.venv`, `PYTHONUTF8=1`,
+`DICOMXPHITS_TEST_TK=1` and a fresh short ASCII `C:\\tmp` basetemp per pytest:
+
+- Runtime/observation/preflight/retry/stop: 189 passed, 1 skipped in 76.78 s.
+- GUI/downstream suite initially produced 328 passed, 1 skipped and two failures
+  because the old Tk fixture waited on an installation sibling that the revised
+  contract correctly no longer reads. The fixture was changed to block the
+  selected executable; its two cases then passed in 3.78 s. No product runtime
+  correction was needed for this failure.
+- After a final freshness-label correction, its 32 focused observation/Tk tests
+  passed in 9.58 s and the complete Tk-enabled suite passed again: 1202 passed,
+  11 skipped in 207.84 s (the prior full run also passed in 245.90 s).
+- `python -m compileall src`: passed.
+- `python tools/verify_public_tree.py`: passed, 331 tracked files.
+- Active-change strict validation passed; all 16 current specs passed strict
+  validation before promotion.
+- `git diff --check`, diff statistics and status passed before promotion.
+
+All test executions were fake-runner/authored-data or synthetic Tk checks. No
+real PHITS process, Computer Use action, private recorder, real workspace or
+external application was invoked. The prior real GUI preparation cancellation
+and one-segment boundary-stop evidence remain the real functional evidence; both
+single-invocation approvals remain consumed. The prior 2142.719-second runtime
+is not represented as a passing performance result. The synthetic bounded-scope
+tests establish removal of its known installation-wide scan cause without a new
+real invocation.
+
+## Any future real-GUI verification, separately authorized
+
+The real preparation-cancellation and committed-segment boundary-stop functional
+checks are complete; their prior one-invocation approvals are consumed. No new
+real execution is required for the proposal-only or synthetic implementation
+work above. If a later result makes another real check necessary, freeze the
+exact selected executable, workspace/input, execution conditions, destination
+and plan digests outside Git, then obtain approval for that exact one invocation.
+Never reuse a previous stopped/failed workspace or staging without explicit
+approval. Do not add automatic reruns, history increases, batch-stop features or
+immediate termination.
 
 Keep all actual paths, output text, identities, raw results and plans private.
-Report fake-test results and real verification separately. Update estimates
-after the first real check; no unconditional speed or completion promise.
+Report fake-runner/synthetic Tk results and real verification separately. A
+mutable `batch.out` observation never replaces exit, required-output, geometry,
+receipt, stop/completion, ownership or downstream evidence.

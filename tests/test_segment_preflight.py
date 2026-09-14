@@ -402,38 +402,42 @@ def test_stop_is_acknowledged_inside_post_child_verification(tmp_path, monkeypat
         validate_segment_execution_for_downstream(root, manifest, result)
 
 
-def test_same_size_same_mtime_runtime_mutation_is_detected(tmp_path):
+def test_same_size_same_mtime_selected_executable_mutation_is_detected(tmp_path):
     from dicomxphits.segment_retry import capture_binding, validate_binding
-    import os
     root, manifest, paths = workspace_fixture(tmp_path)
-    library = Path(paths.phits_root_folder) / "extra-library"
-    library.write_bytes(b"abcd")
+    executable = Path(paths.phits_executable_path)
     binding = capture_binding(root, manifest, paths)
-    stamp = library.stat()
-    library.write_bytes(b"abce")
-    os.utime(library, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    stamp = executable.stat()
+    replacement = b"changed executable identity, never launched"
+    replacement = replacement[:stamp.st_size].ljust(stamp.st_size, b"x")
+    executable.write_bytes(replacement)
+    os.utime(executable, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     with pytest.raises(ValueError, match="changed"):
         validate_binding(root, manifest, binding, paths)
 
 
-def test_many_files_enumeration_has_per_entry_checkpoints(tmp_path, monkeypatch):
-    from dicomxphits.segment_retry import _runtime_files
-    import dicomxphits.segment_preflight as module
-    runtime = tmp_path / "runtime"
-    runtime.mkdir()
+def test_runtime_binding_hashes_selected_executable_not_installation_siblings(tmp_path, monkeypatch):
+    from dicomxphits import segment_retry
+    root, manifest, paths = workspace_fixture(tmp_path)
+    runtime = Path(paths.phits_root_folder)
     for index in range(30):
-        (runtime / str(index)).write_bytes(b"x")
-    checkpoints = []
-    monkeypatch.setattr(module, "checkpoint", lambda **kwargs: checkpoints.append(kwargs))
-    assert len(list(_runtime_files(runtime, tmp_path / "workspace"))) == 30
-    assert len(checkpoints) >= 31
+        (runtime / f"library-{index}").write_bytes(b"x")
+    hashed = []
+    original = segment_retry.file_sha256
+
+    def record(path):
+        hashed.append(Path(path).resolve())
+        return original(path)
+
+    monkeypatch.setattr(segment_retry, "file_sha256", record)
+    binding = segment_retry.capture_binding(root, manifest, paths)
+    assert binding["tool"]["scope"] == "selected_executable"
+    assert "files" not in binding["tool"]
+    assert Path(paths.phits_executable_path).resolve() in hashed
+    assert not any(path.name.startswith("library-") for path in hashed)
 
 
-@pytest.mark.parametrize("scan_kind", ["enumerate", "hash"])
-def test_cancel_at_every_scanner_checkpoint_prevents_commit(tmp_path, monkeypatch, scan_kind):
-    from contextlib import closing
-    from dicomxphits.segment_retry import _runtime_files
-
+def test_cancel_at_every_hash_checkpoint_prevents_commit(tmp_path, monkeypatch):
     root, _, paths = workspace_fixture(tmp_path)
     runtime = Path(paths.phits_root_folder)
     large = runtime / "large.bin"
@@ -453,11 +457,7 @@ def test_cancel_at_every_scanner_checkpoint_prevents_commit(tmp_path, monkeypatc
         return original(session, **kwargs)
 
     def scan():
-        if scan_kind == "hash":
-            file_sha256(large)
-        else:
-            with closing(_runtime_files(runtime, root)) as entries:
-                list(entries)
+        file_sha256(large)
 
     monkeypatch.setattr(Session, "checkpoint", checkpoint)
     with WorkspaceExecutionLease(root):
@@ -517,7 +517,7 @@ def test_hash_progress_is_published_before_scan_finishes(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("mutation", ["add", "remove", "rename"])
-def test_runtime_membership_mutations_fail_closed(tmp_path, mutation):
+def test_installation_sibling_membership_is_outside_runtime_binding(tmp_path, mutation):
     from dicomxphits.segment_retry import capture_binding, validate_binding
 
     root, manifest, paths = workspace_fixture(tmp_path)
@@ -530,8 +530,7 @@ def test_runtime_membership_mutations_fail_closed(tmp_path, mutation):
         library.unlink()
     else:
         library.rename(runtime / "renamed-library")
-    with pytest.raises(ValueError, match="changed"):
-        validate_binding(root, manifest, binding, paths)
+    validate_binding(root, manifest, binding, paths)
 
 
 def test_gui_tracker_remembers_high_water_mark_after_invalid_read(tmp_path):

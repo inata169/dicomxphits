@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from copy import deepcopy
 from pathlib import Path
@@ -42,35 +41,17 @@ def _evidence(root, paths):
              "sha256": file_sha256(path)} for path in sorted(set(paths))]
 
 
-def _runtime_files(installation, workspace):
-    """Enumerate incrementally, keeping control checkpoints between entries."""
-    from dicomxphits.segment_preflight import checkpoint
-    pending = [installation]
-    while pending:
-        checkpoint()
-        with os.scandir(pending.pop()) as entries:
-            while True:
-                checkpoint()
-                entry = next(entries, None)
-                if entry is None:
-                    break
-                candidate = Path(entry.path)
-                if candidate.resolve() == workspace and entry.is_dir():
-                    continue
-                if candidate.is_symlink() or getattr(candidate.lstat(), "st_file_attributes", 0) & 0x400:
-                    raise ValueError("Linked runtime dependency is not supported")
-                if entry.is_dir(follow_symlinks=False):
-                    pending.append(candidate)
-                else:
-                    yield candidate
+def _is_link_or_reparse(path):
+    return (path.is_symlink()
+        or bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400))
 
 
 def capture_binding(root, manifest, paths, *, include_runtime=True):
     """Capture actual staged dependencies; unavailable tool evidence forbids retry.
 
-The explicitly configured installation is the bounded runtime dependency set.
-No system lookup or executable-name search is performed. Workspace contents are
-bound separately and excluded from the installation digest when nested there.
+Only the explicitly selected executable is bound as runtime identity.  No
+system lookup, executable-name search, or installation-tree enumeration is
+performed. Workspace contents are bound separately.
 """
     api = _api()
     root = root.resolve()
@@ -164,18 +145,15 @@ bound separately and excluded from the installation digest when nested there.
         pass
     elif (not executable.is_absolute() or not installation.is_absolute()
         or not executable.is_file() or not installation.is_dir()
+        or _is_link_or_reparse(executable) or _is_link_or_reparse(installation)
         or installation.resolve() == Path(installation.anchor)
         or installation.resolve() == root or root in installation.resolve().parents):
         unavailable.append("Configured PHITS installation identity is unavailable")
     else:
-        files = []
         installation = installation.resolve()
-        for candidate in _runtime_files(installation, root):
-            files.append({"path": candidate.relative_to(installation).as_posix(),
-                "sha256": file_sha256(candidate)})
         tool = {"root": str(installation), "executable": str(executable.resolve()),
             "executable_sha256": file_sha256(executable),
-            "files": sorted(files, key=lambda item: item["path"])}
+            "scope": "selected_executable"}
     return {"schema_version": BINDING_SCHEMA, "workspace_root": str(root),
         "manifest_sha256": manifest_sha256(manifest), "segment_ids": ids,
         "segments": segments, "preparation": prep, "tool": tool,
@@ -225,6 +203,42 @@ def check_binding_shape(binding):
                 raise ValueError("Duplicate segment output paths")
     if any(not isinstance(reason, str) for reason in binding["retry_unavailable"]):
         raise ValueError("Invalid retry availability")
+    tool = binding.get("tool")
+    if tool is not None:
+        if not isinstance(tool, dict):
+            raise ValueError("Malformed execution tool binding")
+        common = {"root", "executable", "executable_sha256"}
+        keys = set(tool)
+        historical = keys == common | {"files"}
+        bounded = keys == common | {"scope"}
+        if not historical and not bounded:
+            raise ValueError("Malformed execution tool binding")
+        if (not isinstance(tool.get("root"), str) or not tool["root"]
+            or not isinstance(tool.get("executable"), str) or not tool["executable"]
+            or re.fullmatch(r"[0-9a-f]{64}", str(tool.get("executable_sha256"))) is None):
+            raise ValueError("Malformed execution tool binding")
+        if historical:
+            files(tool["files"])
+        elif tool["scope"] != "selected_executable":
+            raise ValueError("Unsupported execution tool binding scope")
+
+
+def comparable_binding(binding):
+    """Return the bounded semantic view used for old/new evidence comparison."""
+    check_binding_shape(binding)
+    value = deepcopy(binding)
+    tool = value.get("tool")
+    if tool is not None:
+        # Historical v1 evidence included a full installation membership list.
+        # Keep that evidence immutable on disk, but do not enumerate or compare
+        # installation siblings when reading it under the bounded contract.
+        tool.pop("files", None)
+        tool["scope"] = "selected_executable"
+    return value
+
+
+def bindings_match(first, second):
+    return comparable_binding(first) == comparable_binding(second)
 
 
 def validate_binding(root, manifest, binding, paths=None, *, local_only=False):
@@ -250,15 +264,20 @@ def validate_binding(root, manifest, binding, paths=None, *, local_only=False):
             value.pop("retry_unavailable", None)
             for segment in value["segments"]:
                 segment.pop("environment_sha256", None)
-    if observed != expected:
+    if ((local_only and observed != expected)
+        or (not local_only and not bindings_match(observed, expected))):
         raise ValueError("Execution inputs, dependencies, or runtime changed; prepare a new workspace")
 
 
 def result_evidence(root, segment_binding):
     paths = [_local_path(root, item) for item in segment_binding["required_outputs"]]
     # Bind optional outputs if present as well, so retained logs are protected.
-    paths.extend(_local_path(root, item) for item in segment_binding["writes"]
-        if _local_path(root, item).is_file())
+    # batch.out is PHITS' mutable control/progress channel, not immutable result
+    # evidence; it remains guarded and retained by the execution path.
+    for item in segment_binding["writes"]:
+        path = _local_path(root, item)
+        if path.name != _api().ROOT_BATCH_OUT and path.is_file():
+            paths.append(path)
     with WorkspaceOutputGuard(root, read_only=True) as guard:
         for path in paths:
             guard.prepare(path)
@@ -369,7 +388,8 @@ def validate_parent(root, summary, *, seen=None):
         raise ValueError("Attempt history digest mismatch")
     old = json.loads(data)
     _api().validate_segment_execution_summary(old, require_success=False)
-    if old["execution_binding"] != summary["execution_binding"] or old["run_id"] == summary["run_id"]:
+    if (not bindings_match(old["execution_binding"], summary["execution_binding"])
+        or old["run_id"] == summary["run_id"]):
         raise ValueError("Attempt history binding mismatch")
     by_id = {i["segment_id"]: i for i in old["segments"]}
     for item in summary["segments"]:

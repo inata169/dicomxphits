@@ -844,7 +844,10 @@ def _run_segments_locked(
     *, workspace_root, paths, command_argv, runner, monotonic_clock, utc_now,
     run_id_factory, summary_writer, retry_plan=None, stop_control=None,
 ):
-    from dicomxphits.segment_retry import capture_binding, result_evidence, validate_binding, validate_results
+    from dicomxphits.segment_retry import (
+        bindings_match, capture_binding, result_evidence, validate_binding,
+        validate_results,
+    )
     workspace_root = workspace_root.expanduser().resolve()
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
@@ -972,7 +975,8 @@ def _run_segments_locked(
             active_segments = [(i, s) for i, s in active_segments if not segment_summaries[i]["retained"]]
 
         execution_binding = capture_binding(workspace_root, manifest, paths)
-        if retry_plan is not None and execution_binding != retry_plan["summary"]["execution_binding"]:
+        if (retry_plan is not None
+            and not bindings_match(execution_binding, retry_plan["summary"]["execution_binding"])):
             raise ValueError("Execution conditions changed after retry preview")
         contracts = {s["segment_id"]: s for s in execution_binding["segments"]}
         with WorkspaceOutputGuard(workspace_root) as guard:

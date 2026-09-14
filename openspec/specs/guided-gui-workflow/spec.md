@@ -341,13 +341,15 @@ The GUI SHALL keep the Tk event loop responsive while an external stage runs
 and SHALL prevent another external stage from starting concurrently. It SHALL
 continue to use each accepted adapter's existing timeout and failure evidence
 rather than adding a bypassing process-cancellation path. The explicit owned
-PHITS stop-after-current request SHALL be the sole segment-control exception:
-it requests a verified boundary, not child termination or another stage launch.
+PHITS stop-after-current request SHALL request a verified boundary, not child
+termination or another stage launch. The distinct owned Cancel preparation
+action MAY cancel preflight only under the `phits-preflight-control` contract
+before any PHITS child commitment; it MUST NOT cancel a committed child.
 
 #### Scenario: Stage in progress
 
 - **WHEN** one external stage is running
-- **THEN** other stage actions remain disabled until a controlled result, with only the supported stop-after-current control available for its owning PHITS invocation
+- **THEN** other stage actions remain disabled until a controlled result, with only the applicable owned preflight or segment-boundary control available
 
 ### Requirement: Synthetic GUI Validation Boundary
 
@@ -628,11 +630,15 @@ invocation started by that GUI action, and keep the Tk event loop responsive.
 
 Before one active segment completes successfully, the GUI SHALL state that the
 estimate is unavailable pending initial evidence. Every displayed remaining
-time and finish time MUST be labelled approximate. Optional batch and per-cell
-relative-error detail SHALL come only from the invocation-bound observation
-sidecar under the `phits-live-observation` contract, in a separately labelled
-provisional detail area. It MUST NOT claim statistical convergence, a verified
-PHITS result still being written, or replace the segment-based ETA calculation.
+time and finish time MUST be labelled approximate. Optional batch and
+Isocenter-voxel relative-error detail SHALL come only from the invocation-bound
+observation sidecar under the `phits-live-observation` contract, in a separately
+labelled provisional detail area. The relative-error label MUST identify a
+single reference voxel and MUST NOT imply whole-volume, ROI, combined-dose or
+clinical uncertainty. The GUI MUST NOT display PDD-derived, full-mesh aggregate
+or RT Structure relative-error statistics in this change. Observation MUST NOT
+claim statistical convergence, a verified PHITS result still being written, or
+replace the segment-based ETA calculation.
 
 A persisted running record whose invocation is not owned by an active GUI
 process SHALL be presented as interrupted and incomplete rather than currently
@@ -678,13 +684,17 @@ enable Sumtally.
 
 #### Scenario: Optional detail is available
 
-- **WHEN** the current owned segment has a supported provisional observation
-- **THEN** the GUI shows its remaining-batch and per-cell error facts with sample age and coverage, separately from authoritative segment completion
+- **WHEN** the current owned segment has supported provisional batch or a
+  unique Isocenter-containing-voxel observation
+- **THEN** the GUI shows the available remaining-batch and single-voxel `r.err`
+  facts with independent sample ages, separately from authoritative completion
 
 #### Scenario: Optional detail is unavailable
 
-- **WHEN** observation is stale, unsupported, malformed or absent
-- **THEN** the GUI labels that limitation while preserving normal segment progress and existing stop/retry controls
+- **WHEN** observation is stale, unsupported, malformed, absent, or isocenter
+  is outside the mesh or on a bin boundary
+- **THEN** the GUI labels that limitation without interpolation or another-
+  source fallback while preserving normal progress and stop/retry controls
 
 ### Requirement: Guided Incomplete Segment Execution
 
@@ -757,3 +767,34 @@ segment action. Full-run ETA MUST NOT be presented as a guaranteed stop time.
 
 - **WHEN** a workspace lacks current owned stop-capable and retry-capable evidence
 - **THEN** the GUI explains that boundary stopping is unavailable and does not infer eligibility or offer process killing
+
+### Requirement: Distinct Preparation and Verification Presentation
+
+The GUI SHALL display owned preparation/verification phases, elapsed time and
+bounded workspace/executable file and byte counts separately from segment and
+provisional batch progress. It MUST NOT describe those counts as installation-
+wide scanning. The GUI SHALL treat `batch.out` detail as mutable, provisional
+observation rather than immutable completion evidence.
+It SHALL distinguish Cancel preparation from Stop after current segment, and
+request sent from durable acknowledgement and terminal cancellation/stopping.
+It MUST NOT describe an active segment when none is committed, invent ETA or
+claim retry eligibility from a preflight receipt. Terminal preflight cancellation
+SHALL keep Sumtally disabled and offer only fresh explicitly confirmed preflight.
+
+#### Scenario: User cancels before PHITS starts
+
+- **WHEN** the controller exits 5 with a matching validated cancellation receipt
+- **THEN** the GUI shows preparation cancelled with no PHITS launched, not completed or v5 user-stopped
+
+#### Scenario: Verification continues after stop acknowledgement
+
+- **WHEN** no child is running but required result validation remains
+- **THEN** the GUI says verification is pending and does not claim a current segment is still calculating
+
+#### Scenario: Mutable batch detail changes
+
+- **WHEN** an owned invocation's observed `batch.out` remaining-batch value is
+  edited from `0` to `-1`
+- **THEN** the GUI may mark provisional batch detail unavailable but does not
+  report artifact mutation, normal completion or verified stopping from that
+  value alone

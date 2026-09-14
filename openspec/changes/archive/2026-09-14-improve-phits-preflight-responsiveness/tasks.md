@@ -6,8 +6,17 @@
 - [x] Document bounded design, safety trade-offs and proposed acceptance tests.
 - [x] Validate proposal and full public checks; record exact results (including environment-dependent failures in verification-plan.md).
 - [x] Obtain human approval of this proposal before runtime implementation.
+- [x] Record the completed real boundary-stop result and its installation-scan
+  performance rejection.
+- [x] Revise the active contract for selected-executable checks and mutable
+  `batch.out`; validate it strictly before runtime work.
+- [x] Obtain the product decision to display only the primary 3D dose
+  Isocenter-voxel `r.err`, excluding PDD, whole-volume and RT Structure
+  statistics from this change.
+- [x] Obtain fresh human approval of the revised contract before runtime work
+  (2026-09-14; safe implementation and synthetic verification authorized).
 
-## Implementation (approved; acceptance pending)
+## Implementation
 
 - [x] Add strict owned preflight receipt and compatibility/downstream precedence rules.
 - [x] Add incremental scanner progress/checkpoints without narrowing membership or hashes.
@@ -17,20 +26,43 @@
 - [x] Add GUI phase/count presentation, distinct controls and explicit recovery guidance.
 - [x] Pass all synthetic acceptance scenarios in verification-plan.md (including opt-in Tk; 2026-09-10 final synthetic run).
 - [x] Obtain exact approval and pass real GUI preparation-progress/cancellation acceptance (2026-09-11; no PHITS launch, controller exit 5, complete OS evidence).
-- [ ] Obtain separate exact approval and perform remaining real committed-segment boundary-stop verification.
-- [x] Run focused checks, compile, full pytest, public-tree audit and strict OpenSpec validation (2026-09-11 after successful real GUI preparation cancellation: 1199 passed, 11 skipped; remaining real boundary-stop acceptance still open; rerun after further edits).
-- [ ] Review diff/status and obtain acceptance; only then promote deltas and archive this change.
+- [x] Obtain separate exact approval and pass real committed-segment
+  boundary-stop verification (2026-09-11; one segment completed, later segments
+  remained pending, downstream disabled and ownership released).
+- [x] Run focused checks, compile, full pytest, public-tree audit and strict
+  OpenSpec validation at the 2026-09-11 checkpoint (1200 passed, 11 skipped;
+  rerun after the revised implementation).
+- [x] Remove recursive installation membership/hash capture and add bounded
+  selected-executable launch-time validation with explicit evidence scope and
+  historical-reader compatibility.
+- [x] Exclude mutable PHITS `batch.out` content from required immutable result
+  evidence while preserving observation, retention and path safety.
+- [x] Update synthetic/fake-runner regression coverage for installation-scan
+  removal, executable mutation and mutable `batch.out` without weakening
+  completion, stop, ownership or downstream gates.
+- [x] Replace full-mesh relative-error statistics with the unique Isocenter-
+  containing voxel reference value and add boundary/outside/no-fallback coverage.
+- [x] Rerun focused checks and the required full validation after implementation
+  (2026-09-14; 1202 passed, 11 skipped; Tk enabled).
+- [x] On accepted completion, promote the revised live-observation purpose and
+  deltas before archiving the active change.
+- [x] Review diff/status and confirm that all synthetic and prior real functional
+  acceptance conditions are satisfied before promotion/archive.
 
-Do not archive while approval, implementation or required verification remains
-outstanding. Release remains a separately gated workflow, without a custom ZIP.
+All approval, implementation and required verification conditions are now met;
+promotion/archive is the remaining in-scope cleanup. Release remains a
+separately gated workflow, without a custom ZIP.
 
-Current blocker: real committed-segment boundary stopping remains unverified and
-needs a freshly frozen plan and exact approval after the bounded result-evidence
-correction. Real GUI preparation progress and
-cancellation now pass after the bounded receipt fix: Run/Cancel once, durable
-owned cancelled_before_launch receipt, controller exit 5, no PHITS launch, complete
-six-member OS evidence, released ownership and downstream blocked. That single
-invocation approval is consumed. The earlier diagnostic history below is retained.
+## Historical diagnostic log (superseded by the completed 2026-09-14 work)
+
+Historical checkpoint blocker: the real committed-segment boundary-stop behavior passed, but
+the controller's repeated installation-wide membership and SHA-256 scans made
+performance acceptance fail. The revised bounded executable/`batch.out`
+contract was awaiting human approval before runtime implementation. No new real
+PHITS invocation is authorized or currently required. Real GUI preparation
+cancellation also passed earlier; both one-invocation approvals are consumed.
+The diagnostic history below is retained as historical evidence and does not
+override this current blocker.
 An earlier separately approved real-GUI Run reached preparation but failed on
 preflight receipt replacement with WinError 5 and natural controller exit 2.
 No cancellation request or PHITS launch occurred. Complete OS evidence and raw

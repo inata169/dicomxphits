@@ -83,7 +83,8 @@ def test_real_tk_observation_updates_stale_resets_and_layout(tmp_path, monkeypat
             guard.begin("run_segments")
             paint()
             assert "remaining batches 9" in status.get()
-            assert "median 10%" in status.get() and "provisional" in status.get()
+            assert "Isocenter voxel r.err 10%" in status.get()
+            assert "single reference voxel" in status.get() and "provisional" in status.get()
             labels = [w for w in state["phits_frame"].winfo_children()
                 if "textvariable" in w.keys() and str(w.cget("textvariable")) == str(status)]
             assert len(labels) == 1 and labels[0].winfo_ismapped()
@@ -108,7 +109,7 @@ def test_real_tk_observation_updates_stale_resets_and_layout(tmp_path, monkeypat
             review_pause()
             summary["run_id"] = "different-invocation"
             paint()
-            assert "unavailable" in status.get() and "median" not in status.get()
+            assert "unavailable" in status.get() and "Isocenter voxel" not in status.get()
             state["values"]["workspace_root"].set(str(tmp_path / "different"))
             paint()
             assert "workspace selection changed" in status.get()

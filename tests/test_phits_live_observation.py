@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 from dicomxphits.phits_observation_format import (
-    Mesh, ObservationError, parse_batch, parse_identity, parse_tally,
-    paired_statistics, prepared_contract,
+    Mesh, ObservationError, isocenter_flat_index, paired_isocenter_error,
+    parse_batch, parse_identity, parse_tally, prepared_contract,
 )
 from dicomxphits.phits_observation import (
     Candidate, Observer, Presentation, SCHEMA, RELATIVE_PATH, read_snapshot,
@@ -23,7 +23,7 @@ from dicomxphits.phits_observation import (
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.workspace_execution import WorkspaceExecutionLease, WorkspaceBusyError
 
-MESH = Mesh("Authored observation fixture", "dose.out", (2, 2, 2), ((-1., 1.),)*3)
+MESH = Mesh("Authored observation fixture", "dose.out", (2, 2, 2), ((-1.5, .5),)*3)
 
 
 def deck():
@@ -33,7 +33,7 @@ def deck():
 def header(output=True):
     rows = ["title = Authored observation fixture", "mesh = xyz"]
     for axis in "xyz":
-        rows += [f"{axis}-type = 2", f"{axis}min = -1.000000", f"{axis}max = 1.000000", f"n{axis} = 2"]
+        rows += [f"{axis}-type = 2", f"{axis}min = -1.500000", f"{axis}max = 0.500000", f"n{axis} = 2"]
     rows += ["unit = 0", "material = all", "output = dose", "axis = xy", "file = dose.out", "part = all", "epsout = 1"]
     if output:
         rows += ["letmat = 0", "dedxfnc = 0", "deposit = 0", "2D-type = 3", "mother = all"]
@@ -47,13 +47,13 @@ def tally(role="dose", values=None, histories=10, seed="0"*64):
         if index > 1:
             rows.append(" newpage:")
         rows += [f"#   no. = {index:2d}   iz  = {index:2d}   part. = all",
-            f"#   z = ( {index-2:.4E} - {index-1:.4E} )",
+            f"#   z = ( {-1.5 + index-1:.4E} - {-1.5 + index:.4E} )",
             f"'no. = {index:2d},  iz = {index:2d}'",
             "msuc: {Authored observation fixture}",
             r"msdl: {\it calculated by \PHITS  3.35}",
             "#  ny =   2   nx =   2",
             "# ( ( data(x,y), x = 1, nx ), y = ny, 1, -1 )", "",
-            "hc:  y = 0.5000000 to -0.5000000 by 1.000000 ; x = -0.5000000 to 0.5000000 by 1.000000 ;",
+            "hc:  y = 0.0000000 to -1.0000000 by 1.000000 ; x = -1.0000000 to 0.0000000 by 1.000000 ;",
             " ".join(str(v) for v in values[(index-1)*4:index*4]), "",
             "#"+"-"*78,
             "hc: y= 0.005 to 0.995 by 0.01 ; x= 0.5 to 0.5 by 1 ;",
@@ -78,15 +78,27 @@ def batch(remaining=9):
 
 
 def stats(dose=None, errors=None):
-    return paired_statistics(tally(values=dose), tally("error", errors), MESH, 10, time.monotonic()+2)
+    return paired_isocenter_error(
+        tally(values=dose), tally("error", errors), MESH, 10,
+        time.monotonic()+2,
+    )
 
 
-def test_prepared_mesh_and_complete_fixture_statistics():
+def test_prepared_mesh_and_complete_fixture_isocenter_error():
     mesh, runtime = prepared_contract(deck(), "dose.out")
     assert mesh == MESH and runtime == {"maxcas": 10, "maxbch": 10, "threads": 2}
     result = stats([0, 1, 1, 1, 1, 1, 1, 1], [0, 0, .1, .2, .3, .4, .5, 2.0])
-    assert result == {"total_cells": 8, "valid_cells": 6, "excluded_cells": 2,
-        "coverage": .75, "median_percent": 35.0, "maximum_percent": 200.0}
+    assert isocenter_flat_index(MESH) == 5
+    assert result == {"relative_error_percent": 40.0}
+
+
+@pytest.mark.parametrize("mesh", [
+    Mesh("outside", "dose.out", (2, 2, 2), ((1., 3.), (-1.5, .5), (-1.5, .5))),
+    Mesh("boundary", "dose.out", (2, 2, 2), ((-1., 1.), (-1.5, .5), (-1.5, .5))),
+])
+def test_isocenter_without_unique_containing_voxel_is_unavailable(mesh):
+    with pytest.raises(ObservationError, match="isocenter-unavailable"):
+        isocenter_flat_index(mesh)
 
 
 @pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), "1"*65])
@@ -97,9 +109,11 @@ def test_invalid_numeric_sample_is_rejected(value, role):
         stats(values if role == "dose" else None, values if role == "error" else None)
 
 
-def test_zero_cells_are_unavailable_not_zero_error():
-    with pytest.raises(ObservationError, match="no-evaluable-cells"):
-        stats(errors=[0]*8)
+def test_zero_isocenter_cell_is_unavailable_not_zero_error():
+    values = [.1] * 8
+    values[5] = 0
+    with pytest.raises(ObservationError, match="isocenter-unavailable"):
+        stats(errors=values)
 
 
 @pytest.mark.parametrize("damage", ["slice", "extra_cells", "history", "seed", "ending", "role", "mesh", "version", "legend"])
@@ -124,7 +138,7 @@ def test_structural_and_pair_damage_rejected(damage):
     elif damage == "legend":
         error = error.replace(b"98 99 100", b"98 99")
     with pytest.raises(ObservationError):
-        paired_statistics(tally(), error, MESH, 10, time.monotonic()+2)
+        paired_isocenter_error(tally(), error, MESH, 10, time.monotonic()+2)
 
 
 def test_limits_apply_before_numeric_allocation():
@@ -189,7 +203,7 @@ def observer_fixture(tmp_path):
 def test_observer_rejects_torn_mismatch_and_counter_regression(tmp_path):
     observer, _ = observer_fixture(tmp_path)
     assert observer.sample()["error"]["value"] is None
-    assert observer.sample()["error"]["value"]["valid_cells"] == 8
+    assert observer.sample()["error"]["value"] == {"relative_error_percent": 10.0}
     observer.error_path.write_bytes(tally("error", histories=20))
     assert observer.sample()["error"]["state"] == "stale"
     observer.error_path.write_bytes(tally("error")[:300])
@@ -233,7 +247,10 @@ def test_presentation_generation_corruption_stale_and_terminal(tmp_path):
     target.write_text(json.dumps(record))
     display = Presentation()
     now = time.monotonic()
-    assert "median 10%" in display.refresh(tmp_path, summary, active=True, now=now)
+    rendered = display.refresh(tmp_path, summary, active=True, now=now)
+    assert "Isocenter voxel r.err 10%" in rendered
+    assert "single reference voxel" in rendered
+    assert "median" not in rendered and "max" not in rendered
     assert "stale" in display.refresh(tmp_path, summary, active=True, now=now+6)
     changed = deepcopy(summary)
     changed["run_id"] = "next"
