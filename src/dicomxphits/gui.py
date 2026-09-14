@@ -237,6 +237,7 @@ STRUCTURE_EVALUATION_UPSTREAM_STAGES = frozenset(
         "run_sumtally",
     }
 )
+STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS = 1_000
 
 
 def structure_roi_number(value: str) -> int:
@@ -4148,6 +4149,56 @@ def _build_gui() -> int:
             )
             set_busy(None)
 
+            root.after(
+                STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS,
+                lambda: revalidate_retained_result(result),
+            )
+
+        def revalidate_retained_result(expected_result: dict[str, object]) -> None:
+            if not request_is_current():
+                return
+
+            def finish_revalidation() -> None:
+                if not request_is_current():
+                    return
+                root.after(
+                    STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS,
+                    lambda: revalidate_retained_result(expected_result),
+                )
+
+            def invalidate_stale_result(message: str) -> None:
+                if not request_is_current():
+                    return
+                invalidate_structure_evaluation_result(
+                    "Unavailable: displayed Structure result evidence changed; "
+                    "request evaluation again."
+                )
+                append(
+                    "Post-completion Structure r.err result invalidated after "
+                    f"evidence revalidation failed: {message}",
+                    "warning",
+                )
+
+            def verifier() -> None:
+                try:
+                    from dicomxphits.structure_relative_error import (
+                        revalidate_structure_relative_error_result,
+                    )
+
+                    revalidate_structure_relative_error_result(
+                        **request,
+                        expected_result=expected_result,
+                    )
+                except Exception as exc:
+                    root.after(
+                        0,
+                        lambda detail=str(exc): invalidate_stale_result(detail),
+                    )
+                    return
+                root.after(0, finish_revalidation)
+
+            threading.Thread(target=verifier, daemon=True).start()
+
         def finish_error(message: str) -> None:
             if not request_is_current():
                 discard_stale_completion()
@@ -4164,9 +4215,14 @@ def _build_gui() -> int:
             try:
                 from dicomxphits.structure_relative_error import (
                     evaluate_structure_relative_error,
+                    revalidate_structure_relative_error_result,
                 )
 
                 result = evaluate_structure_relative_error(**request)
+                result = revalidate_structure_relative_error_result(
+                    **request,
+                    expected_result=result,
+                )
             except Exception as exc:
                 root.after(0, lambda detail=str(exc): finish_error(detail))
                 return

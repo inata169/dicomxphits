@@ -29,6 +29,7 @@ from dicomxphits.structure_relative_error import (
     _values_in_rtdose_order,
     evaluate_structure_relative_error,
     format_structure_relative_error,
+    revalidate_structure_relative_error_result,
     validate_combined_tally_pair,
 )
 from dicomxphits.workspace_recovery import normalize_relocated_sumtally_summaries
@@ -272,6 +273,8 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
+    rtstruct_path = tmp_path / "RTSTRUCT.dcm"
+    rtstruct_path.write_bytes(b"synthetic RT Structure Set placeholder")
     binding = {
         "manifest_sha256": "1" * 64,
         "tally_geometry_binding": {"mesh_geometry": GEOMETRY},
@@ -317,12 +320,12 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
         lambda *_args, **_kwargs: (
             np.ones((1, 2, 2), dtype=bool),
             "Synthetic PTV",
-            "8" * 64,
+            module.file_sha256(rtstruct_path),
         ),
     )
     request = {
         "workspace_root": workspace,
-        "rtstruct_path": tmp_path / "RTSTRUCT.dcm",
+        "rtstruct_path": rtstruct_path,
         "roi_number": 7,
         "rtplan_path": tmp_path / "RTPLAN.dcm",
         "ct_reference_path": tmp_path / "CT.dcm",
@@ -354,9 +357,42 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
 
     repeated = evaluate_structure_relative_error(**request)
     assert repeated["evaluation_sha256"] == result["evaluation_sha256"]
+    monkeypatch.setattr(
+        module,
+        "load_rtstruct_roi_mask_by_number",
+        lambda *_args, **_kwargs: pytest.fail(
+            "retained-result validation must not reevaluate Structure membership"
+        ),
+    )
+    revalidated = revalidate_structure_relative_error_result(
+        **request,
+        expected_result=result,
+    )
+    assert revalidated["evaluation_sha256"] == result["evaluation_sha256"]
+
+    pair["dose_sha256"] = "a" * 64
+    with pytest.raises(StructureRelativeErrorUnavailable, match="identity.*stale"):
+        revalidate_structure_relative_error_result(
+            **request,
+            expected_result=result,
+        )
+    assert list(persisted_path.parent.glob("*.json")) == [persisted_path]
+    pair["dose_sha256"] = "2" * 64
+
+    rtstruct_path.write_bytes(b"changed synthetic RT Structure Set placeholder")
+    with pytest.raises(StructureRelativeErrorUnavailable, match="identity.*stale"):
+        revalidate_structure_relative_error_result(
+            **request,
+            expected_result=result,
+        )
+    rtstruct_path.write_bytes(b"synthetic RT Structure Set placeholder")
+
     persisted_path.write_text("{}\n", encoding="utf-8")
     with pytest.raises(StructureRelativeErrorUnavailable, match="stale|mismatched"):
-        evaluate_structure_relative_error(**request)
+        revalidate_structure_relative_error_result(
+            **request,
+            expected_result=result,
+        )
     assert persisted_path.read_text(encoding="utf-8") == "{}\n"
 
 

@@ -54,8 +54,10 @@
   (2026-09-14; focused 339 passed and 1 skipped; full 1238 passed and 11
   skipped; review round 1 focused 140 passed and 1 skipped; review round 1
   full 1239 passed and 11 skipped; review round 2 focused 141 passed and 1
-  skipped; review round 2 full 1240 passed and 11 skipped; compileall,
-  public-tree audit, and diff checks passed).
+  skipped; review round 2 full 1240 passed and 11 skipped; review round 3
+  focused 284 passed and 1 skipped; review round 3 full 1239 passed and 12
+  skipped; compileall, OpenSpec strict validation, public-tree audit, and diff
+  checks passed).
 - [x] Promote accepted deltas, archive the completed change, and strictly
   validate the resulting specification tree (2026-09-14).
 

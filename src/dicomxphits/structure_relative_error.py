@@ -632,6 +632,31 @@ def _publish_new_record(
     return _read_exact_record(path, record)
 
 
+def _identity_evidence(
+    *,
+    sumtally_binding: dict[str, Any],
+    pair_evidence: dict[str, Any],
+    rtstruct_sha256: str,
+    roi_number: int,
+    ct_evidence: dict[str, Any],
+    placement: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "threshold_rule": THRESHOLD_RULE,
+        "statistics_rule": STATISTICS_RULE,
+        "manifest_sha256": sumtally_binding["manifest_sha256"],
+        "sumtally_binding_sha256": _canonical_sha256(sumtally_binding),
+        "combined_pair_evidence_sha256": _canonical_sha256(pair_evidence),
+        "combined_dose_sha256": pair_evidence["dose_sha256"],
+        "combined_error_sha256": pair_evidence["error_sha256"],
+        "rtstruct_sha256": rtstruct_sha256,
+        "roi_number": roi_number,
+        **ct_evidence,
+        "rtdose_placement_sha256": _canonical_sha256(placement),
+    }
+
+
 def evaluate_structure_relative_error(
     *,
     workspace_root: Path,
@@ -717,24 +742,14 @@ def evaluate_structure_relative_error(
                 eligible_count = int(np.count_nonzero(eligible))
                 statistics = _statistics_percent(error_grid[eligible])
 
-                identity_evidence = {
-                    "contract_version": CONTRACT_VERSION,
-                    "threshold_rule": THRESHOLD_RULE,
-                    "statistics_rule": STATISTICS_RULE,
-                    "manifest_sha256": sumtally_binding["manifest_sha256"],
-                    "sumtally_binding_sha256": _canonical_sha256(
-                        sumtally_binding
-                    ),
-                    "combined_pair_evidence_sha256": _canonical_sha256(
-                        pair_evidence
-                    ),
-                    "combined_dose_sha256": pair_evidence["dose_sha256"],
-                    "combined_error_sha256": pair_evidence["error_sha256"],
-                    "rtstruct_sha256": rtstruct_sha256,
-                    "roi_number": roi_number,
-                    **ct_evidence,
-                    "rtdose_placement_sha256": _canonical_sha256(placement),
-                }
+                identity_evidence = _identity_evidence(
+                    sumtally_binding=sumtally_binding,
+                    pair_evidence=pair_evidence,
+                    rtstruct_sha256=rtstruct_sha256,
+                    roi_number=roi_number,
+                    ct_evidence=ct_evidence,
+                    placement=placement,
+                )
                 evaluation_sha256 = _canonical_sha256(identity_evidence)
                 record = {
                     "schema_version": SCHEMA_VERSION,
@@ -770,6 +785,87 @@ def evaluate_structure_relative_error(
     return {
         **published,
         "display_roi_name": roi_name,
+        "result_path": str(result_path),
+    }
+
+
+def revalidate_structure_relative_error_result(
+    *,
+    workspace_root: Path,
+    rtstruct_path: Path,
+    roi_number: int,
+    rtplan_path: Path,
+    ct_reference_path: Path,
+    expected_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Revalidate one exact persisted result without publishing another result."""
+
+    root = Path(os.path.abspath(os.fspath(workspace_root)))
+    if not root.is_dir() or _is_link_or_junction(root):
+        raise StructureRelativeErrorUnavailable(
+            "workspace root must be an existing non-link directory"
+        )
+    from dicomxphits.workspace_execution import WorkspaceExecutionLease
+
+    try:
+        with WorkspaceOutputGuard(root):
+            with WorkspaceExecutionLease(root):
+                _dose, _error, _mesh, sumtally_binding, pair_evidence = (
+                    _current_combined_source(root)
+                )
+                _series, ct_evidence = _frozen_ct_series(
+                    ct_reference_path,
+                    workspace_root=root,
+                )
+                plan_evidence = validate_full_plan_context(
+                    rtplan_path=rtplan_path,
+                    workspace_root=root,
+                    ct_reference_path=ct_reference_path,
+                )
+                placement = derive_rtdose_placement(
+                    sumtally_binding["tally_geometry_binding"]["mesh_geometry"],
+                    rtplan_isocenter_dicom_mm=plan_evidence[
+                        "rtplan_isocenter_dicom_mm"
+                    ],
+                )
+                _rtstruct_raw, rtstruct_sha256 = _stable_regular_bytes(
+                    rtstruct_path,
+                    label="selected RT Structure Set",
+                )
+                identity_evidence = _identity_evidence(
+                    sumtally_binding=sumtally_binding,
+                    pair_evidence=pair_evidence,
+                    rtstruct_sha256=rtstruct_sha256,
+                    roi_number=roi_number,
+                    ct_evidence=ct_evidence,
+                    placement=placement,
+                )
+                evaluation_sha256 = _canonical_sha256(identity_evidence)
+                if expected_result.get("evaluation_sha256") != evaluation_sha256:
+                    raise StructureRelativeErrorUnavailable(
+                        "the displayed Structure relative-error result identity "
+                        "is stale or mismatched"
+                    )
+                result_path = (
+                    root / RESULT_RELATIVE_ROOT / f"{evaluation_sha256}.json"
+                )
+                if expected_result.get("result_path") != str(result_path):
+                    raise StructureRelativeErrorUnavailable(
+                        "the displayed Structure relative-error result path is mismatched"
+                    )
+                expected_record = {
+                    key: value
+                    for key, value in expected_result.items()
+                    if key not in {"display_roi_name", "result_path"}
+                }
+                persisted = _read_exact_record(result_path, expected_record)
+    except StructureRelativeErrorUnavailable:
+        raise
+    except Exception as exc:
+        raise StructureRelativeErrorUnavailable(str(exc)) from exc
+    return {
+        **persisted,
+        "display_roi_name": expected_result.get("display_roi_name", ""),
         "result_path": str(result_path),
     }
 
