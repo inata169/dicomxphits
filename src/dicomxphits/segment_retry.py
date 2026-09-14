@@ -8,7 +8,12 @@ from copy import deepcopy
 from pathlib import Path, PurePosixPath
 
 from dicomxphits.safe_output import WorkspaceOutputGuard
-from dicomxphits.sumtally_inputs import checked_text_lines, file_sha256, manifest_sha256
+from dicomxphits.sumtally_inputs import (
+    checked_file_bytes,
+    checked_text_lines,
+    file_sha256,
+    manifest_sha256,
+)
 from dicomxphits.workspace_execution import LOCK_NAME, WorkspaceExecutionLease
 
 BINDING_SCHEMA = "dicomxphits_segment_execution_binding_v1"
@@ -419,7 +424,7 @@ def plan_incomplete(root, paths, *, expected_summary_sha256=None):
         source_path = api.summary_path(root)
         with WorkspaceOutputGuard(root, read_only=True) as guard:
             guard.prepare(source_path)
-            source_bytes = source_path.read_bytes()
+            source_bytes = checked_file_bytes(source_path)
         source_digest = hashlib.sha256(source_bytes).hexdigest()
         if expected_summary_sha256 is not None and source_digest != expected_summary_sha256:
             raise ValueError("Retry preview changed; create a new preview")
@@ -460,7 +465,7 @@ def validate_parent(root, summary, *, seen=None):
         raise ValueError("Unsafe attempt history path")
     with WorkspaceOutputGuard(root, read_only=True) as guard:
         guard.prepare(path)
-        data = path.read_bytes()
+        data = checked_file_bytes(path)
     if hashlib.sha256(data).hexdigest() != parent.get("sha256"):
         raise ValueError("Attempt history digest mismatch")
     old = json.loads(data)

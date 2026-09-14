@@ -82,6 +82,21 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def checked_file_bytes(path: Path) -> bytes:
+    """Read one file with cancellation checks and bounded I/O calls."""
+
+    from dicomxphits.segment_preflight import checkpoint
+
+    checkpoint()
+    chunks: list[bytes] = []
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(SCAN_CHUNK_BYTES), b""):
+            chunks.append(chunk)
+            checkpoint(size=len(chunk))
+    checkpoint(files=1)
+    return b"".join(chunks)
+
+
 def manifest_sha256(manifest: dict[str, Any]) -> str:
     """Return a stable digest that binds Sumtally evidence to one manifest."""
 

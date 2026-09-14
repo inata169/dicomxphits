@@ -411,6 +411,68 @@ def test_cancellation_write_failure_is_not_success(tmp_path, monkeypatch):
     assert read_receipt(root)["phase"] == "failed"
 
 
+@pytest.mark.parametrize("large_summary", ["source", "parent"])
+def test_cancel_during_retry_summary_read_is_bounded(
+    tmp_path,
+    monkeypatch,
+    large_summary,
+):
+    root, _, paths, current = partial(tmp_path)
+    if large_summary == "parent":
+        current = run_segments(
+            workspace_root=root,
+            paths=paths,
+            run_incomplete=True,
+            runner=runner_for(root, fail={"seg_002"}),
+        )
+        target = root / current["parent_attempt"]["path"]
+    else:
+        target = summary_path(root)
+    target_summary = json.loads(target.read_text(encoding="utf-8"))
+    target_summary["failure_reason"] = "x" * (2 * 1024 * 1024 + 17)
+    target.write_text(json.dumps(target_summary), encoding="utf-8")
+    if large_summary == "parent":
+        current["parent_attempt"]["sha256"] = file_sha256(target)
+        summary_path(root).write_text(json.dumps(current), encoding="utf-8")
+    before = {
+        path: (path.read_bytes(), path.stat().st_mtime_ns)
+        for path in (summary_path(root), target)
+    }
+    control = StopControl()
+    original_checkpoint = Session.checkpoint
+    chunks = []
+    queued = False
+
+    def checkpoint(session, *, files=0, size=0):
+        nonlocal queued
+        if size == 1024 * 1024:
+            chunks.append(size)
+            if not queued:
+                queued = True
+                cancel(control, root)
+        return original_checkpoint(session, files=files, size=size)
+
+    monkeypatch.setattr(Session, "checkpoint", checkpoint)
+    receipt = run_segments(
+        workspace_root=root,
+        paths=paths,
+        preflight_nonce="nonce",
+        run_incomplete=True,
+        run_id_factory=lambda: "preflight-run",
+        stop_control=control,
+        expected_summary_sha256=file_sha256(summary_path(root)),
+        runner=lambda *args, **kwargs: pytest.fail("retry summary read launched PHITS"),
+    )
+
+    assert receipt["phase"] == "cancelled_before_launch"
+    assert receipt["child_committed"] is False
+    assert chunks == [1024 * 1024]
+    assert all(
+        (path.read_bytes(), path.stat().st_mtime_ns) == evidence
+        for path, evidence in before.items()
+    )
+
+
 def test_selective_preflight_cancel_preserves_original_attempt(tmp_path, monkeypatch):
     root, _, paths, _ = partial(tmp_path)
     current = json.loads(summary_path(root).read_text(encoding="utf-8"))
