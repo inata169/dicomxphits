@@ -6,6 +6,7 @@ import os
 import subprocess
 import threading
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -600,6 +601,67 @@ def test_same_size_same_mtime_selected_executable_mutation_is_detected(tmp_path)
     os.utime(executable, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     with pytest.raises(ValueError, match="changed"):
         validate_binding(root, manifest, binding, paths)
+
+
+def test_selected_executable_with_linked_ancestor_is_rejected_before_launch(tmp_path):
+    from dicomxphits.prepare_3dcrt_workspace import write_libpath
+    from dicomxphits import segment_retry
+
+    root, manifest, paths = workspace_fixture(tmp_path, segment_count=1)
+    installation = tmp_path / "configured-installation"
+    real_bin = tmp_path / "real-bin"
+    installation.mkdir()
+    real_bin.mkdir()
+    executable = real_bin / "synthetic-executable"
+    executable.write_bytes(b"synthetic executable identity, never launched")
+    linked_bin = installation / "bin"
+    if os.name == "nt":
+        trusted_cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        result = subprocess.run(
+            [
+                str(trusted_cmd),
+                "/d",
+                "/c",
+                "mklink",
+                "/J",
+                str(linked_bin),
+                str(real_bin),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode != 0:
+            pytest.skip(f"junction creation is unavailable: {result.stdout}{result.stderr}")
+    else:
+        linked_bin.symlink_to(real_bin, target_is_directory=True)
+    linked_paths = replace(
+        paths,
+        phits_root_folder=str(installation.resolve()),
+        phits_executable_path=str(linked_bin / executable.name),
+    )
+    write_libpath(root, phits_root_folder=str(installation.resolve()))
+
+    binding = segment_retry.capture_binding(root, manifest, linked_paths)
+    assert binding["tool"] is None
+    assert binding["retry_unavailable"] == [
+        "Configured PHITS installation identity is unavailable"
+    ]
+    with pytest.raises(ValueError, match="executable changed before child commitment"):
+        run_segments(
+            workspace_root=root,
+            paths=linked_paths,
+            preflight_nonce="nonce",
+            run_id_factory=lambda: "preflight-run",
+            runner=lambda *args, **kwargs: pytest.fail(
+                "linked-ancestor executable was launched"
+            ),
+        )
+    receipt = read_receipt(root, nonce="nonce")
+    assert receipt["phase"] == "failed"
+    assert receipt["child_committed"] is False
 
 
 def test_selected_executable_is_rechecked_after_result_validation_before_commit(

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
@@ -51,12 +52,24 @@ def _is_link_or_reparse(path):
         or bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400))
 
 
+def _has_link_or_reparse_component(path):
+    candidate = Path(os.path.abspath(path))
+    try:
+        return any(
+            _is_link_or_reparse(component)
+            for component in (candidate, *candidate.parents)
+        )
+    except OSError:
+        return True
+
+
 def _selected_executable_evidence(root, paths):
     executable = Path(paths.phits_executable_path or "")
     installation = Path(paths.phits_root_folder or "")
     if (not executable.is_absolute() or not installation.is_absolute()
         or not executable.is_file() or not installation.is_dir()
-        or _is_link_or_reparse(executable) or _is_link_or_reparse(installation)
+        or _has_link_or_reparse_component(executable)
+        or _has_link_or_reparse_component(installation)
         or installation.resolve() == Path(installation.anchor)
         or installation.resolve() == root or root in installation.resolve().parents):
         return None
