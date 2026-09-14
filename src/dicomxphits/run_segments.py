@@ -29,7 +29,7 @@ from dicomxphits.phits_geometry_diagnostics import (
     parse_phits_geometry_diagnostics_file,
 )
 from dicomxphits.safe_output import UnsafeWorkspacePathError, WorkspaceOutputGuard
-from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
+from dicomxphits.sumtally_inputs import checked_text_lines, file_sha256, manifest_sha256
 
 
 SUMMARY_RELATIVE_PATH = Path("analysis") / "segment_execution_summary.json"
@@ -415,7 +415,7 @@ def phits_launcher_input(
 
 def phits_environment(phits_input: Path) -> dict[str, str]:
     environment = os.environ.copy()
-    with phits_input.open("r", encoding="utf-8", errors="replace") as stream:
+    with checked_text_lines(phits_input, errors="replace") as stream:
         for line in stream:
             stripped = line.strip()
             if stripped.startswith("["):
@@ -462,7 +462,7 @@ def phits_staging_contract(
             raise FileNotFoundError(f"PHITS input dependency not found: {source}")
         seen_inputs.add(source_resolved)
         inputs.append(source)
-        with source.open("r", encoding="utf-8", errors="replace") as stream:
+        with checked_text_lines(source, errors="replace") as stream:
             for line in stream:
                 include_match = PHITS_INCLUDE_PATTERN.match(line)
                 if include_match is not None:

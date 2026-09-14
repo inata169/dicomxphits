@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,49 @@ ACTIVE_TREATMENT_INPUT_DOSE_STATE = "sumtally_active_treatment_mu_sum"
 ACTIVE_TREATMENT_SUMMATION_RULE = (
     "sum(active_segment_mu * segment_dose_per_mu)"
 )
+SCAN_CHUNK_BYTES = 1024 * 1024
+
+
+class _CheckpointRaw(io.RawIOBase):
+    def __init__(self, source, checkpoint):
+        self.source = source
+        self.checkpoint = checkpoint
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        count = self.source.readinto(memoryview(buffer)[:SCAN_CHUNK_BYTES])
+        if count:
+            self.checkpoint(size=count)
+        return count
+
+    def close(self):
+        try:
+            self.source.close()
+        finally:
+            super().close()
+
+
+@contextmanager
+def checked_text_lines(path: Path, *, encoding="utf-8", errors="strict"):
+    """Open text with cancellation checks and bounded underlying reads."""
+    from dicomxphits.segment_preflight import checkpoint
+    checkpoint()
+    raw = _CheckpointRaw(path.open("rb"), checkpoint)
+    stream = io.TextIOWrapper(
+        io.BufferedReader(raw, buffer_size=SCAN_CHUNK_BYTES),
+        encoding=encoding,
+        errors=errors,
+    )
+    completed = False
+    try:
+        yield stream
+        completed = True
+    finally:
+        stream.close()
+    if completed:
+        checkpoint(files=1)
 
 
 def file_sha256(path: Path) -> str:
@@ -30,7 +75,7 @@ def file_sha256(path: Path) -> str:
     checkpoint()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        for chunk in iter(lambda: stream.read(SCAN_CHUNK_BYTES), b""):
             digest.update(chunk)
             checkpoint(size=len(chunk))
     checkpoint(files=1)

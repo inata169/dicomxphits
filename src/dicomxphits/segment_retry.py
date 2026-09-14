@@ -8,7 +8,7 @@ from copy import deepcopy
 from pathlib import Path, PurePosixPath
 
 from dicomxphits.safe_output import WorkspaceOutputGuard
-from dicomxphits.sumtally_inputs import file_sha256, manifest_sha256
+from dicomxphits.sumtally_inputs import checked_text_lines, file_sha256, manifest_sha256
 from dicomxphits.workspace_execution import LOCK_NAME, WorkspaceExecutionLease
 
 BINDING_SCHEMA = "dicomxphits_segment_execution_binding_v1"
@@ -99,7 +99,8 @@ performed. Workspace contents are bound separately.
             required.update([expected.parent / "phits_stdout.txt",
                 expected.parent / "phits_stderr.txt", expected.parent / api.ROOT_PHITS_OUT])
             for path in inputs:
-                text = path.read_text(encoding="utf-8", errors="strict")
+                with checked_text_lines(path) as lines:
+                    text = lines.read()
                 canonical_libpath = re.fullmatch(
                     r"\s*file\s*\(1\)\s*=\s*(.*?)\s+# PHITS install folder name\s*",
                     text,
