@@ -181,8 +181,16 @@ def test_historical_full_installation_binding_retries_under_bounded_scope(tmp_pa
     tool.pop("scope")
     library = Path(paths.phits_root_folder) / "synthetic-library"
     tool["files"] = [{"path": library.name, "sha256": file_sha256(library)}]
+    first = original["segments"][0]
+    batch_path = Path(first["batch_out_path"])
+    first["output_evidence"].append({
+        "path": batch_path.relative_to(root).as_posix(),
+        "sha256": file_sha256(batch_path),
+    })
     summary_path(root).write_text(json.dumps(original), encoding="utf-8")
     library.write_bytes(b"changed outside bounded identity")
+    batch_path.write_text(
+        "-1 <--- number of remaining batches\n", encoding="utf-8")
     plan = plan_incomplete(root, paths)
     result = run_segments(
         workspace_root=root, paths=paths, run_incomplete=True,
@@ -190,6 +198,27 @@ def test_historical_full_installation_binding_retries_under_bounded_scope(tmp_pa
     )
     assert result["execution_binding"]["tool"]["scope"] == "selected_executable"
     assert "files" not in result["execution_binding"]["tool"]
+    validate_segment_execution_for_downstream(root, manifest, result)
+
+
+def test_historical_batch_digest_is_ignored_by_downstream_validation(tmp_path):
+    from dicomxphits.sumtally_inputs import file_sha256
+
+    root, manifest, paths = workspace_fixture(tmp_path, segment_count=1)
+    result = run_segments(workspace_root=root, paths=paths, runner=runner_for(root))
+    tool = result["execution_binding"]["tool"]
+    tool.pop("scope")
+    library = Path(paths.phits_root_folder) / "synthetic-library"
+    tool["files"] = [{"path": library.name, "sha256": file_sha256(library)}]
+    segment = result["segments"][0]
+    batch_path = Path(segment["batch_out_path"])
+    segment["output_evidence"].append({
+        "path": batch_path.relative_to(root).as_posix(),
+        "sha256": file_sha256(batch_path),
+    })
+    summary_path(root).write_text(json.dumps(result), encoding="utf-8")
+    batch_path.write_text(
+        "-1 <--- number of remaining batches\n", encoding="utf-8")
     validate_segment_execution_for_downstream(root, manifest, result)
 
 

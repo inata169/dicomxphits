@@ -798,25 +798,26 @@ def run_segments(
         from dicomxphits.segment_preflight import Session, PreparationCancelled, read_receipt
         run_id = str(run_id_factory())
         # The outer lease spans preparation, cancellation and terminal receipt.
-        with WorkspaceOutputGuard(root):
-            read_receipt(root)  # Never overwrite malformed or unknown-version evidence.
-            with Session(root, preflight_nonce, run_id, stop_control) as preparation:
-                try:
-                    preparation.checkpoint()
-                    result = run_segments(workspace_root=root, paths=paths,
-                        command_argv=command_argv, runner=runner,
-                        monotonic_clock=monotonic_clock, utc_now=utc_now,
-                        run_id_factory=lambda: run_id, summary_writer=summary_writer,
-                        run_incomplete=run_incomplete,
-                        expected_summary_sha256=expected_summary_sha256,
-                        stop_control=stop_control)
-                    preparation.finish(result)
-                    return result
-                except PreparationCancelled:
-                    return dict(preparation.receipt)
-                finally:
-                    if stop_control is not None:
-                        stop_control.close()
+        with WorkspaceExecutionLease(root):
+            with WorkspaceOutputGuard(root):
+                read_receipt(root)  # Never overwrite malformed or unknown-version evidence.
+                with Session(root, preflight_nonce, run_id, stop_control) as preparation:
+                    try:
+                        preparation.checkpoint()
+                        result = run_segments(workspace_root=root, paths=paths,
+                            command_argv=command_argv, runner=runner,
+                            monotonic_clock=monotonic_clock, utc_now=utc_now,
+                            run_id_factory=lambda: run_id, summary_writer=summary_writer,
+                            run_incomplete=run_incomplete,
+                            expected_summary_sha256=expected_summary_sha256,
+                            stop_control=stop_control)
+                        preparation.finish(result)
+                        return result
+                    except PreparationCancelled:
+                        return dict(preparation.receipt)
+                    finally:
+                        if stop_control is not None:
+                            stop_control.close()
     # Rejected retry preflight must not replace the previous execution summary.
     if run_incomplete:
         with WorkspaceExecutionLease(root, create=False) as lease:

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import threading
 from copy import deepcopy
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from dicomxphits.segment_preflight import (
 )
 from dicomxphits.segment_stop import StopControl
 from dicomxphits.sumtally_inputs import file_sha256
-from dicomxphits.workspace_execution import WorkspaceExecutionLease
+from dicomxphits.workspace_execution import WorkspaceBusyError, WorkspaceExecutionLease
 from dicomxphits.workspace_recovery import validate_segment_execution_for_downstream
 from test_segment_retry import workspace_fixture, runner_for, partial
 
@@ -190,6 +191,66 @@ def test_cancel_before_scan_never_launches_or_fabricates_binding(tmp_path):
         validate_segment_execution_for_downstream(root, manifest, {})
     with WorkspaceExecutionLease(root, create=False):
         pass
+
+
+def test_competing_preflight_cannot_overwrite_owner_receipt(tmp_path):
+    root, _, paths = workspace_fixture(tmp_path)
+    owner = Session(root, "owner-nonce", "owner-run", None)
+    errors = []
+    with WorkspaceExecutionLease(root):
+        owner.publish(force=True)
+        before = (root / RELATIVE_PATH).read_bytes()
+
+        def compete():
+            try:
+                run_segments(
+                    workspace_root=root, paths=paths,
+                    preflight_nonce="competing-nonce",
+                    run_id_factory=lambda: "competing-run",
+                    runner=lambda *a, **k: pytest.fail("competing child launched"),
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=compete)
+        thread.start()
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+        assert len(errors) == 1 and isinstance(errors[0], WorkspaceBusyError)
+        assert (root / RELATIVE_PATH).read_bytes() == before
+        assert not summary_path(root).exists()
+
+
+def test_terminal_preflight_receipt_is_published_before_lease_release(tmp_path, monkeypatch):
+    root, _, paths = workspace_fixture(tmp_path)
+    original_finish = Session.finish
+    observed = []
+
+    def finish(session, summary):
+        errors = []
+
+        def compete():
+            try:
+                with WorkspaceExecutionLease(root):
+                    pass
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=compete)
+        thread.start()
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+        observed.extend(errors)
+        return original_finish(session, summary)
+
+    monkeypatch.setattr(Session, "finish", finish)
+    result = run_segments(
+        workspace_root=root, paths=paths, preflight_nonce="nonce",
+        run_id_factory=lambda: "preflight-run", runner=runner_for(root),
+    )
+    assert result["status"] == "success"
+    assert len(observed) == 1 and isinstance(observed[0], WorkspaceBusyError)
+    assert read_receipt(root)["phase"] == "finished"
 
 
 def test_cancel_during_large_hash_is_bounded_and_preserves_source(tmp_path, monkeypatch):

@@ -286,6 +286,24 @@ def result_evidence(root, segment_binding):
         return _evidence(root, paths)
 
 
+def result_evidence_matches(root, segment_binding, recorded):
+    current = result_evidence(root, segment_binding)
+    if recorded == current:
+        return True
+    if not isinstance(recorded, list):
+        return False
+    mutable = {
+        item for item in segment_binding["writes"]
+        if Path(item).name == _api().ROOT_BATCH_OUT
+    }
+    # Historical summaries and retained entries may contain batch.out digests.
+    # Preserve the stored evidence, but ignore only those exact mutable paths
+    # when comparing it to the current bounded result contract.
+    normalized = [item for item in recorded
+        if isinstance(item, dict) and item.get("path") not in mutable]
+    return normalized == current
+
+
 def validate_results(root, summary):
     from dicomxphits.phits_geometry_diagnostics import require_clean_phits_geometry_diagnostics
     binding = summary["execution_binding"]
@@ -294,7 +312,8 @@ def validate_results(root, summary):
         if result["status"] != "success":
             continue
         contract = by_id.get(result["segment_id"])
-        if contract is None or result.get("output_evidence") != result_evidence(root, contract):
+        if (contract is None or not result_evidence_matches(
+            root, contract, result.get("output_evidence"))):
             raise ValueError("Completed segment artifacts changed; prepare a new workspace")
         require_clean_phits_geometry_diagnostics(result["geometry_diagnostics"])
 
