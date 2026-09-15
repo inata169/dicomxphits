@@ -341,7 +341,7 @@ def _frozen_ct_series(
     ct_reference_path: Path,
     *,
     workspace_root: Path,
-) -> tuple[CtSeries, dict[str, Any]]:
+) -> tuple[CtSeries, dict[str, Any], dict[str, Any]]:
     reference = Path(os.path.abspath(os.fspath(ct_reference_path)))
     reference_raw, reference_sha256 = _stable_regular_bytes(
         reference,
@@ -363,6 +363,7 @@ def _frozen_ct_series(
             "frozen CT reference is missing SeriesInstanceUID"
         )
     ct_root = reference.parent
+    validated_directory_entries = sorted(item.name for item in ct_root.iterdir())
     snapshot_root = ct_root.parent
     manifest_path = snapshot_root / "ct2phits_workspace_manifest.json"
     summary_path = snapshot_root / "ct2phits_execution_summary.json"
@@ -531,13 +532,24 @@ def _frozen_ct_series(
         "slice_positions": [item.position.tolist() for item in series.slices],
         "reference_sha256": reference_sha256,
     }
-    return series, {
-        "ct_series_evidence_sha256": _canonical_sha256(evidence_payload),
-        "ct2phits_manifest_sha256": manifest_sha256,
-        "ct2phits_execution_summary_sha256": summary_sha256,
-        "workspace_preparation_sha256": preparation_sha256,
-        "ct_reference_sha256": reference_sha256,
-    }
+    if sorted(item.name for item in ct_root.iterdir()) != validated_directory_entries:
+        raise StructureRelativeErrorUnavailable(
+            "frozen CT directory membership changed while being validated"
+        )
+    return (
+        series,
+        {
+            "ct_series_evidence_sha256": _canonical_sha256(evidence_payload),
+            "ct2phits_manifest_sha256": manifest_sha256,
+            "ct2phits_execution_summary_sha256": summary_sha256,
+            "workspace_preparation_sha256": preparation_sha256,
+            "ct_reference_sha256": reference_sha256,
+        },
+        {
+            "path": str(ct_root.resolve()),
+            "entries": validated_directory_entries,
+        },
+    )
 
 
 def _values_in_rtdose_order(values: np.ndarray, mesh: Mesh) -> np.ndarray:
@@ -987,15 +999,25 @@ def _verify_retained_file_snapshot(record: dict[str, Any]) -> None:
             )
 
 
-def _retained_directory_snapshot(path: Path, *, label: str) -> dict[str, Any]:
+def _retained_directory_snapshot(
+    path: Path,
+    *,
+    label: str,
+    expected_entries: list[str],
+) -> dict[str, Any]:
     supplied = Path(os.path.abspath(os.fspath(path)))
     if not supplied.is_dir() or _is_link_or_junction(supplied):
         raise StructureRelativeErrorUnavailable(
             f"{label} must be an existing non-link directory"
         )
+    entries = sorted(item.name for item in supplied.iterdir())
+    if entries != expected_entries:
+        raise StructureRelativeErrorUnavailable(
+            f"{label} membership does not match validated evidence"
+        )
     return {
         "path": str(supplied.resolve()),
-        "entries": sorted(item.name for item in supplied.iterdir()),
+        "entries": entries,
     }
 
 
@@ -1024,6 +1046,7 @@ def _capture_retained_validation(
     pair_evidence: dict[str, Any],
     control_evidence: dict[str, Any],
     ct_evidence: dict[str, Any],
+    ct_directory_evidence: dict[str, Any],
     placement: dict[str, Any],
     rtstruct_sha256: str,
 ) -> dict[str, Any]:
@@ -1249,8 +1272,9 @@ def _capture_retained_validation(
         "files": files,
         "directories": [
             _retained_directory_snapshot(
-                reference.parent,
+                Path(str(ct_directory_evidence.get("path") or "")),
                 label="frozen CT directory",
+                expected_entries=ct_directory_evidence.get("entries", []),
             )
         ],
     }
@@ -1350,7 +1374,11 @@ def evaluate_structure_relative_error(
                     pair_evidence,
                     control_evidence,
                 ) = _current_combined_source(root)
-                series, ct_evidence = _frozen_ct_series(
+                (
+                    series,
+                    ct_evidence,
+                    ct_directory_evidence,
+                ) = _frozen_ct_series(
                     ct_reference_path,
                     workspace_root=root,
                 )
@@ -1456,6 +1484,7 @@ def evaluate_structure_relative_error(
                     pair_evidence=pair_evidence,
                     control_evidence=control_evidence,
                     ct_evidence=ct_evidence,
+                    ct_directory_evidence=ct_directory_evidence,
                     placement=placement,
                     rtstruct_sha256=rtstruct_sha256,
                 )

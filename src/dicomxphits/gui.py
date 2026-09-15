@@ -276,7 +276,10 @@ def structure_evaluation_enabled(
     except GuiValidationError:
         return False
     workspace = Path(workspace_root).expanduser()
-    return _current_sumtally_binding(workspace) is not None
+    return (
+        _current_sumtally_binding(workspace, require_combined_error=True)
+        is not None
+    )
 
 
 def public_root() -> Path:
@@ -1151,6 +1154,8 @@ def rtdose_preparation_succeeded(
 
 def _current_sumtally_binding(
     workspace_root: Path,
+    *,
+    require_combined_error: bool = False,
 ) -> dict[str, object] | None:
     generation = read_summary(
         workspace_root / stage_by_key("generate_sumtally").summary_relative_path
@@ -1213,6 +1218,37 @@ def _current_sumtally_binding(
     output_sha256 = execution.get("expected_sumtally_output_sha256")
     if not isinstance(output_sha256, str) or not output_sha256:
         return None
+    if require_combined_error:
+        from dicomxphits.structure_relative_error import (
+            PAIR_SCHEMA_VERSION,
+            PAIR_SEMANTICS,
+        )
+
+        pair_evidence = execution.get("combined_relative_error_evidence")
+        if (
+            not isinstance(pair_evidence, Mapping)
+            or pair_evidence.get("schema_version") != PAIR_SCHEMA_VERSION
+            or pair_evidence.get("semantics") != PAIR_SEMANTICS
+            or pair_evidence.get("validated") is not True
+            or pair_evidence.get("dose_sha256") != output_sha256
+            or pair_evidence.get("sum_input_sha256")
+            != generation.get("sum_input_sha256")
+            or not isinstance(pair_evidence.get("error_sha256"), str)
+            or not pair_evidence.get("error_sha256")
+            or not isinstance(pair_evidence.get("mesh_geometry_sha256"), str)
+            or not pair_evidence.get("mesh_geometry_sha256")
+            or not isinstance(pair_evidence.get("pair_metadata_sha256"), str)
+            or not pair_evidence.get("pair_metadata_sha256")
+            or not isinstance(pair_evidence.get("cell_count"), int)
+            or isinstance(pair_evidence.get("cell_count"), bool)
+            or pair_evidence.get("cell_count", 0) <= 0
+            or not all(
+                isinstance(pair_evidence.get(field), str)
+                and bool(pair_evidence.get(field))
+                for field in ("dose_path", "error_path")
+            )
+        ):
+            return None
     return {
         "manifest_sha256": generation["manifest_sha256"],
         "sum_input_sha256": generation["sum_input_sha256"],
@@ -2209,7 +2245,10 @@ def _build_gui() -> int:
         workspace_text = values["workspace_root"].get().strip()
         sumtally_ready = bool(
             workspace_text
-            and _current_sumtally_binding(Path(workspace_text).expanduser())
+            and _current_sumtally_binding(
+                Path(workspace_text).expanduser(),
+                require_combined_error=True,
+            )
             is not None
         )
         if structure_frame is not None:

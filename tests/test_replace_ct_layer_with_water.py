@@ -402,13 +402,16 @@ def test_structure_evaluation_ct_series_requires_frozen_digest_evidence(
         encoding="utf-8",
     )
 
-    series, evidence = _frozen_ct_series(
+    series, evidence, directory_evidence = _frozen_ct_series(
         ct["paths"][0],
         workspace_root=calculation,
     )
 
     assert series.series_uid == ct["series_uid"]
     assert len(evidence["ct_series_evidence_sha256"]) == 64
+    assert directory_evidence["entries"] == sorted(
+        path.name for path in ct["paths"]
+    )
     ct["paths"][1].write_bytes(ct["paths"][1].read_bytes() + b"changed")
     with pytest.raises(
         Exception,

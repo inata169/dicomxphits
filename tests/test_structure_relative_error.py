@@ -414,6 +414,10 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         pair_evidence=pair,
         control_evidence=control_evidence,
         ct_evidence=ct_evidence,
+        ct_directory_evidence={
+            "path": str(ct_root),
+            "entries": [reference.name],
+        },
         placement=placement,
         rtstruct_sha256=rtstruct_sha256,
     )
@@ -425,6 +429,31 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         ct_reference_path=reference,
         roi_number=7,
     ) == (binding, pair, ct_evidence, placement)
+
+    added_ct = ct_root / "added.dcm"
+    added_ct.write_bytes(b"matching-series race placeholder")
+    with pytest.raises(
+        StructureRelativeErrorUnavailable,
+        match="membership does not match validated evidence",
+    ):
+        module._capture_retained_validation(
+            workspace_root=workspace,
+            rtstruct_path=rtstruct,
+            rtplan_path=rtplan,
+            ct_reference_path=reference,
+            roi_number=7,
+            sumtally_binding=binding,
+            pair_evidence=pair,
+            control_evidence=control_evidence,
+            ct_evidence=ct_evidence,
+            ct_directory_evidence={
+                "path": str(ct_root),
+                "entries": [reference.name],
+            },
+            placement=placement,
+            rtstruct_sha256=rtstruct_sha256,
+        )
+    added_ct.unlink()
 
     generation_path = analysis / "sumtally_generation_summary.json"
     original_generation = generation_path.read_bytes()
@@ -446,6 +475,10 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
             pair_evidence=pair,
             control_evidence=control_evidence,
             ct_evidence=ct_evidence,
+            ct_directory_evidence={
+                "path": str(ct_root),
+                "entries": [reference.name],
+            },
             placement=placement,
             rtstruct_sha256=rtstruct_sha256,
         )
@@ -460,6 +493,10 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         pair_evidence=pair,
         control_evidence=control_evidence,
         ct_evidence=ct_evidence,
+        ct_directory_evidence={
+            "path": str(ct_root),
+            "entries": [reference.name],
+        },
         placement=placement,
         rtstruct_sha256=rtstruct_sha256,
     )
@@ -590,6 +627,7 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
         lambda _path, **_kwargs: (
             _fake_series(),
             ct_evidence,
+            {"path": str(tmp_path), "entries": [rtstruct_path.name]},
         ),
     )
     monkeypatch.setattr(
@@ -741,12 +779,16 @@ def test_gui_action_requires_verified_sumtally_and_explicit_inputs(
         "ct_reference_path": "CT.dcm",
         "busy": False,
     }
-    monkeypatch.setattr(gui_module, "_current_sumtally_binding", lambda _root: None)
+    monkeypatch.setattr(
+        gui_module,
+        "_current_sumtally_binding",
+        lambda _root, **_kwargs: None,
+    )
     assert structure_evaluation_enabled(**common) is False
     monkeypatch.setattr(
         gui_module,
         "_current_sumtally_binding",
-        lambda _root: {"verified": True},
+        lambda _root, **_kwargs: {"verified": True},
     )
     assert structure_evaluation_enabled(**common) is True
     assert structure_evaluation_enabled(**{**common, "roi_number": "PTV"}) is False
@@ -754,6 +796,90 @@ def test_gui_action_requires_verified_sumtally_and_explicit_inputs(
     assert structure_roi_number(" 7 ") == 7
     with pytest.raises(GuiValidationError):
         structure_roi_number("PTV")
+
+
+def test_gui_action_requires_validated_combined_error_evidence(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    analysis = workspace / "analysis"
+    segments = workspace / "segments"
+    analysis.mkdir(parents=True)
+    segments.mkdir()
+    manifest = {"segments": [{"segment_id": "segment-1"}]}
+    (segments / "segment_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    manifest_digest = gui_module.manifest_sha256(manifest)
+    normalization = {"validated": True}
+    generation = {
+        "stage_status": "success",
+        "manifest_sha256": manifest_digest,
+        "sum_input_sha256": "1" * 64,
+        "sumtally_input_sha256": "2" * 64,
+        "sumtally_normalization": gui_module.ACTIVE_TREATMENT_SUMTALLY_NORMALIZATION,
+        "sumtally_normalization_evidence": normalization,
+        "segment_output_evidence": [],
+        "wrapper_include_evidence": [],
+    }
+    pair = {
+        "schema_version": module.PAIR_SCHEMA_VERSION,
+        "semantics": module.PAIR_SEMANTICS,
+        "dose_path": str(workspace / "sumtally" / "dose.out"),
+        "dose_sha256": "3" * 64,
+        "error_path": str(workspace / "sumtally" / "dose_err.out"),
+        "error_sha256": "4" * 64,
+        "sum_input_sha256": generation["sum_input_sha256"],
+        "mesh_geometry_sha256": "5" * 64,
+        "cell_count": 4,
+        "pair_metadata_sha256": "6" * 64,
+        "validated": True,
+    }
+    execution = {
+        **generation,
+        "expected_sumtally_output_updated_by_run": True,
+        "expected_sumtally_output_sha256": pair["dose_sha256"],
+        "combined_relative_error_evidence": pair,
+    }
+    generation_path = (
+        workspace
+        / gui_module.stage_by_key("generate_sumtally").summary_relative_path
+    )
+    execution_path = (
+        workspace / gui_module.stage_by_key("run_sumtally").summary_relative_path
+    )
+    generation_path.write_text(json.dumps(generation), encoding="utf-8")
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+
+    assert (
+        gui_module._current_sumtally_binding(
+            workspace,
+            require_combined_error=True,
+        )
+        is not None
+    )
+
+    execution.pop("combined_relative_error_evidence")
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    assert (
+        gui_module._current_sumtally_binding(
+            workspace,
+            require_combined_error=True,
+        )
+        is None
+    )
+
+    pair["validated"] = False
+    execution["combined_relative_error_evidence"] = pair
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    assert (
+        gui_module._current_sumtally_binding(
+            workspace,
+            require_combined_error=True,
+        )
+        is None
+    )
 
 
 def test_gui_result_ticket_rejects_changed_or_changed_back_inputs() -> None:
