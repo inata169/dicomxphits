@@ -569,6 +569,37 @@ def test_mapping_uses_unique_ct_voxel_cells_and_rejects_boundaries() -> None:
             ct_mask=np.ones((1, 3, 3), dtype=bool),
         )
 
+    oblique_series = SimpleNamespace(
+        slices=(
+            SimpleNamespace(
+                position=np.asarray([0.1, 0.0, 0.2]),
+                distance_mm=0.1 * 0.6 + 0.2 * 0.8,
+            ),
+        ),
+        rows=3,
+        columns=3,
+        row_spacing_mm=1.0,
+        column_spacing_mm=1.0,
+        slice_spacing_mm=1.0,
+        row_direction=np.asarray([0.0, 1.0, 0.0]),
+        column_direction=np.asarray([-0.8, 0.0, 0.6]),
+        normal_direction=np.asarray([0.6, 0.0, 0.8]),
+    )
+    oblique_boundary = {
+        "output_shape_frames_rows_columns": [1, 1, 1],
+        "image_position_patient_mm": [0.4, 0.0, 0.6],
+        "image_orientation_patient": [0.0, 1.0, 0.0, -0.8, 0.0, 0.6],
+        "pixel_spacing_mm": [1.0, 1.0],
+        "grid_frame_offset_vector_mm": [0.0],
+    }
+    assert oblique_series.slices[0].distance_mm != 0.22
+    with pytest.raises(StructureRelativeErrorUnavailable, match="boundary"):
+        _structure_membership_on_dose_grid(
+            placement=oblique_boundary,
+            series=oblique_series,
+            ct_mask=np.ones((1, 3, 3), dtype=bool),
+        )
+
 
 def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
     tmp_path: Path,

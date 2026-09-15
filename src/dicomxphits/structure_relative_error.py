@@ -602,7 +602,6 @@ def _decimal_mapping_geometry(
         ),
         "ct_origin": _decimal_vector(series.slices[0].position),
         "ct_normal": _decimal_vector(series.normal_direction),
-        "ct_distance": Decimal(str(float(series.slices[0].distance_mm))),
         "ct_spacing": _decimal_vector(
             (
                 series.slice_spacing_mm,
@@ -644,7 +643,7 @@ def _lies_on_decimal_ct_boundary(
             for index in range(3)
         )
         coordinates = (
-            (_decimal_dot(point, geometry["ct_normal"]) - geometry["ct_distance"])
+            _decimal_dot(relative, geometry["ct_normal"])
             / geometry["ct_spacing"][0],
             _decimal_dot(relative, geometry["ct_column"])
             / geometry["ct_spacing"][1],
