@@ -775,6 +775,7 @@ def test_minimum_window_page_viewport_reaches_all_five_primary_actions() -> None
         "prepare_workspace",
         "run_segments",
         "run_sumtally",
+        "evaluate_structure_rerr",
         "recover_rtdose",
     ):
         assert f'action_buttons["{action_key}"]' in source

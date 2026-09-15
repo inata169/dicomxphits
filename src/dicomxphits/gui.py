@@ -207,6 +207,81 @@ class StageExecutionGuard:
         self.active_stage = None
 
 
+@dataclass
+class StructureEvaluationRequestGuard:
+    """Bind one background result to the unchanged GUI input generation."""
+
+    generation: int = 0
+
+    def begin(self, inputs: Sequence[str]) -> tuple[int, tuple[str, ...]]:
+        self.generation += 1
+        return self.generation, tuple(inputs)
+
+    def invalidate(self) -> None:
+        self.generation += 1
+
+    def is_current(
+        self,
+        ticket: tuple[int, tuple[str, ...]],
+        inputs: Sequence[str],
+    ) -> bool:
+        return ticket == (self.generation, tuple(inputs))
+
+
+STRUCTURE_EVALUATION_UPSTREAM_STAGES = frozenset(
+    {
+        "run_ct2phits",
+        "prepare_workspace",
+        "run_segments",
+        "generate_sumtally",
+        "run_sumtally",
+    }
+)
+STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS = 5_000
+
+
+def structure_roi_number(value: str) -> int:
+    """Parse one explicit DICOM ROINumber without name-based inference."""
+
+    text = str(value).strip()
+    if re.fullmatch(r"[+-]?\d+", text) is None:
+        raise GuiValidationError("Structure ROI number must be an integer")
+    return int(text)
+
+
+def structure_evaluation_enabled(
+    *,
+    workspace_root: str,
+    rtstruct_path: str,
+    roi_number: str,
+    rtplan_path: str,
+    ct_reference_path: str,
+    busy: bool,
+) -> bool:
+    """Return whether the explicit post-completion action may be offered."""
+
+    if busy or not all(
+        str(value).strip()
+        for value in (
+            workspace_root,
+            rtstruct_path,
+            roi_number,
+            rtplan_path,
+            ct_reference_path,
+        )
+    ):
+        return False
+    try:
+        structure_roi_number(roi_number)
+    except GuiValidationError:
+        return False
+    workspace = Path(workspace_root).expanduser()
+    return (
+        _current_sumtally_binding(workspace, require_combined_error=True)
+        is not None
+    )
+
+
 def public_root() -> Path:
     return PUBLIC_ROOT
 
@@ -1079,6 +1154,8 @@ def rtdose_preparation_succeeded(
 
 def _current_sumtally_binding(
     workspace_root: Path,
+    *,
+    require_combined_error: bool = False,
 ) -> dict[str, object] | None:
     generation = read_summary(
         workspace_root / stage_by_key("generate_sumtally").summary_relative_path
@@ -1141,6 +1218,37 @@ def _current_sumtally_binding(
     output_sha256 = execution.get("expected_sumtally_output_sha256")
     if not isinstance(output_sha256, str) or not output_sha256:
         return None
+    if require_combined_error:
+        from dicomxphits.structure_relative_error import (
+            PAIR_SCHEMA_VERSION,
+            PAIR_SEMANTICS,
+        )
+
+        pair_evidence = execution.get("combined_relative_error_evidence")
+        if (
+            not isinstance(pair_evidence, Mapping)
+            or pair_evidence.get("schema_version") != PAIR_SCHEMA_VERSION
+            or pair_evidence.get("semantics") != PAIR_SEMANTICS
+            or pair_evidence.get("validated") is not True
+            or pair_evidence.get("dose_sha256") != output_sha256
+            or pair_evidence.get("sum_input_sha256")
+            != generation.get("sum_input_sha256")
+            or not isinstance(pair_evidence.get("error_sha256"), str)
+            or not pair_evidence.get("error_sha256")
+            or not isinstance(pair_evidence.get("mesh_geometry_sha256"), str)
+            or not pair_evidence.get("mesh_geometry_sha256")
+            or not isinstance(pair_evidence.get("pair_metadata_sha256"), str)
+            or not pair_evidence.get("pair_metadata_sha256")
+            or not isinstance(pair_evidence.get("cell_count"), int)
+            or isinstance(pair_evidence.get("cell_count"), bool)
+            or pair_evidence.get("cell_count", 0) <= 0
+            or not all(
+                isinstance(pair_evidence.get(field), str)
+                and bool(pair_evidence.get(field))
+                for field in ("dose_path", "error_path")
+            )
+        ):
+            return None
     return {
         "manifest_sha256": generation["manifest_sha256"],
         "sum_input_sha256": generation["sum_input_sha256"],
@@ -2061,6 +2169,16 @@ def _build_gui() -> int:
     from dicomxphits.phits_observation import Presentation
     observation_presentation = Presentation()
     phits_observation_status = tk.StringVar(value="Observation unavailable: no owned active segment.")
+    structure_rtstruct_path = tk.StringVar(value="")
+    structure_roi_number_value = tk.StringVar(value="")
+    structure_result_status = tk.StringVar(
+        value=(
+            "Unavailable until verified Sumtally success and an explicit "
+            "evaluation request."
+        )
+    )
+    structure_frame = None
+    structure_evaluation_guard = StructureEvaluationRequestGuard()
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
     recovery_inspection: WorkspaceRecoveryInspection | None = None
@@ -2093,6 +2211,19 @@ def _build_gui() -> int:
             return RTDOSE_NOT_PREPARED
         return rtdose_stage_state(Path(workspace).expanduser())
 
+    def current_structure_evaluation_inputs() -> tuple[str, ...]:
+        return (
+            values["workspace_root"].get().strip(),
+            structure_rtstruct_path.get().strip(),
+            structure_roi_number_value.get().strip(),
+            values["rtplan_path"].get().strip(),
+            values["ct_reference_dicom"].get().strip(),
+        )
+
+    def invalidate_structure_evaluation_result(message: str) -> None:
+        structure_evaluation_guard.invalidate()
+        structure_result_status.set(message)
+
     def stop_button_ready() -> bool:
         return bool(execution_guard.active_stage == "run_segments"
             and phits_control is not None and phits_control.process is not None
@@ -2111,6 +2242,20 @@ def _build_gui() -> int:
     def refresh_action_button_states() -> None:
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
+        workspace_text = values["workspace_root"].get().strip()
+        sumtally_ready = bool(
+            workspace_text
+            and _current_sumtally_binding(
+                Path(workspace_text).expanduser(),
+                require_combined_error=True,
+            )
+            is not None
+        )
+        if structure_frame is not None:
+            if sumtally_ready:
+                structure_frame.grid()
+            else:
+                structure_frame.grid_remove()
         if rtdose_state == RTDOSE_PHITS_INCOMPLETE or nav_status["rtdose"].get() == "PHITS incomplete":
             nav_status["rtdose"].set(rtdose_nav_status(rtdose_state))
         for stage_key, button in action_buttons.items():
@@ -2149,6 +2294,15 @@ def _build_gui() -> int:
                         "prepare_rtdose" not in sequence
                         or handoff_ready
                     )
+                )
+            elif stage_key == "evaluate_structure_rerr":
+                enabled = structure_evaluation_enabled(
+                    workspace_root=values["workspace_root"].get(),
+                    rtstruct_path=structure_rtstruct_path.get(),
+                    roi_number=structure_roi_number_value.get(),
+                    rtplan_path=values["rtplan_path"].get(),
+                    ct_reference_path=values["ct_reference_dicom"].get(),
+                    busy=busy,
                 )
             else:
                 enabled = (
@@ -3439,11 +3593,24 @@ def _build_gui() -> int:
             execution_guard.finish()
         else:
             execution_guard.begin(stage_key)
+            if stage_key in STRUCTURE_EVALUATION_UPSTREAM_STAGES:
+                invalidate_structure_evaluation_result(
+                    "Unavailable: upstream calculation evidence is being "
+                    "regenerated; request evaluation again after verified "
+                    "Sumtally success."
+                )
         for control in workspace_selection_controls:
             control.state(["disabled"] if stage_key else ["!disabled"])
         refresh_action_button_states()
+        busy_label = (
+            "Structure relative-error evaluation"
+            if stage_key == "evaluate_structure_rerr"
+            else stage_by_key(stage_key).label
+            if stage_key
+            else ""
+        )
         global_status.set(
-            f"Running {stage_by_key(stage_key).label}…" if stage_key else "Ready"
+            f"Running {busy_label}…" if stage_key else "Ready"
         )
 
     def refresh_phits_progress() -> None:
@@ -3949,6 +4116,165 @@ def _build_gui() -> int:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def start_structure_relative_error_evaluation() -> None:
+        if execution_guard.active_stage is not None:
+            append("Another stage is already running.", "warning")
+            return
+        workspace_text = values["workspace_root"].get().strip()
+        rtstruct_text = structure_rtstruct_path.get().strip()
+        try:
+            roi_number = structure_roi_number(structure_roi_number_value.get())
+        except GuiValidationError as exc:
+            messagebox.showerror("Structure r.err unavailable", str(exc))
+            return
+        if not structure_evaluation_enabled(
+            workspace_root=workspace_text,
+            rtstruct_path=rtstruct_text,
+            roi_number=str(roi_number),
+            rtplan_path=values["rtplan_path"].get(),
+            ct_reference_path=values["ct_reference_dicom"].get(),
+            busy=False,
+        ):
+            messagebox.showerror(
+                "Structure r.err unavailable",
+                "Verified Sumtally success and all explicit inputs are required.",
+            )
+            return
+        request = {
+            "workspace_root": Path(workspace_text).expanduser(),
+            "rtstruct_path": Path(rtstruct_text).expanduser(),
+            "roi_number": roi_number,
+            "rtplan_path": Path(values["rtplan_path"].get()).expanduser(),
+            "ct_reference_path": Path(
+                values["ct_reference_dicom"].get()
+            ).expanduser(),
+        }
+        request_ticket = structure_evaluation_guard.begin(
+            current_structure_evaluation_inputs()
+        )
+        set_busy("evaluate_structure_rerr")
+        structure_result_status.set(
+            "Evaluating the explicitly selected ROI against verified combined evidence…"
+        )
+        append(f"Post-completion Structure r.err: ROI {roi_number} requested")
+
+        def request_is_current() -> bool:
+            return structure_evaluation_guard.is_current(
+                request_ticket,
+                current_structure_evaluation_inputs(),
+            )
+
+        def discard_stale_completion() -> None:
+            append(
+                "Post-completion Structure r.err result discarded because "
+                "its GUI inputs changed after the request.",
+                "warning",
+            )
+            set_busy(None)
+
+        def finish_success(result: dict[str, object]) -> None:
+            if not request_is_current():
+                discard_stale_completion()
+                return
+            from dicomxphits.structure_relative_error import (
+                format_structure_relative_error,
+            )
+
+            structure_result_status.set(format_structure_relative_error(result))
+            append(
+                "Post-completion Structure r.err: validated scalar summary "
+                f"published at {result['result_path']}",
+                "success",
+            )
+            set_busy(None)
+
+            root.after(
+                STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS,
+                lambda: revalidate_retained_result(result),
+            )
+
+        def revalidate_retained_result(expected_result: dict[str, object]) -> None:
+            if not request_is_current():
+                return
+            if execution_guard.active_stage is not None:
+                root.after(
+                    STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS,
+                    lambda: revalidate_retained_result(expected_result),
+                )
+                return
+
+            def finish_revalidation() -> None:
+                if not request_is_current():
+                    return
+                root.after(
+                    STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS,
+                    lambda: revalidate_retained_result(expected_result),
+                )
+
+            def invalidate_stale_result(message: str) -> None:
+                if not request_is_current():
+                    return
+                invalidate_structure_evaluation_result(
+                    "Unavailable: displayed Structure result evidence changed; "
+                    "request evaluation again."
+                )
+                append(
+                    "Post-completion Structure r.err result invalidated after "
+                    f"evidence revalidation failed: {message}",
+                    "warning",
+                )
+
+            def verifier() -> None:
+                try:
+                    from dicomxphits.structure_relative_error import (
+                        revalidate_structure_relative_error_result,
+                    )
+
+                    revalidate_structure_relative_error_result(
+                        **request,
+                        expected_result=expected_result,
+                    )
+                except Exception as exc:
+                    root.after(
+                        0,
+                        lambda detail=str(exc): invalidate_stale_result(detail),
+                    )
+                    return
+                root.after(0, finish_revalidation)
+
+            threading.Thread(target=verifier, daemon=True).start()
+
+        def finish_error(message: str) -> None:
+            if not request_is_current():
+                discard_stale_completion()
+                return
+            structure_result_status.set(f"Unavailable: {message}")
+            append(
+                f"Post-completion Structure r.err unavailable: {message}",
+                "warning",
+            )
+            set_busy(None)
+            messagebox.showerror("Structure r.err unavailable", message)
+
+        def worker() -> None:
+            try:
+                from dicomxphits.structure_relative_error import (
+                    evaluate_structure_relative_error,
+                    revalidate_structure_relative_error_result,
+                )
+
+                result = evaluate_structure_relative_error(**request)
+                result = revalidate_structure_relative_error_result(
+                    **request,
+                    expected_result=result,
+                )
+            except Exception as exc:
+                root.after(0, lambda detail=str(exc): finish_error(detail))
+                return
+            root.after(0, lambda: finish_success(result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def finish_recovery_error(message: str) -> None:
         nonlocal recovery_inspection
         recovery_inspection = inspect_existing_workspace(
@@ -4048,6 +4374,72 @@ def _build_gui() -> int:
     sumtally_run_button.grid(row=0, column=2, padx=(4, 0), sticky="e")
     action_buttons["run_sumtally"] = sumtally_run_button
 
+    from dicomxphits.structure_relative_error import NON_CLINICAL_LABEL
+
+    structure_frame = ttk.Frame(
+        sumtally_page, style="Surface.TFrame", padding=(18, 14)
+    )
+    structure_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+    structure_frame.grid_remove()
+    structure_frame.columnconfigure(1, weight=1)
+    ttk.Label(
+        structure_frame,
+        text="Post-completion Structure r.err",
+        style="Heading.TLabel",
+    ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
+    ttk.Label(
+        structure_frame,
+        text=NON_CLINICAL_LABEL,
+        style="SurfaceMuted.TLabel",
+        wraplength=780,
+    ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
+    ttk.Label(
+        structure_frame,
+        text="RT Structure Set",
+        style="Surface.TLabel",
+    ).grid(row=2, column=0, padx=(0, 14), sticky="w")
+    ttk.Entry(structure_frame, textvariable=structure_rtstruct_path).grid(
+        row=2, column=1, padx=(0, 10), sticky="ew"
+    )
+
+    def browse_structure_set() -> None:
+        selected = filedialog.askopenfilename(
+            title="Select RT Structure Set",
+            filetypes=(("DICOM files", "*.dcm"), ("All files", "*.*")),
+        )
+        if selected:
+            structure_rtstruct_path.set(selected)
+
+    ttk.Button(
+        structure_frame,
+        text="Browse",
+        command=browse_structure_set,
+    ).grid(row=2, column=2, sticky="e")
+    ttk.Label(
+        structure_frame,
+        text="ROINumber",
+        style="Surface.TLabel",
+    ).grid(row=3, column=0, padx=(0, 14), pady=(8, 0), sticky="w")
+    ttk.Entry(
+        structure_frame,
+        textvariable=structure_roi_number_value,
+        width=16,
+    ).grid(row=3, column=1, pady=(8, 0), sticky="w")
+    evaluate_structure_button = ttk.Button(
+        structure_frame,
+        text="Evaluate selected Structure",
+        command=start_structure_relative_error_evaluation,
+    )
+    evaluate_structure_button.grid(row=3, column=2, pady=(8, 0), sticky="e")
+    action_buttons["evaluate_structure_rerr"] = evaluate_structure_button
+    ttk.Label(
+        structure_frame,
+        textvariable=structure_result_status,
+        style="Surface.TLabel",
+        wraplength=900,
+        justify="left",
+    ).grid(row=4, column=0, columnspan=3, pady=(10, 0), sticky="w")
+
     rtdose_actions = ttk.Frame(
         rtdose_page, style="Surface.TFrame", padding=(18, 12)
     )
@@ -4082,7 +4474,21 @@ def _build_gui() -> int:
         nav_status["rtdose"].set(rtdose_nav_status(state))
         refresh_action_button_states()
 
+    def invalidate_structure_evaluation(*_args: object) -> None:
+        invalidate_structure_evaluation_result(
+            "Unavailable: evaluation inputs changed; request evaluation again."
+        )
+        refresh_action_button_states()
+
     values["workspace_root"].trace_add("write", refresh_rtdose_workflow_state)
+    for variable in (
+        values["workspace_root"],
+        structure_rtstruct_path,
+        structure_roi_number_value,
+        values["rtplan_path"],
+        values["ct_reference_dicom"],
+    ):
+        variable.trace_add("write", invalidate_structure_evaluation)
     refresh_rtdose_workflow_state()
     refresh_action_button_states()
 

@@ -22,6 +22,7 @@ from dicomxphits.prepare_3dcrt_workspace import (
 )
 from dicomxphits.run_segments import (
     phits_environment,
+    phits_error_output_path,
     validate_segment_execution_summary,
 )
 from dicomxphits.safe_output import WorkspaceOutputGuard
@@ -686,21 +687,31 @@ def run_phits_sumtally(
     stderr_path: Path,
     workspace_root: Path,
     expected_output: Path,
+    expected_error_output: Path | None = None,
     expected_geometry: dict[str, Any] | None = None,
     environment: dict[str, str] | None = None,
     runner=subprocess.run,
     on_start: Callable[[], None] | None = None,
-) -> tuple[subprocess.CompletedProcess[str], dict[str, Any] | None, str | None]:
+) -> tuple[
+    subprocess.CompletedProcess[str],
+    dict[str, Any] | None,
+    str | None,
+    dict[str, Any] | None,
+    str | None,
+]:
     if environment is None:
         environment = phits_environment(sum_input)
     with WorkspaceOutputGuard(workspace_root) as guard:
-        for output in (
+        guarded_outputs = [
             expected_output,
             stdout_path,
             stderr_path,
             sum_input.parent / "batch.out",
             sum_input.parent / "phits.out",
-        ):
+        ]
+        if expected_error_output is not None:
+            guarded_outputs.append(expected_error_output)
+        for output in guarded_outputs:
             guard.prepare_file_target(output, create_parents=True)
         execution_root = guard.make_staging_directory(
             workspace_root,
@@ -750,6 +761,8 @@ def run_phits_sumtally(
                 )
             geometry_evidence = None
             geometry_validation_error = None
+            relative_error_evidence = None
+            relative_error_validation_error = None
             if os.path.lexists(staged_output):
                 guard.prepare_file_target(staged_output)
                 staged_output_non_empty = staged_output.stat().st_size > 0
@@ -771,6 +784,47 @@ def run_phits_sumtally(
                                 **geometry_evidence,
                                 "path": str(expected_output.resolve()),
                             }
+                        if expected_error_output is not None:
+                            staged_error_output = phits_error_output_path(
+                                staged_output
+                            )
+                            if os.path.lexists(staged_error_output):
+                                guard.prepare_file_target(staged_error_output)
+                                try:
+                                    from dicomxphits.structure_relative_error import (
+                                        validate_combined_tally_pair,
+                                    )
+
+                                    relative_error_evidence = (
+                                        validate_combined_tally_pair(
+                                            dose_path=staged_output,
+                                            error_path=staged_error_output,
+                                            sum_input_path=staged_sum_input,
+                                            expected_geometry=expected_geometry,
+                                        )
+                                    )
+                                    guard.copy_file(
+                                        staged_error_output,
+                                        expected_error_output,
+                                    )
+                                    relative_error_evidence = {
+                                        **relative_error_evidence,
+                                        "dose_path": str(expected_output.resolve()),
+                                        "error_path": str(
+                                            expected_error_output.resolve()
+                                        ),
+                                    }
+                                except Exception as exc:
+                                    relative_error_evidence = None
+                                    relative_error_validation_error = (
+                                        "Combined Sumtally relative-error validation "
+                                        f"failed: {exc}"
+                                    )
+                            else:
+                                relative_error_validation_error = (
+                                    "Combined Sumtally statistical-error output is "
+                                    "unavailable"
+                                )
             for name in ("batch.out", "phits.out"):
                 staged_root_output = execution_root / name
                 if os.path.lexists(staged_root_output):
@@ -779,7 +833,13 @@ def run_phits_sumtally(
             guard.write_text(stderr_path, result.stderr or "")
         finally:
             guard.rmtree(execution_root, missing_ok=True)
-    return result, geometry_evidence, geometry_validation_error
+    return (
+        result,
+        geometry_evidence,
+        geometry_validation_error,
+        relative_error_evidence,
+        relative_error_validation_error,
+    )
 
 
 def sumtally_output_snapshot(path: Path) -> dict[str, Any] | None:
@@ -968,6 +1028,7 @@ def _run_sumtally_locked(
                 )
             )
         )
+        expected_error_output = phits_error_output_path(expected_output)
         stdout_path = workspace_root / "sumtally" / "sumtally_stdout.txt"
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
 
@@ -990,6 +1051,8 @@ def _run_sumtally_locked(
             result,
             sumtally_geometry_evidence,
             geometry_validation_error,
+            combined_relative_error_evidence,
+            combined_relative_error_validation_error,
         ) = run_phits_sumtally(
             phits_executable_path=paths.phits_executable_path,
             sum_input=selected_sum_input,
@@ -997,6 +1060,7 @@ def _run_sumtally_locked(
             stderr_path=stderr_path,
             workspace_root=workspace_root,
             expected_output=expected_output,
+            expected_error_output=expected_error_output,
             expected_geometry=current_tally_geometry_binding["mesh_geometry"],
             environment=environment,
             runner=runner,
@@ -1057,6 +1121,12 @@ def _run_sumtally_locked(
             "wrapper_include_evidence": current_wrapper_include_evidence,
             "tally_geometry_binding": current_tally_geometry_binding,
             "sumtally_output_geometry_evidence": sumtally_geometry_evidence,
+            "combined_relative_error_evidence": (
+                combined_relative_error_evidence
+            ),
+            "combined_relative_error_validation_error": (
+                combined_relative_error_validation_error
+            ),
         }
         if geometry_validation_error is not None:
             summary["failure_reason"] = geometry_validation_error

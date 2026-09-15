@@ -1754,7 +1754,7 @@ def test_sumtally_guard_failure_does_not_mark_external_execution_started(tmp_pat
 
 @pytest.mark.parametrize(
     "target_name",
-    ["expected", "stdout", "stderr", "batch.out", "phits.out"],
+    ["expected", "error", "stdout", "stderr", "batch.out", "phits.out"],
 )
 def test_sumtally_rejects_non_regular_destination_before_execution(
     tmp_path,
@@ -1767,6 +1767,7 @@ def test_sumtally_rejects_non_regular_destination_before_execution(
     sum_input.write_text("$OMP = 1\n[ E N D ]\n", encoding="utf-8")
     targets = {
         "expected": sumtally_dir / "sum.out",
+        "error": sumtally_dir / "sum_err.out",
         "stdout": sumtally_dir / "stdout.txt",
         "stderr": sumtally_dir / "stderr.txt",
         "batch.out": sumtally_dir / "batch.out",
@@ -1784,6 +1785,7 @@ def test_sumtally_rejects_non_regular_destination_before_execution(
             stderr_path=targets["stderr"],
             workspace_root=workspace,
             expected_output=targets["expected"],
+            expected_error_output=targets["error"],
             environment={},
             runner=lambda *args, **kwargs: calls.append((args, kwargs)),
             on_start=lambda: started.append(True),

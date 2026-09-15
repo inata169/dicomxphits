@@ -804,6 +804,89 @@ def load_rtstruct_masks(
     return target_mask, reference_mask
 
 
+def load_rtstruct_roi_mask_by_number(
+    rtstruct_path: Path,
+    *,
+    series: CtSeries,
+    roi_number: int,
+) -> tuple[np.ndarray, str, str]:
+    """Load one explicitly numbered ROI on the validated CT voxel-centre grid."""
+
+    if isinstance(roi_number, bool) or not isinstance(roi_number, int):
+        raise PhantomCtDerivationError("RTSTRUCT ROI number must be an integer")
+    supplied_path = Path(os.path.abspath(os.fspath(rtstruct_path)))
+    if not supplied_path.is_file() or _is_link_or_junction(supplied_path):
+        raise PhantomCtDerivationError(
+            f"RTSTRUCT must be an existing non-link file: {rtstruct_path}"
+        )
+    path = supplied_path.resolve()
+    source_sha256 = _sha256(path)
+    try:
+        rtstruct = pydicom.dcmread(str(path), force=False, stop_before_pixels=True)
+    except Exception as exc:
+        raise PhantomCtDerivationError(
+            f"RTSTRUCT is not readable: {rtstruct_path}"
+        ) from exc
+    if str(getattr(rtstruct, "Modality", "") or "") != "RTSTRUCT":
+        raise PhantomCtDerivationError("the supplied structure file is not an RTSTRUCT")
+    sop_class_uid = str(getattr(rtstruct, "SOPClassUID", "") or "")
+    sop_uid = str(getattr(rtstruct, "SOPInstanceUID", "") or "")
+    if sop_class_uid != str(pydicom.uid.RTStructureSetStorage):
+        raise PhantomCtDerivationError(
+            "RTSTRUCT must use RT Structure Set Storage SOP Class"
+        )
+    file_meta = getattr(rtstruct, "file_meta", Dataset())
+    if (
+        not sop_uid
+        or str(getattr(file_meta, "MediaStorageSOPClassUID", "") or "")
+        != sop_class_uid
+        or str(getattr(file_meta, "MediaStorageSOPInstanceUID", "") or "")
+        != sop_uid
+    ):
+        raise PhantomCtDerivationError(
+            "RTSTRUCT file-meta SOP identity does not match the dataset"
+        )
+
+    roi_items = tuple(getattr(rtstruct, "StructureSetROISequence", ()))
+    matches: list[Dataset] = []
+    for item in roi_items:
+        try:
+            candidate_number = int(item.ROINumber)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if candidate_number == roi_number:
+            matches.append(item)
+    if len(matches) != 1:
+        raise PhantomCtDerivationError(
+            f"RTSTRUCT ROI number must occur exactly once: {roi_number}"
+        )
+    selected = matches[0]
+    if str(getattr(selected, "ReferencedFrameOfReferenceUID", "") or "") != (
+        series.frame_uid
+    ):
+        raise PhantomCtDerivationError(
+            f"RTSTRUCT ROI frame does not match CT: {roi_number}"
+        )
+    roi_name = str(getattr(selected, "ROIName", "") or "")
+    label = roi_name or f"ROI {roi_number}"
+    hierarchy_sop_uids = _referenced_series_instance_uids(
+        rtstruct,
+        frame_uid=series.frame_uid,
+        series_uid=series.series_uid,
+        selected_sop_uids={item.source_sop_uid for item in series.slices},
+    )
+    mask = _rasterize_roi(
+        rtstruct,
+        series=series,
+        hierarchy_sop_uids=hierarchy_sop_uids,
+        roi_number=roi_number,
+        roi_name=label,
+    )
+    if _sha256(path) != source_sha256:
+        raise PhantomCtDerivationError("RTSTRUCT changed while it was being read")
+    return mask, roi_name, source_sha256
+
+
 def _slice_hu(ct_slice: CtSlice) -> np.ndarray:
     return ct_slice.stored_values.astype(np.float64) * ct_slice.slope + ct_slice.intercept
 

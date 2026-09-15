@@ -270,12 +270,30 @@ def isocenter_flat_index(mesh):
 
 
 def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline):
-    dose, dm = parse_tally(dose_raw, mesh, "dose", deadline)
-    error, em = parse_tally(error_raw, mesh, "error", deadline)
-    require(dm == em and dm["maxcas"] == maxcas, "pair-mismatch")
+    dose, error, _metadata = paired_tally_values(
+        dose_raw,
+        error_raw,
+        mesh,
+        maxcas,
+        deadline,
+    )
     index = isocenter_flat_index(mesh)
     require(dose[index] > 0 and error[index] > 0, "isocenter-unavailable")
     result = {"relative_error_percent": float(error[index]) * 100}
     require(all(math.isfinite(v) for v in result.values()), "invalid-numeric")
     checkpoint(deadline)
     return result
+
+
+def paired_tally_values(dose_raw, error_raw, mesh, maxcas, deadline):
+    """Return one completely validated PHITS 3.35 dose/error grid pair."""
+
+    dose, dose_metadata = parse_tally(dose_raw, mesh, "dose", deadline)
+    error, error_metadata = parse_tally(error_raw, mesh, "error", deadline)
+    require(
+        dose_metadata == error_metadata
+        and dose_metadata["maxcas"] == maxcas,
+        "pair-mismatch",
+    )
+    checkpoint(deadline)
+    return dose, error, dose_metadata
