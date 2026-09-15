@@ -79,6 +79,13 @@ The validation must not:
 All real-tool and DICOM inputs remain outside the repository. Before any launch,
 the private run record must identify and freeze the following items.
 
+Before an agent or validation process opens, hashes, copies, inventories, or
+parses any candidate DICOM, a human must identify the exact candidate paths
+without agent-side directory discovery and separately approve one bounded
+read-only identifier review and freeze operation for those files. Discovery of
+patient or identifying data stops that operation and does not authorize copying,
+calculation, or review of another candidate set.
+
 | Input | Required evidence |
 | --- | --- |
 | Source CT series | Confirmed non-patient phantom; series membership; supported axial HFS orientation; file count and SHA-256 for every selected slice |
@@ -130,17 +137,27 @@ Resource collection must be observational and must not alter the workflow
 inputs or outputs. Before real use, exercise the collector against fake child
 processes and temporary synthetic workspaces.
 
-For the GUI process and every directly owned external child, record:
+For the GUI and the complete approved descendant process tree, recursively
+including Python stage adapters, `cmd.exe`, reviewed batch processes, and the
+actual external-tool children, record:
 
 - UTC and monotonic stage start/end times;
 - exit code and the accepted stage status;
-- process ID and parent/child relationship when available;
+- process identity, creation time, parent/child relationship, and exit status
+  without trusting a reused process ID;
 - sampled CPU time or utilization;
 - working-set and private-memory samples, including the observed peak;
 - cumulative read/write bytes and sampled throughput when available;
 - scratch-volume free space and workspace byte count before and after each
   stage; and
 - collector sampling gaps, errors, and its own CPU, memory, and output size.
+
+The collector must retain final cumulative CPU and I/O counters for descendants
+that exit, include short-lived descendants through process-start/exit events or
+an equivalently justified mechanism, sum CPU and I/O without double counting,
+and calculate sampled aggregate memory across the live approved tree. Missing a
+computing descendant or its final counters makes performance acceptance
+inconclusive rather than permitting a partial low estimate.
 
 Record separately:
 
@@ -173,9 +190,11 @@ by relaxing a guard or editing the frozen case.
 3. Verify that the scratch and evidence destinations are absent, outside the
    repository, on an approved volume, and have no symbolic-link or Windows
    reparse-point ancestors within the writable path.
-4. Confirm that every DICOM object is from the approved non-patient phantom and
-   that its modality, series membership, Frame of Reference, orientation,
-   references, and required Structure selection are unambiguous.
+4. After the separate approval for the exact candidate file set, perform only
+   the approved bounded read-only review and freeze operation. Confirm that
+   every DICOM object is from the approved non-patient phantom and that its
+   modality, series membership, Frame of Reference, orientation, references,
+   and required Structure selection are unambiguous.
 5. Perform read-only tool-role validation. Review the exact effective command
    in `RTphits_win.bat`, resolve the CT2PHITS executable that it reaches, and
    bind the batch, executable, and HU-table bytes by SHA-256. Do not launch a
@@ -437,27 +456,29 @@ runtime validators; this checklist does not replace them.
 Use separate approval gates so that consent for one external action is not
 treated as consent for another:
 
-1. Approval of the final frozen non-patient dataset, tool identities,
+1. Approval for one bounded read-only identifier review and freeze operation
+   on an exact human-identified candidate DICOM file set.
+2. Approval of the final frozen non-patient dataset, tool identities,
    destinations, settings, collector, resource budgets, and stop policy.
-2. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
+3. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
    batch, resolved CT2PHITS executable, and HU table.
-3. Approval for one exact workspace-preparation invocation using the frozen
+4. Approval for one exact workspace-preparation invocation using the frozen
    DICOM and handoff.
-4. Approval for one exact all-active-segment controller invocation, with the
+5. Approval for one exact all-active-segment controller invocation, with the
    reviewed manifest fixing the maximum PHITS child-launch count.
-5. Approval for one exact Sumtally invocation.
-6. Approval for one exact RTDOSE-preparation invocation using the frozen
+6. Approval for one exact Sumtally invocation.
+7. Approval for one exact RTDOSE-preparation invocation using the frozen
    DICOM, accepted Sumtally evidence, and template.
-7. Approval for one exact phits2dicom invocation.
-8. Approval for one exact post-completion Structure evaluation using the
+8. Approval for one exact phits2dicom invocation.
+9. Approval for one exact post-completion Structure evaluation using the
    frozen RT Structure Set.
-9. Approval for one exact GPR invocation using the frozen reference and
+10. Approval for one exact GPR invocation using the frozen reference and
    evaluation RT Dose files, if requested.
-10. Approval for one exact cleanup operation, including its targets and
+11. Approval for one exact cleanup operation, including its targets and
     recoverability.
-11. Approval for publishing one exact sanitized report or evidence set.
-12. Approval for one exact release operation.
-13. Approval for each exact rerun under a newly frozen launch record.
+12. Approval for publishing one exact sanitized report or evidence set.
+13. Approval for one exact release operation.
+14. Approval for each exact rerun under a newly frozen launch record.
 
 An approval is consumed by the specified launch. Failure or inconclusive
 evidence does not authorize another attempt.
