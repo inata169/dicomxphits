@@ -237,7 +237,7 @@ STRUCTURE_EVALUATION_UPSTREAM_STAGES = frozenset(
         "run_sumtally",
     }
 )
-STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS = 1_000
+STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS = 5_000
 
 
 def structure_roi_number(value: str) -> int:

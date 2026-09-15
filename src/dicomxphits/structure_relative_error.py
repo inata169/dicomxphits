@@ -52,6 +52,9 @@ NON_CLINICAL_LABEL = (
 MAX_JSON_BYTES = 16 * 1024**2
 PAIR_PARSE_SECONDS = 120.0
 MAPPING_CHUNK_CELLS = 100_000
+RETAINED_VALIDATION_SCHEMA_VERSION = (
+    "dicomxphits_structure_relative_error_retained_validation_v1"
+)
 
 
 class StructureRelativeErrorUnavailable(ValueError):
@@ -657,6 +660,426 @@ def _identity_evidence(
     }
 
 
+def _retained_file_snapshot(
+    path: Path,
+    *,
+    label: str,
+    expected_sha256: str | None,
+    poll_sha256: bool,
+) -> dict[str, Any]:
+    supplied = Path(os.path.abspath(os.fspath(path)))
+    if not supplied.is_file() or _is_link_or_junction(supplied):
+        raise StructureRelativeErrorUnavailable(
+            f"{label} must be an existing non-link regular file"
+        )
+    attributes = (
+        "st_dev",
+        "st_ino",
+        "st_mode",
+        "st_size",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    )
+    before = supplied.stat()
+    if expected_sha256 is not None and not expected_sha256:
+        raise StructureRelativeErrorUnavailable(
+            f"{label} has missing validated digest evidence"
+        )
+    digest = (
+        file_sha256(supplied)
+        if poll_sha256 or expected_sha256 is None
+        else expected_sha256
+    )
+    after = supplied.stat()
+    if any(getattr(before, name) != getattr(after, name) for name in attributes):
+        raise StructureRelativeErrorUnavailable(f"{label} changed while being recorded")
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise StructureRelativeErrorUnavailable(
+            f"{label} does not match its validated digest evidence"
+        )
+    return {
+        "path": str(supplied.resolve()),
+        "sha256": digest,
+        "poll_sha256": poll_sha256,
+        "stat": {name: int(getattr(after, name)) for name in attributes},
+    }
+
+
+def _verify_retained_file_snapshot(record: dict[str, Any]) -> None:
+    path = Path(str(record.get("path") or ""))
+    expected_stat = record.get("stat")
+    if not isinstance(expected_stat, dict):
+        raise StructureRelativeErrorUnavailable(
+            "retained Structure relative-error source evidence is invalid"
+        )
+    if not path.is_file() or _is_link_or_junction(path):
+        raise StructureRelativeErrorUnavailable(
+            "a retained Structure relative-error source is missing or linked"
+        )
+    current = path.stat()
+    if any(
+        int(getattr(current, name)) != value
+        for name, value in expected_stat.items()
+    ):
+        raise StructureRelativeErrorUnavailable(
+            "a retained Structure relative-error source changed"
+        )
+    if record.get("poll_sha256") is True:
+        if file_sha256(path) != record.get("sha256"):
+            raise StructureRelativeErrorUnavailable(
+                "a retained Structure relative-error evidence record changed"
+            )
+        after = path.stat()
+        if any(
+            int(getattr(after, name)) != value
+            for name, value in expected_stat.items()
+        ):
+            raise StructureRelativeErrorUnavailable(
+                "a retained Structure relative-error evidence record changed"
+            )
+
+
+def _retained_directory_snapshot(path: Path, *, label: str) -> dict[str, Any]:
+    supplied = Path(os.path.abspath(os.fspath(path)))
+    if not supplied.is_dir() or _is_link_or_junction(supplied):
+        raise StructureRelativeErrorUnavailable(
+            f"{label} must be an existing non-link directory"
+        )
+    return {
+        "path": str(supplied.resolve()),
+        "entries": sorted(item.name for item in supplied.iterdir()),
+    }
+
+
+def _verify_retained_directory_snapshot(record: dict[str, Any]) -> None:
+    path = Path(str(record.get("path") or ""))
+    entries = record.get("entries")
+    if (
+        not isinstance(entries, list)
+        or not path.is_dir()
+        or _is_link_or_junction(path)
+        or sorted(item.name for item in path.iterdir()) != entries
+    ):
+        raise StructureRelativeErrorUnavailable(
+            "retained Structure relative-error source membership changed"
+        )
+
+
+def _capture_retained_validation(
+    *,
+    workspace_root: Path,
+    rtstruct_path: Path,
+    rtplan_path: Path,
+    ct_reference_path: Path,
+    roi_number: int,
+    sumtally_binding: dict[str, Any],
+    pair_evidence: dict[str, Any],
+    ct_evidence: dict[str, Any],
+    placement: dict[str, Any],
+    rtstruct_sha256: str,
+) -> dict[str, Any]:
+    """Capture proven source identities for low-cost retained-display checks."""
+
+    from dicomxphits.prepare_rtdose import load_sumtally_summaries
+    from dicomxphits.workspace_recovery import normalize_relocated_sumtally_summaries
+
+    root = workspace_root.resolve()
+    generation, execution = load_sumtally_summaries(root)
+    generation, execution = normalize_relocated_sumtally_summaries(
+        root,
+        generation=generation,
+        execution=execution,
+    )
+    entries: dict[str, tuple[str, str | None, bool]] = {}
+
+    def add(
+        path: Path,
+        *,
+        label: str,
+        expected_sha256: str | None = None,
+        poll_sha256: bool = False,
+    ) -> None:
+        resolved = str(Path(os.path.abspath(os.fspath(path))).resolve())
+        previous = entries.get(resolved)
+        if previous is None:
+            entries[resolved] = (label, expected_sha256, poll_sha256)
+            return
+        previous_label, previous_sha256, previous_poll = previous
+        if (
+            previous_sha256 is not None
+            and expected_sha256 is not None
+            and previous_sha256 != expected_sha256
+        ):
+            raise StructureRelativeErrorUnavailable(
+                f"conflicting retained digest evidence for {label}"
+            )
+        entries[resolved] = (
+            previous_label,
+            previous_sha256 or expected_sha256,
+            previous_poll or poll_sha256,
+        )
+
+    for name, label in (
+        ("sumtally_generation_summary.json", "Sumtally generation summary"),
+        ("sumtally_execution_summary.json", "Sumtally execution summary"),
+        ("segment_preflight.json", "segment preflight receipt"),
+    ):
+        add(root / "analysis" / name, label=label, poll_sha256=True)
+    add(
+        Path(str(sumtally_binding["manifest_path"])),
+        label="segment manifest",
+        poll_sha256=True,
+    )
+    add(
+        Path(str(sumtally_binding["sumtally_input_path"])),
+        label="Sumtally normalization input",
+        expected_sha256=str(sumtally_binding["sumtally_input_sha256"]),
+        poll_sha256=True,
+    )
+    add(
+        Path(str(pair_evidence["dose_path"])),
+        label="combined Sumtally dose output",
+        expected_sha256=str(pair_evidence["dose_sha256"]),
+    )
+    add(
+        Path(str(pair_evidence["error_path"])),
+        label="combined Sumtally statistical-error output",
+        expected_sha256=str(pair_evidence["error_sha256"]),
+    )
+    generation_outputs = generation.get("outputs")
+    if not isinstance(generation_outputs, dict):
+        raise StructureRelativeErrorUnavailable(
+            "Sumtally generation output evidence is unavailable"
+        )
+    add(
+        Path(str(generation_outputs.get("sum_input") or "")),
+        label="generated Sumtally wrapper input",
+        expected_sha256=str(pair_evidence["sum_input_sha256"]),
+        poll_sha256=True,
+    )
+    for field, label in (
+        ("segment_output_evidence", "Sumtally-bound segment PHITS output"),
+        ("wrapper_include_evidence", "Sumtally wrapper include"),
+    ):
+        records = sumtally_binding.get(field)
+        if not isinstance(records, list):
+            raise StructureRelativeErrorUnavailable(
+                f"retained {field} evidence is unavailable"
+            )
+        for record in records:
+            if not isinstance(record, dict):
+                raise StructureRelativeErrorUnavailable(
+                    f"retained {field} evidence is invalid"
+                )
+            add(
+                Path(str(record.get("path") or "")),
+                label=label,
+                expected_sha256=str(record.get("sha256") or ""),
+                poll_sha256=field == "wrapper_include_evidence",
+            )
+
+    reference = Path(os.path.abspath(os.fspath(ct_reference_path))).resolve()
+    snapshot_root = reference.parent.parent
+    ct_manifest_path = snapshot_root / "ct2phits_workspace_manifest.json"
+    ct_summary_path = snapshot_root / "ct2phits_execution_summary.json"
+    preparation_path = root / "analysis" / "public_preparation_workspace_summary.json"
+    ct_manifest, _ = _stable_json(
+        ct_manifest_path,
+        label="CT2PHITS workspace manifest",
+    )
+    ct_summary, _ = _stable_json(
+        ct_summary_path,
+        label="CT2PHITS execution summary",
+    )
+    preparation, _ = _stable_json(
+        preparation_path,
+        label="3D-CRT workspace preparation summary",
+    )
+    for path, label, field in (
+        (
+            ct_manifest_path,
+            "CT2PHITS workspace manifest",
+            "ct2phits_manifest_sha256",
+        ),
+        (
+            ct_summary_path,
+            "CT2PHITS execution summary",
+            "ct2phits_execution_summary_sha256",
+        ),
+        (
+            preparation_path,
+            "3D-CRT workspace preparation summary",
+            "workspace_preparation_sha256",
+        ),
+    ):
+        add(
+            path,
+            label=label,
+            expected_sha256=str(ct_evidence[field]),
+            poll_sha256=True,
+        )
+    recorded_series = ct_manifest.get("ct_series")
+    if not isinstance(recorded_series, dict):
+        raise StructureRelativeErrorUnavailable(
+            "CT2PHITS manifest is missing frozen CT-series evidence"
+        )
+    copied_files = recorded_series.get("copied_files")
+    copied_hashes = recorded_series.get("sha256")
+    if not isinstance(copied_files, list) or not isinstance(copied_hashes, dict):
+        raise StructureRelativeErrorUnavailable(
+            "CT2PHITS manifest has incomplete CT digest evidence"
+        )
+    for value in copied_files:
+        if not isinstance(value, str) or not value:
+            raise StructureRelativeErrorUnavailable(
+                "CT2PHITS manifest has an invalid CT file entry"
+            )
+        add(
+            snapshot_root / value,
+            label="frozen CT slice",
+            expected_sha256=str(copied_hashes.get(value) or ""),
+        )
+    phits_generation = preparation.get("phits_generation")
+    ct_assets = (
+        phits_generation.get("ct_voxel_assets")
+        if isinstance(phits_generation, dict)
+        else None
+    )
+    raw_hashes = (
+        ct_assets.get("raw_datfiles_sha256")
+        if isinstance(ct_assets, dict)
+        else None
+    )
+    if (
+        not isinstance(raw_hashes, dict)
+        or ct_summary.get("raw_datfiles_sha256") != raw_hashes
+    ):
+        raise StructureRelativeErrorUnavailable(
+            "CT2PHITS DATfiles evidence does not match workspace preparation"
+        )
+    for name in RAW_CT2PHITS_NAMES:
+        add(
+            snapshot_root / "DATfiles" / name,
+            label="CT2PHITS DATfile",
+            expected_sha256=str(raw_hashes.get(name) or ""),
+        )
+    rtplan_record = ct_manifest.get("rtplan")
+    if not isinstance(rtplan_record, dict):
+        raise StructureRelativeErrorUnavailable(
+            "CT2PHITS manifest is missing frozen RT Plan evidence"
+        )
+    add(
+        rtplan_path,
+        label="frozen RT Plan",
+        expected_sha256=str(rtplan_record.get("sha256") or ""),
+    )
+    add(
+        reference,
+        label="frozen CT reference",
+        expected_sha256=str(ct_evidence["ct_reference_sha256"]),
+    )
+    add(
+        rtstruct_path,
+        label="selected RT Structure Set",
+        expected_sha256=rtstruct_sha256,
+    )
+
+    files = [
+        _retained_file_snapshot(
+            Path(path),
+            label=label,
+            expected_sha256=expected_sha256,
+            poll_sha256=poll_sha256,
+        )
+        for path, (label, expected_sha256, poll_sha256) in sorted(entries.items())
+    ]
+    return {
+        "schema_version": RETAINED_VALIDATION_SCHEMA_VERSION,
+        "workspace_root": str(root),
+        "request": {
+            "rtstruct_path": str(Path(rtstruct_path).resolve()),
+            "rtplan_path": str(Path(rtplan_path).resolve()),
+            "ct_reference_path": str(reference),
+            "roi_number": roi_number,
+        },
+        "sumtally_binding": json.loads(json.dumps(sumtally_binding)),
+        "pair_evidence": json.loads(json.dumps(pair_evidence)),
+        "ct_evidence": json.loads(json.dumps(ct_evidence)),
+        "placement": json.loads(json.dumps(placement)),
+        "files": files,
+        "directories": [
+            _retained_directory_snapshot(
+                reference.parent,
+                label="frozen CT directory",
+            )
+        ],
+    }
+
+
+def _verify_retained_validation(
+    retained: dict[str, Any],
+    *,
+    workspace_root: Path,
+    rtstruct_path: Path,
+    rtplan_path: Path,
+    ct_reference_path: Path,
+    roi_number: int,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if retained.get("schema_version") != RETAINED_VALIDATION_SCHEMA_VERSION:
+        raise StructureRelativeErrorUnavailable(
+            "retained Structure relative-error validation evidence is unavailable"
+        )
+    expected_request = {
+        "rtstruct_path": str(Path(rtstruct_path).resolve()),
+        "rtplan_path": str(Path(rtplan_path).resolve()),
+        "ct_reference_path": str(Path(ct_reference_path).resolve()),
+        "roi_number": roi_number,
+    }
+    if (
+        retained.get("workspace_root") != str(workspace_root.resolve())
+        or retained.get("request") != expected_request
+    ):
+        raise StructureRelativeErrorUnavailable(
+            "the displayed Structure relative-error request is stale or mismatched"
+        )
+    files = retained.get("files")
+    if not isinstance(files, list) or not files:
+        raise StructureRelativeErrorUnavailable(
+            "retained Structure relative-error source evidence is unavailable"
+        )
+    for record in files:
+        if not isinstance(record, dict):
+            raise StructureRelativeErrorUnavailable(
+                "retained Structure relative-error source evidence is invalid"
+            )
+        _verify_retained_file_snapshot(record)
+    directories = retained.get("directories")
+    if not isinstance(directories, list):
+        raise StructureRelativeErrorUnavailable(
+            "retained Structure relative-error directory evidence is invalid"
+        )
+    for record in directories:
+        if not isinstance(record, dict):
+            raise StructureRelativeErrorUnavailable(
+                "retained Structure relative-error directory evidence is invalid"
+            )
+        _verify_retained_directory_snapshot(record)
+    values = tuple(
+        retained.get(field)
+        for field in (
+            "sumtally_binding",
+            "pair_evidence",
+            "ct_evidence",
+            "placement",
+        )
+    )
+    if not all(isinstance(value, dict) for value in values):
+        raise StructureRelativeErrorUnavailable(
+            "retained Structure relative-error identity evidence is invalid"
+        )
+    return values  # type: ignore[return-value]
+
+
 def evaluate_structure_relative_error(
     *,
     workspace_root: Path,
@@ -778,6 +1201,18 @@ def evaluate_structure_relative_error(
                 }
                 result_path = root / RESULT_RELATIVE_ROOT / f"{evaluation_sha256}.json"
                 published = _publish_new_record(root, result_path, record)
+                retained_validation = _capture_retained_validation(
+                    workspace_root=root,
+                    rtstruct_path=rtstruct_path,
+                    rtplan_path=rtplan_path,
+                    ct_reference_path=ct_reference_path,
+                    roi_number=roi_number,
+                    sumtally_binding=sumtally_binding,
+                    pair_evidence=pair_evidence,
+                    ct_evidence=ct_evidence,
+                    placement=placement,
+                    rtstruct_sha256=rtstruct_sha256,
+                )
     except StructureRelativeErrorUnavailable:
         raise
     except Exception as exc:
@@ -786,6 +1221,7 @@ def evaluate_structure_relative_error(
         **published,
         "display_roi_name": roi_name,
         "result_path": str(result_path),
+        "_retained_validation": retained_validation,
     }
 
 
@@ -808,38 +1244,39 @@ def revalidate_structure_relative_error_result(
 
     try:
         with WorkspaceOutputGuard(root, read_only=True):
-            _dose, _error, _mesh, sumtally_binding, pair_evidence = (
-                _current_combined_source(root)
+            retained = expected_result.get("_retained_validation")
+            if not isinstance(retained, dict):
+                raise StructureRelativeErrorUnavailable(
+                    "retained Structure relative-error validation evidence is unavailable"
+                )
+            sumtally_binding, pair_evidence, ct_evidence, placement = (
+                _verify_retained_validation(
+                    retained,
+                    workspace_root=root,
+                    rtstruct_path=rtstruct_path,
+                    rtplan_path=rtplan_path,
+                    ct_reference_path=ct_reference_path,
+                    roi_number=roi_number,
+                )
             )
-            _series, ct_evidence = _frozen_ct_series(
-                ct_reference_path,
-                workspace_root=root,
-            )
-            plan_evidence = validate_full_plan_context(
-                rtplan_path=rtplan_path,
-                workspace_root=root,
-                ct_reference_path=ct_reference_path,
-            )
-            placement = derive_rtdose_placement(
-                sumtally_binding["tally_geometry_binding"]["mesh_geometry"],
-                rtplan_isocenter_dicom_mm=plan_evidence[
-                    "rtplan_isocenter_dicom_mm"
-                ],
-            )
-            _rtstruct_raw, rtstruct_sha256 = _stable_regular_bytes(
-                rtstruct_path,
-                label="selected RT Structure Set",
-            )
+            expected_identity = expected_result.get("identity_evidence")
+            if not isinstance(expected_identity, dict):
+                raise StructureRelativeErrorUnavailable(
+                    "the displayed Structure relative-error identity is invalid"
+                )
             identity_evidence = _identity_evidence(
                 sumtally_binding=sumtally_binding,
                 pair_evidence=pair_evidence,
-                rtstruct_sha256=rtstruct_sha256,
+                rtstruct_sha256=str(expected_identity.get("rtstruct_sha256") or ""),
                 roi_number=roi_number,
                 ct_evidence=ct_evidence,
                 placement=placement,
             )
             evaluation_sha256 = _canonical_sha256(identity_evidence)
-            if expected_result.get("evaluation_sha256") != evaluation_sha256:
+            if (
+                expected_identity != identity_evidence
+                or expected_result.get("evaluation_sha256") != evaluation_sha256
+            ):
                 raise StructureRelativeErrorUnavailable(
                     "the displayed Structure relative-error result identity "
                     "is stale or mismatched"
@@ -852,7 +1289,8 @@ def revalidate_structure_relative_error_result(
             expected_record = {
                 key: value
                 for key, value in expected_result.items()
-                if key not in {"display_roi_name", "result_path"}
+                if key
+                not in {"display_roi_name", "result_path", "_retained_validation"}
             }
             persisted = _read_exact_record(result_path, expected_record)
     except StructureRelativeErrorUnavailable:
@@ -863,6 +1301,7 @@ def revalidate_structure_relative_error_result(
         **persisted,
         "display_roi_name": expected_result.get("display_roi_name", ""),
         "result_path": str(result_path),
+        "_retained_validation": retained,
     }
 
 

@@ -242,6 +242,179 @@ def test_axis_mapping_and_approved_statistics_are_exact() -> None:
     }
 
 
+def test_retained_large_sources_use_metadata_without_rehashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "large-tally.out"
+    source.write_bytes(b"validated tally content")
+    snapshot = module._retained_file_snapshot(
+        source,
+        label="combined Sumtally dose output",
+        expected_sha256=module.file_sha256(source),
+        poll_sha256=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "file_sha256",
+        lambda *_args, **_kwargs: pytest.fail(
+            "retained large sources must not be rehashed"
+        ),
+    )
+
+    module._verify_retained_file_snapshot(snapshot)
+
+    source.write_bytes(b"changed tally content!!")
+    with pytest.raises(StructureRelativeErrorUnavailable, match="source changed"):
+        module._verify_retained_file_snapshot(snapshot)
+
+
+def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    analysis = workspace / "analysis"
+    segments = workspace / "segments"
+    sumtally = workspace / "sumtally"
+    for directory in (analysis, segments, sumtally):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def write(path: Path, content: bytes) -> str:
+        path.write_bytes(content)
+        return module.file_sha256(path)
+
+    segment_manifest = segments / "segment_manifest.json"
+    write(segment_manifest, b"{}\n")
+    segment_output = segments / "segment.out"
+    segment_sha256 = write(segment_output, b"segment tally")
+    sum_input = sumtally / "segment_sum.inp"
+    sum_input_sha256 = write(sum_input, b"sum wrapper")
+    sumtally_input = sumtally / "sumtally.inp"
+    sumtally_input_sha256 = write(sumtally_input, b"sum input")
+    dose = sumtally / "dose.out"
+    dose_sha256 = write(dose, b"combined dose")
+    error = sumtally / "dose_err.out"
+    error_sha256 = write(error, b"combined error")
+
+    generation = {
+        "stage_status": "success",
+        "workspace_root": str(workspace),
+        "outputs": {"sum_input": str(sum_input)},
+    }
+    execution = {
+        "stage_status": "success",
+        "workspace_root": str(workspace),
+    }
+    (analysis / "sumtally_generation_summary.json").write_text(
+        json.dumps(generation), encoding="utf-8"
+    )
+    (analysis / "sumtally_execution_summary.json").write_text(
+        json.dumps(execution), encoding="utf-8"
+    )
+    (analysis / "segment_preflight.json").write_text("{}\n", encoding="utf-8")
+
+    snapshot_root = tmp_path / "ct2phits"
+    ct_root = snapshot_root / "CT"
+    datfiles = snapshot_root / "DATfiles"
+    ct_root.mkdir(parents=True)
+    datfiles.mkdir()
+    reference = ct_root / "reference.dcm"
+    reference_sha256 = write(reference, b"frozen CT")
+    rtplan = snapshot_root / "RTPLAN.dcm"
+    rtplan_sha256 = write(rtplan, b"frozen RT Plan")
+    raw_hashes = {
+        name: write(datfiles / name, f"{name}\n".encode("ascii"))
+        for name in module.RAW_CT2PHITS_NAMES
+    }
+    ct_manifest_path = snapshot_root / "ct2phits_workspace_manifest.json"
+    ct_manifest_path.write_text(
+        json.dumps(
+            {
+                "ct_series": {
+                    "copied_files": ["CT/reference.dcm"],
+                    "sha256": {"CT/reference.dcm": reference_sha256},
+                },
+                "rtplan": {"sha256": rtplan_sha256},
+            }
+        ),
+        encoding="utf-8",
+    )
+    ct_summary_path = snapshot_root / "ct2phits_execution_summary.json"
+    ct_summary_path.write_text(
+        json.dumps({"raw_datfiles_sha256": raw_hashes}),
+        encoding="utf-8",
+    )
+    preparation_path = analysis / "public_preparation_workspace_summary.json"
+    preparation_path.write_text(
+        json.dumps(
+            {
+                "phits_generation": {
+                    "ct_voxel_assets": {"raw_datfiles_sha256": raw_hashes}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    rtstruct = tmp_path / "RTSTRUCT.dcm"
+    rtstruct_sha256 = write(rtstruct, b"selected RT Structure Set")
+    binding = {
+        "manifest_path": str(segment_manifest),
+        "manifest_sha256": "1" * 64,
+        "sumtally_input_path": str(sumtally_input),
+        "sumtally_input_sha256": sumtally_input_sha256,
+        "segment_output_evidence": [
+            {"path": str(segment_output), "sha256": segment_sha256}
+        ],
+        "wrapper_include_evidence": [
+            {"path": str(sumtally_input), "sha256": sumtally_input_sha256}
+        ],
+    }
+    pair = {
+        "dose_path": str(dose),
+        "dose_sha256": dose_sha256,
+        "error_path": str(error),
+        "error_sha256": error_sha256,
+        "sum_input_sha256": sum_input_sha256,
+    }
+    ct_evidence = {
+        "ct2phits_manifest_sha256": module.file_sha256(ct_manifest_path),
+        "ct2phits_execution_summary_sha256": module.file_sha256(ct_summary_path),
+        "workspace_preparation_sha256": module.file_sha256(preparation_path),
+        "ct_reference_sha256": reference_sha256,
+    }
+    placement = {"validated": True}
+
+    retained = module._capture_retained_validation(
+        workspace_root=workspace,
+        rtstruct_path=rtstruct,
+        rtplan_path=rtplan,
+        ct_reference_path=reference,
+        roi_number=7,
+        sumtally_binding=binding,
+        pair_evidence=pair,
+        ct_evidence=ct_evidence,
+        placement=placement,
+        rtstruct_sha256=rtstruct_sha256,
+    )
+    assert module._verify_retained_validation(
+        retained,
+        workspace_root=workspace,
+        rtstruct_path=rtstruct,
+        rtplan_path=rtplan,
+        ct_reference_path=reference,
+        roi_number=7,
+    ) == (binding, pair, ct_evidence, placement)
+
+    dose.write_bytes(b"changed dose!")
+    with pytest.raises(StructureRelativeErrorUnavailable, match="source changed"):
+        module._verify_retained_validation(
+            retained,
+            workspace_root=workspace,
+            rtstruct_path=rtstruct,
+            rtplan_path=rtplan,
+            ct_reference_path=reference,
+            roi_number=7,
+        )
+
+
 def test_mapping_uses_unique_ct_voxel_cells_and_rejects_boundaries() -> None:
     placement = {
         "output_shape_frames_rows_columns": [1, 2, 2],
@@ -285,6 +458,28 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
         "error_sha256": "3" * 64,
         "semantics": PAIR_SEMANTICS,
     }
+    ct_evidence = {
+        "ct_series_evidence_sha256": "4" * 64,
+        "ct2phits_manifest_sha256": "5" * 64,
+        "ct2phits_execution_summary_sha256": "6" * 64,
+        "workspace_preparation_sha256": "9" * 64,
+        "ct_reference_sha256": "7" * 64,
+    }
+    placement = module.derive_rtdose_placement(
+        GEOMETRY,
+        rtplan_isocenter_dicom_mm=[0.5, 0.5, 0.0],
+    )
+    retained_validation = {"synthetic": True}
+    rtstruct_snapshot = module._retained_file_snapshot(
+        rtstruct_path,
+        label="selected RT Structure Set",
+        expected_sha256=module.file_sha256(rtstruct_path),
+        poll_sha256=False,
+    )
+
+    def verify_retained(*_args, **_kwargs):
+        module._verify_retained_file_snapshot(rtstruct_snapshot)
+        return binding, pair, ct_evidence, placement
     monkeypatch.setattr(
         module,
         "_current_combined_source",
@@ -301,13 +496,7 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
         "_frozen_ct_series",
         lambda _path, **_kwargs: (
             _fake_series(),
-            {
-                "ct_series_evidence_sha256": "4" * 64,
-                "ct2phits_manifest_sha256": "5" * 64,
-                "ct2phits_execution_summary_sha256": "6" * 64,
-                "workspace_preparation_sha256": "9" * 64,
-                "ct_reference_sha256": "7" * 64,
-            },
+            ct_evidence,
         ),
     )
     monkeypatch.setattr(
@@ -323,6 +512,11 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
             "Synthetic PTV",
             module.file_sha256(rtstruct_path),
         ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_capture_retained_validation",
+        lambda **_kwargs: retained_validation,
     )
     request = {
         "workspace_root": workspace,
@@ -360,10 +554,36 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
     assert repeated["evaluation_sha256"] == result["evaluation_sha256"]
     monkeypatch.setattr(
         module,
+        "_current_combined_source",
+        lambda *_args, **_kwargs: pytest.fail(
+            "retained-result validation must not reparse combined tally grids"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_frozen_ct_series",
+        lambda *_args, **_kwargs: pytest.fail(
+            "retained-result validation must not reload frozen CT pixels"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "validate_full_plan_context",
+        lambda **_kwargs: pytest.fail(
+            "retained-result validation must not reparse DICOM context"
+        ),
+    )
+    monkeypatch.setattr(
+        module,
         "load_rtstruct_roi_mask_by_number",
         lambda *_args, **_kwargs: pytest.fail(
             "retained-result validation must not reevaluate Structure membership"
         ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_verify_retained_validation",
+        verify_retained,
     )
     monkeypatch.setattr(
         workspace_execution_module,
@@ -388,12 +608,21 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
     pair["dose_sha256"] = "2" * 64
 
     rtstruct_path.write_bytes(b"changed synthetic RT Structure Set placeholder")
-    with pytest.raises(StructureRelativeErrorUnavailable, match="identity.*stale"):
+    with pytest.raises(StructureRelativeErrorUnavailable, match="source changed"):
         revalidate_structure_relative_error_result(
             **request,
             expected_result=result,
         )
     rtstruct_path.write_bytes(b"synthetic RT Structure Set placeholder")
+    rtstruct_snapshot.clear()
+    rtstruct_snapshot.update(
+        module._retained_file_snapshot(
+            rtstruct_path,
+            label="selected RT Structure Set",
+            expected_sha256=module.file_sha256(rtstruct_path),
+            poll_sha256=False,
+        )
+    )
 
     persisted_path.write_text("{}\n", encoding="utf-8")
     with pytest.raises(StructureRelativeErrorUnavailable, match="stale|mismatched"):
