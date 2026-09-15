@@ -811,6 +811,23 @@ def _read_exact_record(path: Path, expected: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+_ATOMIC_NO_REPLACE_RENAME = os.name == "nt"
+
+
+def _publish_temporary_without_replacement(temporary: Path, path: Path) -> None:
+    """Atomically publish *temporary* without replacing an existing path."""
+
+    if _ATOMIC_NO_REPLACE_RENAME:
+        # On Windows os.rename() is an atomic same-directory move and raises
+        # FileExistsError when the destination already exists.  Unlike a hard
+        # link, this is supported by FAT/exFAT and compatible network shares.
+        os.rename(temporary, path)
+        return
+    # POSIX rename replaces its destination, so retain hard-link publication
+    # there to preserve the required no-replace race boundary.
+    os.link(temporary, path)
+
+
 def _publish_new_record(
     workspace_root: Path,
     path: Path,
@@ -828,7 +845,7 @@ def _publish_new_record(
             guard.write_json(temporary, record, overwrite=False)
             guard.prepare_file_target(path)
             try:
-                os.link(temporary, path)
+                _publish_temporary_without_replacement(temporary, path)
             except FileExistsError:
                 return _read_exact_record(path, record)
         finally:

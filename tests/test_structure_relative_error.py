@@ -764,6 +764,45 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
     assert persisted_path.read_text(encoding="utf-8") == "{}\n"
 
 
+def test_windows_result_publication_does_not_require_hard_links(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    result_path = workspace / "analysis" / "structure_relative_error" / "result.json"
+    record = {"schema_version": "synthetic", "value": 1}
+
+    monkeypatch.setattr(module, "_ATOMIC_NO_REPLACE_RENAME", True)
+    monkeypatch.setattr(
+        module.os,
+        "link",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Windows-compatible publication must not require hard links"
+        ),
+    )
+
+    assert module._publish_new_record(workspace, result_path, record) == record
+    assert json.loads(result_path.read_text(encoding="utf-8")) == record
+    assert list(result_path.parent.iterdir()) == [result_path]
+
+
+@pytest.mark.skipif(module.os.name != "nt", reason="Windows rename semantics")
+def test_windows_result_publication_never_replaces_existing_path(
+    tmp_path: Path,
+) -> None:
+    temporary = tmp_path / "temporary.json"
+    result_path = tmp_path / "result.json"
+    temporary.write_text("new\n", encoding="utf-8")
+    result_path.write_text("existing\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        module._publish_temporary_without_replacement(temporary, result_path)
+
+    assert result_path.read_text(encoding="utf-8") == "existing\n"
+    assert temporary.read_text(encoding="utf-8") == "new\n"
+
+
 def test_gui_action_requires_verified_sumtally_and_explicit_inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
