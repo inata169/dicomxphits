@@ -55,6 +55,8 @@ MAPPING_CHUNK_CELLS = 100_000
 RETAINED_VALIDATION_SCHEMA_VERSION = (
     "dicomxphits_structure_relative_error_retained_validation_v1"
 )
+_WINDOWS_FILE_BASIC_INFO: Any = None
+_WINDOWS_GET_FILE_INFORMATION: Any = None
 
 
 class StructureRelativeErrorUnavailable(ValueError):
@@ -660,6 +662,56 @@ def _identity_evidence(
     }
 
 
+def _file_change_token(path: Path) -> int:
+    if os.name != "nt":
+        return int(path.stat().st_ctime_ns)
+
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    global _WINDOWS_FILE_BASIC_INFO, _WINDOWS_GET_FILE_INFORMATION
+    if _WINDOWS_FILE_BASIC_INFO is None:
+        class FileBasicInfo(ctypes.Structure):
+            _fields_ = (
+                ("CreationTime", ctypes.c_longlong),
+                ("LastAccessTime", ctypes.c_longlong),
+                ("LastWriteTime", ctypes.c_longlong),
+                ("ChangeTime", ctypes.c_longlong),
+                ("FileAttributes", wintypes.DWORD),
+            )
+
+        api = ctypes.WinDLL("kernel32", use_last_error=True)
+        function = api.GetFileInformationByHandleEx
+        function.argtypes = (
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        )
+        function.restype = wintypes.BOOL
+        _WINDOWS_FILE_BASIC_INFO = FileBasicInfo
+        _WINDOWS_GET_FILE_INFORMATION = function
+
+    descriptor = os.open(
+        os.fspath(path),
+        os.O_RDONLY | getattr(os, "O_BINARY", 0),
+    )
+    try:
+        information = _WINDOWS_FILE_BASIC_INFO()
+        handle = msvcrt.get_osfhandle(descriptor)
+        if not _WINDOWS_GET_FILE_INFORMATION(
+            handle,
+            0,
+            ctypes.byref(information),
+            ctypes.sizeof(information),
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return int(information.ChangeTime)
+    finally:
+        os.close(descriptor)
+
+
 def _retained_file_snapshot(
     path: Path,
     *,
@@ -681,6 +733,7 @@ def _retained_file_snapshot(
         "st_ctime_ns",
     )
     before = supplied.stat()
+    before_change_token = _file_change_token(supplied)
     if expected_sha256 is not None and not expected_sha256:
         raise StructureRelativeErrorUnavailable(
             f"{label} has missing validated digest evidence"
@@ -691,7 +744,11 @@ def _retained_file_snapshot(
         else expected_sha256
     )
     after = supplied.stat()
-    if any(getattr(before, name) != getattr(after, name) for name in attributes):
+    after_change_token = _file_change_token(supplied)
+    if (
+        before_change_token != after_change_token
+        or any(getattr(before, name) != getattr(after, name) for name in attributes)
+    ):
         raise StructureRelativeErrorUnavailable(f"{label} changed while being recorded")
     if expected_sha256 is not None and digest != expected_sha256:
         raise StructureRelativeErrorUnavailable(
@@ -701,6 +758,7 @@ def _retained_file_snapshot(
         "path": str(supplied.resolve()),
         "sha256": digest,
         "poll_sha256": poll_sha256,
+        "change_token": after_change_token,
         "stat": {name: int(getattr(after, name)) for name in attributes},
     }
 
@@ -717,9 +775,12 @@ def _verify_retained_file_snapshot(record: dict[str, Any]) -> None:
             "a retained Structure relative-error source is missing or linked"
         )
     current = path.stat()
-    if any(
-        int(getattr(current, name)) != value
-        for name, value in expected_stat.items()
+    if (
+        _file_change_token(path) != record.get("change_token")
+        or any(
+            int(getattr(current, name)) != value
+            for name, value in expected_stat.items()
+        )
     ):
         raise StructureRelativeErrorUnavailable(
             "a retained Structure relative-error source changed"
@@ -730,9 +791,12 @@ def _verify_retained_file_snapshot(record: dict[str, Any]) -> None:
                 "a retained Structure relative-error evidence record changed"
             )
         after = path.stat()
-        if any(
-            int(getattr(after, name)) != value
-            for name, value in expected_stat.items()
+        if (
+            _file_change_token(path) != record.get("change_token")
+            or any(
+                int(getattr(after, name)) != value
+                for name, value in expected_stat.items()
+            )
         ):
             raise StructureRelativeErrorUnavailable(
                 "a retained Structure relative-error evidence record changed"
