@@ -727,10 +727,6 @@ def _structure_membership_on_dose_grid(
             )
         )
         scaled = coordinates + 0.5
-        within_closed = np.all(
-            (scaled >= 0.0) & (scaled <= ct_counts),
-            axis=1,
-        )
         nearest = np.rint(scaled)
         patient_magnitude = np.max(np.abs(points), axis=1)[:, None]
         # This bound only selects values for exact Decimal evaluation; it is
@@ -744,7 +740,12 @@ def _structure_membership_on_dose_grid(
                 + 1.0
             )
         )
-        boundary_candidates = within_closed & np.any(
+        near_closed = np.all(
+            (scaled >= -decimal_prefilter)
+            & (scaled <= ct_counts + decimal_prefilter),
+            axis=1,
+        )
+        boundary_candidates = near_closed & np.any(
             np.abs(scaled - nearest) <= decimal_prefilter,
             axis=1,
         )

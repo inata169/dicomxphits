@@ -569,6 +569,19 @@ def test_mapping_uses_unique_ct_voxel_cells_and_rejects_boundaries() -> None:
             ct_mask=np.ones((1, 3, 3), dtype=bool),
         )
 
+    decimal_series.slices[0].position = np.asarray([0.2, 0.0, 0.0])
+    decimal_outer_boundary = {
+        **decimal_boundary,
+        "image_position_patient_mm": [0.15, 0.02, 0.0],
+    }
+    assert (0.15 - 0.2) / 0.1 + 0.5 < 0.0
+    with pytest.raises(StructureRelativeErrorUnavailable, match="boundary"):
+        _structure_membership_on_dose_grid(
+            placement=decimal_outer_boundary,
+            series=decimal_series,
+            ct_mask=np.ones((1, 3, 3), dtype=bool),
+        )
+
     oblique_series = SimpleNamespace(
         slices=(
             SimpleNamespace(
