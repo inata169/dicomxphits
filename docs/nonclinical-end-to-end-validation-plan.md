@@ -240,8 +240,10 @@ presentation. The operator remains present throughout all real-tool stages.
 2. Confirm `segment_mu` weights, active-treatment MU-sum `sumfactor`, `GY`
    input-dose semantics, manifest binding, wrapper/input digests, and complete
    recursive dependency evidence.
-3. After exact execution approval, run Sumtally once.
-4. Require a newly created or byte-changed expected dose output, successful
+3. Immediately before launch, recheck the approved ordinary-file path and
+   SHA-256 of the exact PHITS executable that will run Sumtally.
+4. After exact execution approval, run Sumtally once.
+5. Require a newly created or byte-changed expected dose output, successful
    execution evidence, and stable source/dependency digests.
 
 ### 5. RTDOSE
@@ -250,8 +252,10 @@ presentation. The operator remains present throughout all real-tool stages.
    approved template, and selected CT reference.
 2. Confirm that converter compatibility changes are confined to private staged
    copies and that accepted Sumtally inputs remain byte-for-byte unchanged.
-3. After exact execution approval, run phits2dicom once.
-4. Require a fresh coordinate-corrected output that independently validates as
+3. Immediately before launch, recheck the approved ordinary-file path and
+   SHA-256 of the exact phits2dicom executable.
+4. After exact execution approval, run phits2dicom once.
+5. Require a fresh coordinate-corrected output that independently validates as
    `DoseUnits = GY`, `DoseSummationType = PLAN`, references the frozen RT Plan,
    applies the planned fraction count exactly once, preserves physical dose
    through coordinate correction, and passes the documented voxel-placement
@@ -283,12 +287,14 @@ presentation. The operator remains present throughout all real-tool stages.
 ### 7. Optional GPR comparison
 
 Run this stage only after a separate approval that identifies the frozen
-non-patient reference RT Dose and exact external tool. Reproduction of the
-historical research condition must explicitly select global `3% / 3 mm` with a
-`10%` cutoff rather than relying on CLI defaults. Require matching Frame of
-Reference, `GY` units, zero process exit, and a fresh result record. Report the
-observed pass rate and settings without treating 95% or another value as a
-clinical acceptance threshold.
+non-patient reference RT Dose and exact external tool. Immediately before
+launch, recheck the approved ordinary-file paths and SHA-256 values for the GPR
+entry point and every frozen executable or script that the reviewed command
+will run. Reproduction of the historical research condition must explicitly
+select global `3% / 3 mm` with a `10%` cutoff rather than relying on CLI
+defaults. Require matching Frame of Reference, `GY` units, zero process exit,
+and a fresh result record. Report the observed pass rate and settings without
+treating 95% or another value as a clinical acceptance threshold.
 
 ## Acceptance criteria
 
