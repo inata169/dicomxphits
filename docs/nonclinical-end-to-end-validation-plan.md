@@ -426,7 +426,11 @@ treated as consent for another:
 8. Approval for one exact post-completion Structure evaluation using the
    frozen RT Structure Set.
 9. Approval for one exact GPR invocation, if requested.
-10. Approval for any cleanup, publication, release, or rerun.
+10. Approval for one exact cleanup operation, including its targets and
+    recoverability.
+11. Approval for publishing one exact sanitized report or evidence set.
+12. Approval for one exact release operation.
+13. Approval for each exact rerun under a newly frozen launch record.
 
 An approval is consumed by the specified launch. Failure or inconclusive
 evidence does not authorize another attempt.
