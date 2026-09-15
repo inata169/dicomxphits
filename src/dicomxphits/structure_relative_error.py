@@ -805,60 +805,56 @@ def revalidate_structure_relative_error_result(
         raise StructureRelativeErrorUnavailable(
             "workspace root must be an existing non-link directory"
         )
-    from dicomxphits.workspace_execution import WorkspaceExecutionLease
 
     try:
-        with WorkspaceOutputGuard(root):
-            with WorkspaceExecutionLease(root):
-                _dose, _error, _mesh, sumtally_binding, pair_evidence = (
-                    _current_combined_source(root)
+        with WorkspaceOutputGuard(root, read_only=True):
+            _dose, _error, _mesh, sumtally_binding, pair_evidence = (
+                _current_combined_source(root)
+            )
+            _series, ct_evidence = _frozen_ct_series(
+                ct_reference_path,
+                workspace_root=root,
+            )
+            plan_evidence = validate_full_plan_context(
+                rtplan_path=rtplan_path,
+                workspace_root=root,
+                ct_reference_path=ct_reference_path,
+            )
+            placement = derive_rtdose_placement(
+                sumtally_binding["tally_geometry_binding"]["mesh_geometry"],
+                rtplan_isocenter_dicom_mm=plan_evidence[
+                    "rtplan_isocenter_dicom_mm"
+                ],
+            )
+            _rtstruct_raw, rtstruct_sha256 = _stable_regular_bytes(
+                rtstruct_path,
+                label="selected RT Structure Set",
+            )
+            identity_evidence = _identity_evidence(
+                sumtally_binding=sumtally_binding,
+                pair_evidence=pair_evidence,
+                rtstruct_sha256=rtstruct_sha256,
+                roi_number=roi_number,
+                ct_evidence=ct_evidence,
+                placement=placement,
+            )
+            evaluation_sha256 = _canonical_sha256(identity_evidence)
+            if expected_result.get("evaluation_sha256") != evaluation_sha256:
+                raise StructureRelativeErrorUnavailable(
+                    "the displayed Structure relative-error result identity "
+                    "is stale or mismatched"
                 )
-                _series, ct_evidence = _frozen_ct_series(
-                    ct_reference_path,
-                    workspace_root=root,
+            result_path = root / RESULT_RELATIVE_ROOT / f"{evaluation_sha256}.json"
+            if expected_result.get("result_path") != str(result_path):
+                raise StructureRelativeErrorUnavailable(
+                    "the displayed Structure relative-error result path is mismatched"
                 )
-                plan_evidence = validate_full_plan_context(
-                    rtplan_path=rtplan_path,
-                    workspace_root=root,
-                    ct_reference_path=ct_reference_path,
-                )
-                placement = derive_rtdose_placement(
-                    sumtally_binding["tally_geometry_binding"]["mesh_geometry"],
-                    rtplan_isocenter_dicom_mm=plan_evidence[
-                        "rtplan_isocenter_dicom_mm"
-                    ],
-                )
-                _rtstruct_raw, rtstruct_sha256 = _stable_regular_bytes(
-                    rtstruct_path,
-                    label="selected RT Structure Set",
-                )
-                identity_evidence = _identity_evidence(
-                    sumtally_binding=sumtally_binding,
-                    pair_evidence=pair_evidence,
-                    rtstruct_sha256=rtstruct_sha256,
-                    roi_number=roi_number,
-                    ct_evidence=ct_evidence,
-                    placement=placement,
-                )
-                evaluation_sha256 = _canonical_sha256(identity_evidence)
-                if expected_result.get("evaluation_sha256") != evaluation_sha256:
-                    raise StructureRelativeErrorUnavailable(
-                        "the displayed Structure relative-error result identity "
-                        "is stale or mismatched"
-                    )
-                result_path = (
-                    root / RESULT_RELATIVE_ROOT / f"{evaluation_sha256}.json"
-                )
-                if expected_result.get("result_path") != str(result_path):
-                    raise StructureRelativeErrorUnavailable(
-                        "the displayed Structure relative-error result path is mismatched"
-                    )
-                expected_record = {
-                    key: value
-                    for key, value in expected_result.items()
-                    if key not in {"display_roi_name", "result_path"}
-                }
-                persisted = _read_exact_record(result_path, expected_record)
+            expected_record = {
+                key: value
+                for key, value in expected_result.items()
+                if key not in {"display_roi_name", "result_path"}
+            }
+            persisted = _read_exact_record(result_path, expected_record)
     except StructureRelativeErrorUnavailable:
         raise
     except Exception as exc:

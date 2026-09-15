@@ -4157,6 +4157,12 @@ def _build_gui() -> int:
         def revalidate_retained_result(expected_result: dict[str, object]) -> None:
             if not request_is_current():
                 return
+            if execution_guard.active_stage is not None:
+                root.after(
+                    STRUCTURE_RESULT_REVALIDATION_INTERVAL_MS,
+                    lambda: revalidate_retained_result(expected_result),
+                )
+                return
 
             def finish_revalidation() -> None:
                 if not request_is_current():

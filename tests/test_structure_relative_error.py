@@ -10,6 +10,7 @@ import pytest
 
 import dicomxphits.gui as gui_module
 import dicomxphits.structure_relative_error as module
+import dicomxphits.workspace_execution as workspace_execution_module
 from dicomxphits.gui import (
     GuiValidationError,
     STRUCTURE_EVALUATION_UPSTREAM_STAGES,
@@ -362,6 +363,13 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
         "load_rtstruct_roi_mask_by_number",
         lambda *_args, **_kwargs: pytest.fail(
             "retained-result validation must not reevaluate Structure membership"
+        ),
+    )
+    monkeypatch.setattr(
+        workspace_execution_module,
+        "WorkspaceExecutionLease",
+        lambda *_args, **_kwargs: pytest.fail(
+            "retained-result validation must not compete for the execution lease"
         ),
     )
     revalidated = revalidate_structure_relative_error_result(
