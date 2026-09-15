@@ -112,7 +112,7 @@ recursive distribution search.
 | RTDOSE template | The reviewed package template or another separately reviewed compatible non-patient template; SHA-256 |
 | Optional GPR tool | Explicit checkout/root, exact version or commit, entry point, and relevant file digests |
 | Calculation settings | Exact `maxcas`, `maxbch`, OpenMP threads, and optional calculation-config bytes and SHA-256 |
-| Destinations | New absent case workspace and evidence directory under an approved scratch root outside the repository |
+| Destinations | New absent case workspace and evidence directory under an approved scratch root outside the repository; exact initially absent isolated GUI-settings file path under that root |
 | Host | OS/build, CPU model and logical-core count, installed RAM, storage type, Python 3.12 environment, package commit, and available disk space |
 
 The source set must pass a private identifier review before it is frozen. A
@@ -199,9 +199,9 @@ by relaxing a guard or editing the frozen case.
    of active OpenSpec changes.
 2. Run the repository's focused synthetic GUI/runtime/Structure checks and the
    full public checks with the repository `.venv`.
-3. Verify that the scratch and evidence destinations are absent, outside the
-   repository, on an approved volume, and have no symbolic-link or Windows
-   reparse-point ancestors within the writable path.
+3. Verify that the scratch and evidence destinations and isolated GUI-settings
+   file are absent, outside the repository, on an approved volume, and have no
+   symbolic-link or Windows reparse-point ancestors within the writable path.
 4. After the separate approval for the exact candidate file set, perform only
    the approved bounded read-only review and freeze operation. Confirm that
    every DICOM object is from the approved non-patient phantom and that its
@@ -246,7 +246,20 @@ The primary validation path is the guided Windows GUI because it exercises the
 current preparation, progress, stop, retained-result, and Structure-result
 presentation. The operator remains present throughout all real-tool stages.
 
-Before starting the GUI, obtain exact approval for one collector lifecycle,
+Before starting the collector or GUI, obtain exact approval for one isolated
+GUI-settings lifecycle. The exact initially absent file must be under the
+approved scratch root. Set `DICOMXPHITS_GUI_DEFAULTS_JSON` to its absolute path
+only in the approved GUI process environment, recheck absence and the approved
+parent's no-link/reparse state immediately before launch, and do not copy or
+prepopulate an existing settings file. The approval permits that GUI instance
+to create and update only this settings file while paths are selected and on
+normal shutdown, followed by one read-only hash/freeze of the final file. It
+does not permit reading or writing the normal LocalAppData settings path. An
+ignored override, premature file appearance, or access outside the isolated
+path stops the launch or makes the run unacceptable, as applicable; deletion
+still requires the separate cleanup approval.
+
+Then obtain exact approval for one collector lifecycle,
 including the frozen collector identity and configuration, process-tree binding
 method, evidence destination, sampling and size limits, start condition, stop
 condition, and failure response. Start the collector once under that approval,
@@ -516,31 +529,36 @@ treated as consent for another:
    human-identified external calculation-configuration file, if one is used.
 7. Approval of the final frozen non-patient dataset, tool identities,
    destinations, settings, collector, resource budgets, and stop policy.
-8. Approval for one exact evidence-collector lifecycle: one launch before the
+8. Approval for one exact isolated GUI-settings lifecycle using an initially
+   absent file selected through `DICOMXPHITS_GUI_DEFAULTS_JSON`: bounded GUI
+   creation and updates, normal-shutdown write, and one final read-only
+   hash/freeze, without access to the normal LocalAppData settings path.
+9. Approval for one exact evidence-collector lifecycle: one launch before the
    GUI, binding only to that approved GUI process and its descendants, bounded
    writes to the exact evidence destination, and one graceful stop after the
    required retained-result interval.
-9. Approval for one exact GUI launch from the reviewed package commit, without
-   authority to launch CT2PHITS or any later external tool.
-10. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
+10. Approval for one exact GUI launch from the reviewed package commit, with
+    the approved isolated settings override in its process environment and
+    without authority to launch CT2PHITS or any later external tool.
+11. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
    batch, resolved CT2PHITS executable, and HU table.
-11. Approval for one exact workspace-preparation invocation using the frozen
+12. Approval for one exact workspace-preparation invocation using the frozen
     DICOM and handoff.
-12. Approval for one exact all-active-segment controller invocation, with the
+13. Approval for one exact all-active-segment controller invocation, with the
     reviewed manifest fixing the maximum PHITS child-launch count.
-13. Approval for one exact Sumtally invocation.
-14. Approval for one exact RTDOSE-preparation invocation using the frozen
+14. Approval for one exact Sumtally invocation.
+15. Approval for one exact RTDOSE-preparation invocation using the frozen
     DICOM, accepted Sumtally evidence, and template.
-15. Approval for one exact phits2dicom invocation.
-16. Approval for one exact post-completion Structure evaluation using the
+16. Approval for one exact phits2dicom invocation.
+17. Approval for one exact post-completion Structure evaluation using the
     frozen RT Structure Set.
-17. Approval for one exact GPR invocation using the frozen reference and
+18. Approval for one exact GPR invocation using the frozen reference and
     evaluation RT Dose files, if requested.
-18. Approval for one exact cleanup operation, including its targets and
+19. Approval for one exact cleanup operation, including its targets and
     recoverability.
-19. Approval for publishing one exact sanitized report or evidence set.
-20. Approval for one exact release operation.
-21. Approval for each exact rerun under a newly frozen launch record.
+20. Approval for publishing one exact sanitized report or evidence set.
+21. Approval for one exact release operation.
+22. Approval for each exact rerun under a newly frozen launch record.
 
 An approval is consumed by the specified launch. Failure or inconclusive
 evidence does not authorize another attempt.
