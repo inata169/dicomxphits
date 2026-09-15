@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import os
+from decimal import Decimal, localcontext
 from pathlib import Path
 import secrets
 import time
@@ -217,9 +218,15 @@ def validate_combined_tally_pair(
 
 def _current_combined_source(
     workspace_root: Path,
-) -> tuple[np.ndarray, np.ndarray, Mesh, dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    Mesh,
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+]:
     from dicomxphits.prepare_rtdose import (
-        load_sumtally_summaries,
         validate_sumtally_manifest_binding,
     )
     from dicomxphits.run_segments import phits_error_output_path
@@ -227,7 +234,45 @@ def _current_combined_source(
         normalize_relocated_sumtally_summaries,
     )
 
-    generation, execution = load_sumtally_summaries(workspace_root)
+    control_paths = {
+        "Sumtally generation summary": workspace_root
+        / "analysis"
+        / "sumtally_generation_summary.json",
+        "Sumtally execution summary": workspace_root
+        / "analysis"
+        / "sumtally_execution_summary.json",
+        "segment preflight receipt": workspace_root
+        / "analysis"
+        / "segment_preflight.json",
+        "segment manifest": workspace_root / "segments" / "segment_manifest.json",
+    }
+    generation, generation_sha256 = _stable_json(
+        control_paths["Sumtally generation summary"],
+        label="Sumtally generation summary",
+    )
+    execution, execution_sha256 = _stable_json(
+        control_paths["Sumtally execution summary"],
+        label="Sumtally execution summary",
+    )
+    if generation.get("stage_status") != "success":
+        raise StructureRelativeErrorUnavailable(
+            "Sumtally generation summary is not successful"
+        )
+    if execution.get("stage_status") != "success":
+        raise StructureRelativeErrorUnavailable(
+            "Sumtally execution summary is not successful"
+        )
+    control_sha256 = {
+        "Sumtally generation summary": generation_sha256,
+        "Sumtally execution summary": execution_sha256,
+    }
+    for label in ("segment preflight receipt", "segment manifest"):
+        _raw, digest = _stable_regular_bytes(
+            control_paths[label],
+            label=label,
+            maximum_bytes=MAX_JSON_BYTES,
+        )
+        control_sha256[label] = digest
     generation, execution = normalize_relocated_sumtally_summaries(
         workspace_root,
         generation=generation,
@@ -273,7 +318,23 @@ def _current_combined_source(
         raise StructureRelativeErrorUnavailable(
             "combined dose digest does not match terminal Sumtally evidence"
         )
-    return dose, error, mesh, binding, current
+    for label, path in control_paths.items():
+        if file_sha256(path) != control_sha256[label]:
+            raise StructureRelativeErrorUnavailable(
+                f"{label} changed during Structure relative-error evaluation"
+            )
+    control_evidence = {
+        "files": [
+            {
+                "label": label,
+                "path": str(path.resolve()),
+                "sha256": control_sha256[label],
+            }
+            for label, path in control_paths.items()
+        ],
+        "sum_input_path": str(sum_input_path),
+    }
+    return dose, error, mesh, binding, current, control_evidence
 
 
 def _frozen_ct_series(
@@ -489,6 +550,102 @@ def _values_in_rtdose_order(values: np.ndarray, mesh: Mesh) -> np.ndarray:
     return np.transpose(phits[:, ::-1, ::-1], (1, 0, 2)).copy()
 
 
+def _decimal_vector(values: Any) -> tuple[Decimal, ...]:
+    return tuple(Decimal(str(float(value))) for value in values)
+
+
+def _decimal_dot(
+    left: tuple[Decimal, ...],
+    right: tuple[Decimal, ...],
+) -> Decimal:
+    return sum((a * b for a, b in zip(left, right, strict=True)), Decimal(0))
+
+
+def _decimal_cross(
+    left: tuple[Decimal, ...],
+    right: tuple[Decimal, ...],
+) -> tuple[Decimal, Decimal, Decimal]:
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def _decimal_mapping_geometry(
+    placement: dict[str, Any],
+    series: CtSeries,
+) -> dict[str, Any]:
+    dose_iop = _decimal_vector(placement["image_orientation_patient"])
+    dose_column = dose_iop[:3]
+    dose_row = dose_iop[3:]
+    return {
+        "dose_ipp": _decimal_vector(placement["image_position_patient_mm"]),
+        "dose_column": dose_column,
+        "dose_row": dose_row,
+        "dose_normal": _decimal_cross(dose_column, dose_row),
+        "dose_spacing": _decimal_vector(placement["pixel_spacing_mm"]),
+        "dose_offsets": _decimal_vector(
+            placement["grid_frame_offset_vector_mm"]
+        ),
+        "ct_origin": _decimal_vector(series.slices[0].position),
+        "ct_normal": _decimal_vector(series.normal_direction),
+        "ct_distance": Decimal(str(float(series.slices[0].distance_mm))),
+        "ct_spacing": _decimal_vector(
+            (
+                series.slice_spacing_mm,
+                series.row_spacing_mm,
+                series.column_spacing_mm,
+            )
+        ),
+        "ct_column": _decimal_vector(series.column_direction),
+        "ct_row": _decimal_vector(series.row_direction),
+    }
+
+
+def _lies_on_decimal_ct_boundary(
+    geometry: dict[str, Any],
+    *,
+    frame: int,
+    row: int,
+    column: int,
+) -> bool:
+    with localcontext() as context:
+        context.prec = 50
+        dose_ipp = geometry["dose_ipp"]
+        dose_column = geometry["dose_column"]
+        dose_row = geometry["dose_row"]
+        dose_normal = geometry["dose_normal"]
+        dose_spacing = geometry["dose_spacing"]
+        offset = geometry["dose_offsets"][frame]
+        row_index = Decimal(row)
+        column_index = Decimal(column)
+        point = tuple(
+            dose_ipp[index]
+            + column_index * dose_spacing[1] * dose_column[index]
+            + row_index * dose_spacing[0] * dose_row[index]
+            + offset * dose_normal[index]
+            for index in range(3)
+        )
+        relative = tuple(
+            point[index] - geometry["ct_origin"][index]
+            for index in range(3)
+        )
+        coordinates = (
+            (_decimal_dot(point, geometry["ct_normal"]) - geometry["ct_distance"])
+            / geometry["ct_spacing"][0],
+            _decimal_dot(relative, geometry["ct_column"])
+            / geometry["ct_spacing"][1],
+            _decimal_dot(relative, geometry["ct_row"])
+            / geometry["ct_spacing"][2],
+        )
+        return any(
+            (value + Decimal("0.5"))
+            == (value + Decimal("0.5")).to_integral_value()
+            for value in coordinates
+        )
+
+
 def _structure_membership_on_dose_grid(
     *,
     placement: dict[str, Any],
@@ -527,6 +684,15 @@ def _structure_membership_on_dose_grid(
         [len(series.slices), series.rows, series.columns],
         dtype=np.int64,
     )
+    decimal_geometry = _decimal_mapping_geometry(placement, series)
+    ct_spacing = np.asarray(
+        [
+            series.slice_spacing_mm,
+            series.row_spacing_mm,
+            series.column_spacing_mm,
+        ],
+        dtype=np.float64,
+    )
     for start in range(0, total, MAPPING_CHUNK_CELLS):
         stop = min(total, start + MAPPING_CHUNK_CELLS)
         flat = np.arange(start, stop, dtype=np.int64)
@@ -554,11 +720,33 @@ def _structure_membership_on_dose_grid(
             (scaled >= 0.0) & (scaled <= ct_counts),
             axis=1,
         )
-        boundary = within_closed & np.any(scaled == np.floor(scaled), axis=1)
-        if np.any(boundary):
-            raise StructureRelativeErrorUnavailable(
-                "a dose-voxel centre lies on a frozen CT voxel-cell boundary"
+        nearest = np.rint(scaled)
+        patient_magnitude = np.max(np.abs(points), axis=1)[:, None]
+        # This bound only selects values for exact Decimal evaluation; it is
+        # never used to classify a point as on or off a boundary.
+        decimal_prefilter = (
+            256.0
+            * np.finfo(np.float64).eps
+            * (
+                np.abs(scaled)
+                + patient_magnitude / ct_spacing[None, :]
+                + 1.0
             )
+        )
+        boundary_candidates = within_closed & np.any(
+            np.abs(scaled - nearest) <= decimal_prefilter,
+            axis=1,
+        )
+        for index in np.flatnonzero(boundary_candidates):
+            if _lies_on_decimal_ct_boundary(
+                decimal_geometry,
+                frame=int(frames[index]),
+                row=int(rows[index]),
+                column=int(columns[index]),
+            ):
+                raise StructureRelativeErrorUnavailable(
+                    "a dose-voxel centre lies on a frozen CT voxel-cell boundary"
+                )
         valid = np.all((scaled > 0.0) & (scaled < ct_counts), axis=1)
         indices = np.floor(scaled[valid]).astype(np.int64)
         if len(indices):
@@ -834,22 +1022,14 @@ def _capture_retained_validation(
     roi_number: int,
     sumtally_binding: dict[str, Any],
     pair_evidence: dict[str, Any],
+    control_evidence: dict[str, Any],
     ct_evidence: dict[str, Any],
     placement: dict[str, Any],
     rtstruct_sha256: str,
 ) -> dict[str, Any]:
     """Capture proven source identities for low-cost retained-display checks."""
 
-    from dicomxphits.prepare_rtdose import load_sumtally_summaries
-    from dicomxphits.workspace_recovery import normalize_relocated_sumtally_summaries
-
     root = workspace_root.resolve()
-    generation, execution = load_sumtally_summaries(root)
-    generation, execution = normalize_relocated_sumtally_summaries(
-        root,
-        generation=generation,
-        execution=execution,
-    )
     entries: dict[str, tuple[str, str | None, bool]] = {}
 
     def add(
@@ -879,17 +1059,22 @@ def _capture_retained_validation(
             previous_poll or poll_sha256,
         )
 
-    for name, label in (
-        ("sumtally_generation_summary.json", "Sumtally generation summary"),
-        ("sumtally_execution_summary.json", "Sumtally execution summary"),
-        ("segment_preflight.json", "segment preflight receipt"),
-    ):
-        add(root / "analysis" / name, label=label, poll_sha256=True)
-    add(
-        Path(str(sumtally_binding["manifest_path"])),
-        label="segment manifest",
-        poll_sha256=True,
-    )
+    control_files = control_evidence.get("files")
+    if not isinstance(control_files, list):
+        raise StructureRelativeErrorUnavailable(
+            "retained control-file evidence is unavailable"
+        )
+    for record in control_files:
+        if not isinstance(record, dict):
+            raise StructureRelativeErrorUnavailable(
+                "retained control-file evidence is invalid"
+            )
+        add(
+            Path(str(record.get("path") or "")),
+            label=str(record.get("label") or "control file"),
+            expected_sha256=str(record.get("sha256") or ""),
+            poll_sha256=True,
+        )
     add(
         Path(str(sumtally_binding["sumtally_input_path"])),
         label="Sumtally normalization input",
@@ -906,13 +1091,8 @@ def _capture_retained_validation(
         label="combined Sumtally statistical-error output",
         expected_sha256=str(pair_evidence["error_sha256"]),
     )
-    generation_outputs = generation.get("outputs")
-    if not isinstance(generation_outputs, dict):
-        raise StructureRelativeErrorUnavailable(
-            "Sumtally generation output evidence is unavailable"
-        )
     add(
-        Path(str(generation_outputs.get("sum_input") or "")),
+        Path(str(control_evidence.get("sum_input_path") or "")),
         label="generated Sumtally wrapper input",
         expected_sha256=str(pair_evidence["sum_input_sha256"]),
         poll_sha256=True,
@@ -1162,9 +1342,14 @@ def evaluate_structure_relative_error(
     try:
         with WorkspaceOutputGuard(root):
             with WorkspaceExecutionLease(root):
-                dose, error, mesh, sumtally_binding, pair_evidence = (
-                    _current_combined_source(root)
-                )
+                (
+                    dose,
+                    error,
+                    mesh,
+                    sumtally_binding,
+                    pair_evidence,
+                    control_evidence,
+                ) = _current_combined_source(root)
                 series, ct_evidence = _frozen_ct_series(
                     ct_reference_path,
                     workspace_root=root,
@@ -1269,6 +1454,7 @@ def evaluate_structure_relative_error(
                     roi_number=roi_number,
                     sumtally_binding=sumtally_binding,
                     pair_evidence=pair_evidence,
+                    control_evidence=control_evidence,
                     ct_evidence=ct_evidence,
                     placement=placement,
                     rtstruct_sha256=rtstruct_sha256,

@@ -381,6 +381,28 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         "ct_reference_sha256": reference_sha256,
     }
     placement = {"validated": True}
+    control_evidence = {
+        "files": [
+            {
+                "label": label,
+                "path": str(path),
+                "sha256": module.file_sha256(path),
+            }
+            for label, path in (
+                (
+                    "Sumtally generation summary",
+                    analysis / "sumtally_generation_summary.json",
+                ),
+                (
+                    "Sumtally execution summary",
+                    analysis / "sumtally_execution_summary.json",
+                ),
+                ("segment preflight receipt", analysis / "segment_preflight.json"),
+                ("segment manifest", segment_manifest),
+            )
+        ],
+        "sum_input_path": str(sum_input),
+    }
 
     retained = module._capture_retained_validation(
         workspace_root=workspace,
@@ -390,6 +412,7 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         roi_number=7,
         sumtally_binding=binding,
         pair_evidence=pair,
+        control_evidence=control_evidence,
         ct_evidence=ct_evidence,
         placement=placement,
         rtstruct_sha256=rtstruct_sha256,
@@ -402,6 +425,44 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         ct_reference_path=reference,
         roi_number=7,
     ) == (binding, pair, ct_evidence, placement)
+
+    generation_path = analysis / "sumtally_generation_summary.json"
+    original_generation = generation_path.read_bytes()
+    generation_path.write_text(
+        json.dumps({"stage_status": "failed"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        StructureRelativeErrorUnavailable,
+        match="validated digest evidence",
+    ):
+        module._capture_retained_validation(
+            workspace_root=workspace,
+            rtstruct_path=rtstruct,
+            rtplan_path=rtplan,
+            ct_reference_path=reference,
+            roi_number=7,
+            sumtally_binding=binding,
+            pair_evidence=pair,
+            control_evidence=control_evidence,
+            ct_evidence=ct_evidence,
+            placement=placement,
+            rtstruct_sha256=rtstruct_sha256,
+        )
+    generation_path.write_bytes(original_generation)
+    retained = module._capture_retained_validation(
+        workspace_root=workspace,
+        rtstruct_path=rtstruct,
+        rtplan_path=rtplan,
+        ct_reference_path=reference,
+        roi_number=7,
+        sumtally_binding=binding,
+        pair_evidence=pair,
+        control_evidence=control_evidence,
+        ct_evidence=ct_evidence,
+        placement=placement,
+        rtstruct_sha256=rtstruct_sha256,
+    )
 
     dose.write_bytes(b"changed dose!")
     with pytest.raises(StructureRelativeErrorUnavailable, match="source changed"):
@@ -438,6 +499,37 @@ def test_mapping_uses_unique_ct_voxel_cells_and_rejects_boundaries() -> None:
             placement=boundary,
             series=_fake_series(),
             ct_mask=mask,
+        )
+
+    decimal_series = SimpleNamespace(
+        slices=(
+            SimpleNamespace(
+                position=np.asarray([0.0, 0.0, 0.0]),
+                distance_mm=0.0,
+            ),
+        ),
+        rows=3,
+        columns=3,
+        row_spacing_mm=0.1,
+        column_spacing_mm=0.1,
+        slice_spacing_mm=0.1,
+        row_direction=np.asarray([1.0, 0.0, 0.0]),
+        column_direction=np.asarray([0.0, 1.0, 0.0]),
+        normal_direction=np.asarray([0.0, 0.0, 1.0]),
+    )
+    decimal_boundary = {
+        "output_shape_frames_rows_columns": [1, 1, 1],
+        "image_position_patient_mm": [0.15, 0.02, 0.0],
+        "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        "pixel_spacing_mm": [0.1, 0.1],
+        "grid_frame_offset_vector_mm": [0.0],
+    }
+    assert 0.15 / 0.1 + 0.5 != 2.0
+    with pytest.raises(StructureRelativeErrorUnavailable, match="boundary"):
+        _structure_membership_on_dose_grid(
+            placement=decimal_boundary,
+            series=decimal_series,
+            ct_mask=np.ones((1, 3, 3), dtype=bool),
         )
 
 
@@ -489,6 +581,7 @@ def test_evaluation_filters_counts_persists_scalars_and_fails_closed(
             MESH,
             binding,
             pair,
+            {},
         ),
     )
     monkeypatch.setattr(
