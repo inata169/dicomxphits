@@ -86,7 +86,9 @@ the private run record must identify and freeze the following items.
 | RT Structure Set | Same Frame of Reference and referenced CT series; one preselected structure with non-empty in-CT coverage; full-file SHA-256 |
 | Optional TPS RT Dose | Non-patient reference; matching Frame of Reference; `GY` units; full-file SHA-256 |
 | PHITS | Explicit PHITS 3.35-style Windows OpenMP executable and installation root; executable SHA-256; no PATH search |
-| RT-PHITS frontend | Explicit `RTphits_win.bat`, required HU-table markers, and selected tool-root identity |
+| RT-PHITS launcher | Explicit `RTphits_win.bat` path and SHA-256; reviewed batch control flow and environment expansion; ordinary-file and no-link/reparse evidence |
+| CT2PHITS executable | Exact absolute executable reached by the reviewed batch path; version evidence and SHA-256; ordinary-file and no-link/reparse evidence |
+| CT2PHITS HU table | Explicit `HumanVoxelTable.data` path, required markers, SHA-256, and ordinary-file and no-link/reparse evidence |
 | phits2dicom | Explicit Windows executable path and SHA-256 |
 | RTDOSE template | The reviewed package template or another separately reviewed compatible non-patient template; SHA-256 |
 | Optional GPR tool | Explicit checkout/root, exact version or commit, entry point, and relevant file digests |
@@ -174,8 +176,10 @@ by relaxing a guard or editing the frozen case.
 4. Confirm that every DICOM object is from the approved non-patient phantom and
    that its modality, series membership, Frame of Reference, orientation,
    references, and required Structure selection are unambiguous.
-5. Perform read-only tool-role validation. Do not launch a tool during this
-   gate and do not recursively search for an installation.
+5. Perform read-only tool-role validation. Review the exact effective command
+   in `RTphits_win.bat`, resolve the CT2PHITS executable that it reaches, and
+   bind the batch, executable, and HU-table bytes by SHA-256. Do not launch a
+   tool during this gate and do not recursively search for an installation.
 6. Freeze the exact input bytes, tool identities, calculation settings,
    destinations, collector, resource budgets, launch order, and stop policy in
    the private run record.
@@ -196,8 +200,11 @@ presentation. The operator remains present throughout all real-tool stages.
 3. Select the frozen CT series and RT Plan and make the explicit non-patient
    phantom confirmation.
 4. Verify the derived CT2PHITS destination is the approved new absent path.
-5. After exact execution approval, run the CT2PHITS stage once.
-6. Require a successful summary, all nine expected generated files, the frozen
+5. Immediately before launch, recheck the approved ordinary-file paths and
+   SHA-256 values for `RTphits_win.bat`, the exact CT2PHITS executable reached
+   through its reviewed command, and `HumanVoxelTable.data`.
+6. After exact execution approval, run the CT2PHITS stage once.
+7. Require a successful summary, all nine expected generated files, the frozen
    RT Plan, selected CT membership, and recorded SHA-256 evidence.
 
 ### 2. Workspace preparation
@@ -414,7 +421,8 @@ treated as consent for another:
 
 1. Approval of the final frozen non-patient dataset, tool identities,
    destinations, settings, collector, resource budgets, and stop policy.
-2. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM.
+2. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
+   batch, resolved CT2PHITS executable, and HU table.
 3. Approval for one exact workspace-preparation invocation using the frozen
    DICOM and handoff.
 4. Approval for one exact all-active-segment controller invocation, with the
