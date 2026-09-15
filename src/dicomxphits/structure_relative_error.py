@@ -738,11 +738,7 @@ def _retained_file_snapshot(
         raise StructureRelativeErrorUnavailable(
             f"{label} has missing validated digest evidence"
         )
-    digest = (
-        file_sha256(supplied)
-        if poll_sha256 or expected_sha256 is None
-        else expected_sha256
-    )
+    digest = file_sha256(supplied)
     after = supplied.stat()
     after_change_token = _file_change_token(supplied)
     if (
