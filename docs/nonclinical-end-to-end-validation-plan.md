@@ -82,9 +82,21 @@ the private run record must identify and freeze the following items.
 Before an agent or validation process opens, hashes, copies, inventories, or
 parses any candidate DICOM, a human must identify the exact candidate paths
 without agent-side directory discovery and separately approve one bounded
-read-only identifier review and freeze operation for those files. Discovery of
-patient or identifying data stops that operation and does not authorize copying,
-calculation, or review of another candidate set.
+read-only identifier review and freeze operation for those files. This set must
+include any optional reference RT Dose or external RTDOSE template that would be
+used. Discovery of patient or identifying data stops that operation and does
+not authorize copying, calculation, or review of another candidate set.
+
+The same rule applies independently to every real-tool distribution and other
+external input. Before any such file or directory metadata is opened, hashed,
+inventoried, or parsed, a human must identify the exact path or finite file set
+without agent-side discovery and approve the bounded read-only review and
+freeze for that one group. The CT2PHITS artifacts, PHITS installation
+root/executable, phits2dicom executable, optional GPR checkout/file set, and any
+external calculation configuration are separate groups; approval of one does
+not authorize inspection of another. A directory approval permits only the
+explicitly described root metadata and preidentified finite files, never a
+recursive distribution search.
 
 | Input | Required evidence |
 | --- | --- |
@@ -195,16 +207,30 @@ by relaxing a guard or editing the frozen case.
    every DICOM object is from the approved non-patient phantom and that its
    modality, series membership, Frame of Reference, orientation, references,
    and required Structure selection are unambiguous.
-5. After the separate approval for the exact candidate tool files, perform only
-   the approved bounded read-only tool-role review and freeze operation. Review
-   the exact effective command in `RTphits_win.bat`, resolve the CT2PHITS
-   executable that it reaches, and bind the batch, executable, and HU-table
-   bytes by SHA-256. Do not launch a tool during this gate and do not recursively
-   search for an installation.
-6. Freeze the exact input bytes, tool identities, calculation settings,
-   destinations, collector, resource budgets, launch order, and stop policy in
-   the private run record.
-7. Review the full frozen record, then obtain explicit approval for the next
+5. After the separate CT2PHITS-artifact review approval, perform only that
+   bounded read-only review and freeze operation. Review the exact effective
+   command in `RTphits_win.bat`, resolve the CT2PHITS executable that it reaches,
+   and bind the batch, executable, and HU-table bytes by SHA-256. Do not launch
+   a tool or recursively search for an installation.
+6. After the separate PHITS review approval, inspect only the exact
+   human-identified installation-root metadata and executable, and freeze the
+   approved executable path, version evidence, ordinary-file/no-link state, and
+   SHA-256. Do not enumerate or inspect the remaining distribution.
+7. After the separate phits2dicom review approval, inspect only the exact
+   human-identified executable and freeze its path, ordinary-file/no-link state,
+   version evidence, and SHA-256.
+8. If GPR is requested, after its separate review approval, inspect only the
+   exact human-identified checkout-root metadata and preidentified finite entry
+   point, executable, script, and dependency file set. Freeze its version or
+   commit and relevant digests without recursive checkout discovery.
+9. If an external calculation configuration is requested, after its separate
+   review approval, inspect only that exact human-identified ordinary file and
+   freeze its no-link state, complete bytes, and SHA-256.
+10. Freeze the already reviewed input evidence, tool identities, declarative
+    calculation settings, destinations, collector, resource budgets, launch
+    order, and stop policy in the private run record. This gate must not inspect
+    a new external path.
+11. Review the full frozen record, then obtain explicit approval for the next
    exact action. Immediately before requesting that approval and again
    immediately before the action, recheck every approved input, executable,
    script, configuration, and destination for that stage against its applicable
@@ -462,33 +488,43 @@ Use separate approval gates so that consent for one external action is not
 treated as consent for another:
 
 1. Approval for one bounded read-only identifier review and freeze operation
-   on an exact human-identified candidate DICOM file set.
-2. Approval for one bounded read-only tool-role review and freeze operation on
+   on an exact human-identified candidate DICOM file set, including any optional
+   reference RT Dose or external RTDOSE template.
+2. Approval for one bounded read-only CT2PHITS tool-role review and freeze on
    the exact human-identified `RTphits_win.bat`, resolved CT2PHITS executable,
    and HU-table files.
-3. Approval of the final frozen non-patient dataset, tool identities,
+3. Approval for one bounded read-only PHITS review and freeze on the exact
+   human-identified installation-root metadata and executable.
+4. Approval for one bounded read-only phits2dicom review and freeze on the exact
+   human-identified executable.
+5. Approval for one bounded read-only GPR review and freeze on the exact
+   human-identified checkout-root metadata and finite entry point, executable,
+   script, and dependency file set, if GPR is requested.
+6. Approval for one bounded read-only review and freeze of the exact
+   human-identified external calculation-configuration file, if one is used.
+7. Approval of the final frozen non-patient dataset, tool identities,
    destinations, settings, collector, resource budgets, and stop policy.
-4. Approval for one exact GUI launch from the reviewed package commit, without
+8. Approval for one exact GUI launch from the reviewed package commit, without
    authority to launch CT2PHITS or any later external tool.
-5. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
+9. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
    batch, resolved CT2PHITS executable, and HU table.
-6. Approval for one exact workspace-preparation invocation using the frozen
-   DICOM and handoff.
-7. Approval for one exact all-active-segment controller invocation, with the
-   reviewed manifest fixing the maximum PHITS child-launch count.
-8. Approval for one exact Sumtally invocation.
-9. Approval for one exact RTDOSE-preparation invocation using the frozen
-   DICOM, accepted Sumtally evidence, and template.
-10. Approval for one exact phits2dicom invocation.
-11. Approval for one exact post-completion Structure evaluation using the
+10. Approval for one exact workspace-preparation invocation using the frozen
+    DICOM and handoff.
+11. Approval for one exact all-active-segment controller invocation, with the
+    reviewed manifest fixing the maximum PHITS child-launch count.
+12. Approval for one exact Sumtally invocation.
+13. Approval for one exact RTDOSE-preparation invocation using the frozen
+    DICOM, accepted Sumtally evidence, and template.
+14. Approval for one exact phits2dicom invocation.
+15. Approval for one exact post-completion Structure evaluation using the
     frozen RT Structure Set.
-12. Approval for one exact GPR invocation using the frozen reference and
+16. Approval for one exact GPR invocation using the frozen reference and
     evaluation RT Dose files, if requested.
-13. Approval for one exact cleanup operation, including its targets and
+17. Approval for one exact cleanup operation, including its targets and
     recoverability.
-14. Approval for publishing one exact sanitized report or evidence set.
-15. Approval for one exact release operation.
-16. Approval for each exact rerun under a newly frozen launch record.
+18. Approval for publishing one exact sanitized report or evidence set.
+19. Approval for one exact release operation.
+20. Approval for each exact rerun under a newly frozen launch record.
 
 An approval is consumed by the specified launch. Failure or inconclusive
 evidence does not authorize another attempt.
