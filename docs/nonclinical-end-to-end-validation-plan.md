@@ -246,6 +246,18 @@ The primary validation path is the guided Windows GUI because it exercises the
 current preparation, progress, stop, retained-result, and Structure-result
 presentation. The operator remains present throughout all real-tool stages.
 
+Before starting the GUI, obtain exact approval for one collector lifecycle,
+including the frozen collector identity and configuration, process-tree binding
+method, evidence destination, sampling and size limits, start condition, stop
+condition, and failure response. Start the collector once under that approval,
+then bind it only to the subsequently launched approved GUI process and its
+descendants. The approval covers its bounded observation and evidence writes
+through the required retained-result interval and one graceful collector stop;
+it does not authorize a restart, a tool launch, inspection of another process,
+or any other external write. If the collector cannot start or preserve this
+boundary, do not replace or restart it automatically; record performance as
+inconclusive and apply the approved failure response.
+
 ### 1. CT2PHITS frontend
 
 1. After exact approval for one GUI launch, start the GUI once from the exact
@@ -504,27 +516,31 @@ treated as consent for another:
    human-identified external calculation-configuration file, if one is used.
 7. Approval of the final frozen non-patient dataset, tool identities,
    destinations, settings, collector, resource budgets, and stop policy.
-8. Approval for one exact GUI launch from the reviewed package commit, without
+8. Approval for one exact evidence-collector lifecycle: one launch before the
+   GUI, binding only to that approved GUI process and its descendants, bounded
+   writes to the exact evidence destination, and one graceful stop after the
+   required retained-result interval.
+9. Approval for one exact GUI launch from the reviewed package commit, without
    authority to launch CT2PHITS or any later external tool.
-9. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
+10. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
    batch, resolved CT2PHITS executable, and HU table.
-10. Approval for one exact workspace-preparation invocation using the frozen
+11. Approval for one exact workspace-preparation invocation using the frozen
     DICOM and handoff.
-11. Approval for one exact all-active-segment controller invocation, with the
+12. Approval for one exact all-active-segment controller invocation, with the
     reviewed manifest fixing the maximum PHITS child-launch count.
-12. Approval for one exact Sumtally invocation.
-13. Approval for one exact RTDOSE-preparation invocation using the frozen
+13. Approval for one exact Sumtally invocation.
+14. Approval for one exact RTDOSE-preparation invocation using the frozen
     DICOM, accepted Sumtally evidence, and template.
-14. Approval for one exact phits2dicom invocation.
-15. Approval for one exact post-completion Structure evaluation using the
+15. Approval for one exact phits2dicom invocation.
+16. Approval for one exact post-completion Structure evaluation using the
     frozen RT Structure Set.
-16. Approval for one exact GPR invocation using the frozen reference and
+17. Approval for one exact GPR invocation using the frozen reference and
     evaluation RT Dose files, if requested.
-17. Approval for one exact cleanup operation, including its targets and
+18. Approval for one exact cleanup operation, including its targets and
     recoverability.
-18. Approval for publishing one exact sanitized report or evidence set.
-19. Approval for one exact release operation.
-20. Approval for each exact rerun under a newly frozen launch record.
+19. Approval for publishing one exact sanitized report or evidence set.
+20. Approval for one exact release operation.
+21. Approval for each exact rerun under a newly frozen launch record.
 
 An approval is consumed by the specified launch. Failure or inconclusive
 evidence does not authorize another attempt.
