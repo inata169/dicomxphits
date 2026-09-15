@@ -195,10 +195,12 @@ by relaxing a guard or editing the frozen case.
    every DICOM object is from the approved non-patient phantom and that its
    modality, series membership, Frame of Reference, orientation, references,
    and required Structure selection are unambiguous.
-5. Perform read-only tool-role validation. Review the exact effective command
-   in `RTphits_win.bat`, resolve the CT2PHITS executable that it reaches, and
-   bind the batch, executable, and HU-table bytes by SHA-256. Do not launch a
-   tool during this gate and do not recursively search for an installation.
+5. After the separate approval for the exact candidate tool files, perform only
+   the approved bounded read-only tool-role review and freeze operation. Review
+   the exact effective command in `RTphits_win.bat`, resolve the CT2PHITS
+   executable that it reaches, and bind the batch, executable, and HU-table
+   bytes by SHA-256. Do not launch a tool during this gate and do not recursively
+   search for an installation.
 6. Freeze the exact input bytes, tool identities, calculation settings,
    destinations, collector, resource budgets, launch order, and stop policy in
    the private run record.
@@ -220,7 +222,8 @@ presentation. The operator remains present throughout all real-tool stages.
 
 ### 1. CT2PHITS frontend
 
-1. Start the GUI from the exact reviewed package commit.
+1. After exact approval for one GUI launch, start the GUI once from the exact
+   reviewed package commit. Starting the GUI does not authorize a tool launch.
 2. Select the frozen standard or explicitly reviewed custom tool profile.
 3. Select the frozen CT series and RT Plan and make the explicit non-patient
    phantom confirmation.
@@ -238,7 +241,8 @@ presentation. The operator remains present throughout all real-tool stages.
    CT2PHITS summary.
 2. Enter the exact approved `maxcas`, `maxbch`, thread count, and optional
    calculation-config path.
-3. Prepare the workspace once. This stage must not execute PHITS.
+3. After exact workspace-preparation approval, prepare the workspace once. This
+   stage must not execute PHITS.
 4. Review the segment manifest, public-model identity, fixed-field guard,
    runtime parameters, CT/accelerator geometry evidence, and preparation
    summaries before continuing.
@@ -273,8 +277,9 @@ presentation. The operator remains present throughout all real-tool stages.
 
 ### 5. RTDOSE
 
-1. Prepare conversion from the accepted Sumtally result, frozen RT Plan,
-   approved template, and selected CT reference.
+1. After exact RTDOSE-preparation approval, prepare conversion once from the
+   accepted Sumtally result, frozen RT Plan, approved template, and selected CT
+   reference. This step must not launch phits2dicom.
 2. Confirm that converter compatibility changes are confined to private staged
    copies and that accepted Sumtally inputs remain byte-for-byte unchanged.
 3. Immediately before launch, recheck the approved ordinary-file path and
@@ -458,27 +463,32 @@ treated as consent for another:
 
 1. Approval for one bounded read-only identifier review and freeze operation
    on an exact human-identified candidate DICOM file set.
-2. Approval of the final frozen non-patient dataset, tool identities,
+2. Approval for one bounded read-only tool-role review and freeze operation on
+   the exact human-identified `RTphits_win.bat`, resolved CT2PHITS executable,
+   and HU-table files.
+3. Approval of the final frozen non-patient dataset, tool identities,
    destinations, settings, collector, resource budgets, and stop policy.
-3. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
+4. Approval for one exact GUI launch from the reviewed package commit, without
+   authority to launch CT2PHITS or any later external tool.
+5. Approval for one exact CT2PHITS frontend invocation using the frozen DICOM,
    batch, resolved CT2PHITS executable, and HU table.
-4. Approval for one exact workspace-preparation invocation using the frozen
+6. Approval for one exact workspace-preparation invocation using the frozen
    DICOM and handoff.
-5. Approval for one exact all-active-segment controller invocation, with the
+7. Approval for one exact all-active-segment controller invocation, with the
    reviewed manifest fixing the maximum PHITS child-launch count.
-6. Approval for one exact Sumtally invocation.
-7. Approval for one exact RTDOSE-preparation invocation using the frozen
+8. Approval for one exact Sumtally invocation.
+9. Approval for one exact RTDOSE-preparation invocation using the frozen
    DICOM, accepted Sumtally evidence, and template.
-8. Approval for one exact phits2dicom invocation.
-9. Approval for one exact post-completion Structure evaluation using the
-   frozen RT Structure Set.
-10. Approval for one exact GPR invocation using the frozen reference and
-   evaluation RT Dose files, if requested.
-11. Approval for one exact cleanup operation, including its targets and
+10. Approval for one exact phits2dicom invocation.
+11. Approval for one exact post-completion Structure evaluation using the
+    frozen RT Structure Set.
+12. Approval for one exact GPR invocation using the frozen reference and
+    evaluation RT Dose files, if requested.
+13. Approval for one exact cleanup operation, including its targets and
     recoverability.
-12. Approval for publishing one exact sanitized report or evidence set.
-13. Approval for one exact release operation.
-14. Approval for each exact rerun under a newly frozen launch record.
+14. Approval for publishing one exact sanitized report or evidence set.
+15. Approval for one exact release operation.
+16. Approval for each exact rerun under a newly frozen launch record.
 
 An approval is consumed by the specified launch. Failure or inconclusive
 evidence does not authorize another attempt.
