@@ -184,8 +184,14 @@ by relaxing a guard or editing the frozen case.
    destinations, collector, resource budgets, launch order, and stop policy in
    the private run record.
 7. Review the full frozen record, then obtain explicit approval for the next
-   exact external-tool invocation. A changed path, digest, setting, destination,
-   or launch count invalidates that approval.
+   exact action. Immediately before requesting that approval and again
+   immediately before the action, recheck every approved input, executable,
+   script, configuration, and destination for that stage against its applicable
+   frozen evidence: ordinary-file path, no-link/reparse state and full-file
+   SHA-256; directory path, membership and no-link/reparse state; exact setting;
+   or required destination absence/identity. A mismatch invalidates the
+   approval. The stage-specific checks below are additional and do not narrow
+   this invariant.
 
 ## Execution procedure
 
@@ -266,35 +272,41 @@ presentation. The operator remains present throughout all real-tool stages.
 
 1. Select the frozen RT Structure Set and the preselected unique `ROINumber`
    only after accepted all-active-segment Sumtally completion.
-2. After exact approval for this real-DICOM evaluation, trigger the explicit
+2. Immediately before approval and action, recheck the RT Structure Set's
+   approved ordinary-file/no-link path and full-file SHA-256 and confirm that
+   the preselected unique `ROINumber` still comes from those exact bytes.
+3. After exact approval for this real-DICOM evaluation, trigger the explicit
    Structure evaluation action once.
-3. Confirm that the display contains only the unweighted arithmetic mean,
+4. Confirm that the display contains only the unweighted arithmetic mean,
    defined median, linearly interpolated P95, mapped-Structure voxel count,
    above-threshold count, eligible count, and zero-`r.err` exclusion count.
    Confirm that the fixed `D > 0.5 * Dmax` threshold and unweighted basis are
    visible, while `Dmax`, minimum, maximum, standard deviation, whole-mesh
    statistics, and PDD values are absent.
-4. Confirm that the display includes the exact required non-clinical statement
+5. Confirm that the display includes the exact required non-clinical statement
    and that its deterministic scalar-summary JSON contains no raw arrays,
    patient identifiers, or `ROIName`.
-5. Confirm that the action uses the accepted combined dose/error pair and
+6. Confirm that the action uses the accepted combined dose/error pair and
    frozen CT/RTPLAN/RTSTRUCT evidence, does not alter independent RTDOSE state,
    and does not substitute the live Isocenter-voxel value.
-6. Leave the completed result displayed for at least one normal polling
+7. Leave the completed result displayed for at least one normal polling
    interval and record GUI, CPU, memory, and disk-I/O samples. Do not mutate a
    retained source merely to demonstrate stale-result rejection.
 
 ### 7. Optional GPR comparison
 
 Run this stage only after a separate approval that identifies the frozen
-non-patient reference RT Dose and exact external tool. Immediately before
-launch, recheck the approved ordinary-file paths and SHA-256 values for the GPR
-entry point and every frozen executable or script that the reviewed command
-will run. Reproduction of the historical research condition must explicitly
-select global `3% / 3 mm` with a `10%` cutoff rather than relying on CLI
-defaults. Require matching Frame of Reference, `GY` units, zero process exit,
-and a fresh result record. Report the observed pass rate and settings without
-treating 95% or another value as a clinical acceptance threshold.
+non-patient reference RT Dose, generated coordinate-corrected evaluation RT
+Dose, and exact external tool. Before requesting approval, freeze the
+ordinary-file/no-link paths and full-file SHA-256 values of both RT Dose files.
+Immediately before launch, recheck those two complete files plus the approved
+paths and SHA-256 values for the GPR entry point and every frozen executable or
+script that the reviewed command will run. Reproduction of the historical
+research condition must explicitly select global `3% / 3 mm` with a `10%`
+cutoff rather than relying on CLI defaults. Require matching Frame of Reference,
+`GY` units, zero process exit, and a fresh result record. Report the observed
+pass rate and settings without treating 95% or another value as a clinical
+acceptance threshold.
 
 ## Acceptance criteria
 
@@ -439,7 +451,8 @@ treated as consent for another:
 7. Approval for one exact phits2dicom invocation.
 8. Approval for one exact post-completion Structure evaluation using the
    frozen RT Structure Set.
-9. Approval for one exact GPR invocation, if requested.
+9. Approval for one exact GPR invocation using the frozen reference and
+   evaluation RT Dose files, if requested.
 10. Approval for one exact cleanup operation, including its targets and
     recoverability.
 11. Approval for publishing one exact sanitized report or evidence set.
