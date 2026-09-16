@@ -451,6 +451,8 @@ def _validate_receipt_object(
     receipt: Mapping[str, Any],
     context: Mapping[str, Any],
     pair: Mapping[str, Any],
+    *,
+    guard: WorkspaceOutputGuard,
 ) -> None:
     receipt_without_identity = dict(receipt)
     recorded_identity = receipt_without_identity.pop("receipt_sha256", None)
@@ -467,10 +469,44 @@ def _validate_receipt_object(
         raise SumtallyRelativeErrorRecoveryUnavailable(
             "recovery receipt plan identity is invalid"
         )
+    confirmed_plan = receipt_without_identity.pop("confirmed_plan", None)
+    if not isinstance(confirmed_plan, dict):
+        raise SumtallyRelativeErrorRecoveryUnavailable(
+            "recovery receipt confirmed plan is missing"
+        )
+    if _canonical_sha256(confirmed_plan) != plan_sha256:
+        raise SumtallyRelativeErrorRecoveryUnavailable(
+            "recovery receipt confirmed plan identity is invalid"
+        )
     expected = _receipt_core(root, context, pair)
     if receipt_without_identity != expected:
         raise SumtallyRelativeErrorRecoveryUnavailable(
             "recovery receipt is stale or does not match current Sumtally evidence"
+        )
+    destination_state = confirmed_plan.get("destination_state")
+    if destination_state not in {
+        "missing_error_and_receipt",
+        "identical_existing_error_without_receipt",
+    }:
+        raise SumtallyRelativeErrorRecoveryUnavailable(
+            "recovery receipt confirmed plan has an invalid destination state"
+        )
+    staging_value = confirmed_plan.get("staging_directory")
+    if not isinstance(staging_value, str) or not staging_value:
+        raise SumtallyRelativeErrorRecoveryUnavailable(
+            "recovery receipt confirmed plan has no retained staging directory"
+        )
+    staging = _workspace_path(root, staging_value, guard=guard)
+    current_plan = _build_preview(
+        root,
+        staging,
+        guard=guard,
+        permit_existing_receipt=True,
+    )["plan"]
+    current_plan["destination_state"] = destination_state
+    if current_plan != confirmed_plan:
+        raise SumtallyRelativeErrorRecoveryUnavailable(
+            "recovery receipt confirmed plan does not match retained staging evidence"
         )
 
 
@@ -507,7 +543,7 @@ def resolved_combined_relative_error_evidence(
             raise SumtallyRelativeErrorRecoveryUnavailable(
                 "official combined dose does not match terminal Sumtally evidence"
             )
-        _validate_receipt_object(root, receipt, context, pair)
+        _validate_receipt_object(root, receipt, context, pair, guard=guard)
         return pair, receipt_sha256
 
 
@@ -516,6 +552,7 @@ def _build_preview(
     staging: Path,
     *,
     guard: WorkspaceOutputGuard,
+    permit_existing_receipt: bool = False,
 ) -> dict[str, Any]:
     from dicomxphits.structure_relative_error import validate_combined_tally_pair
 
@@ -530,7 +567,7 @@ def _build_preview(
         )
     receipt_path = root / RECEIPT_RELATIVE_PATH
     guard.prepare(receipt_path)
-    if os.path.lexists(receipt_path):
+    if os.path.lexists(receipt_path) and not permit_existing_receipt:
         try:
             resolved_combined_relative_error_evidence(root)
         except Exception as exc:
@@ -609,6 +646,7 @@ def _build_preview(
         ) from exc
     retained_dose = staging / output_relative
     retained_error = phits_error_output_path(retained_dose)
+    guard.prepare(retained_error)
     _dose_raw, retained_dose_sha256 = _stable_bytes(
         retained_dose,
         guard=guard,
@@ -768,6 +806,7 @@ def apply_sumtally_relative_error_recovery(
         receipt = {
             **plan["intended_receipt"],
             "recovery_plan_sha256": expected_plan_sha256,
+            "confirmed_plan": plan,
         }
         receipt["receipt_sha256"] = _canonical_sha256(receipt)
         _publish_json_new_only(guard, receipt_path, receipt)

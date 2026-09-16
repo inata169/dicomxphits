@@ -2349,7 +2349,11 @@ def _build_gui() -> int:
 
     def current_structure_binding_ready() -> bool:
         workspace_text = values["workspace_root"].get().strip()
-        if not workspace_text or execution_guard.active_stage is not None:
+        if not workspace_text:
+            structure_evidence_guard.invalidate()
+            return False
+        if execution_guard.active_stage is not None:
+            structure_evidence_guard.invalidate()
             return False
         workspace = Path(workspace_text).expanduser()
         if _current_sumtally_binding(
@@ -2387,6 +2391,7 @@ def _build_gui() -> int:
         def finish(ready: bool) -> None:
             current_workspace_text = values["workspace_root"].get().strip()
             if not current_workspace_text:
+                structure_evidence_guard.invalidate()
                 return
             current_workspace = Path(current_workspace_text).expanduser()
             current_key = _structure_evidence_cache_key(current_workspace)

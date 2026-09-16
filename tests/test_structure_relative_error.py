@@ -1163,6 +1163,13 @@ def test_gui_evidence_readiness_cache_rejects_changed_or_stale_state() -> None:
     assert guard.finish(newer_ticket, newer_ticket[1], False) is True
     assert guard.cached(newer_ticket[1]) is False
 
+    cleared = StructureEvidenceReadinessGuard()
+    abandoned_ticket = cleared.begin(original)
+    assert abandoned_ticket is not None
+    cleared.invalidate()
+    assert cleared.begin(original) is not None
+    assert cleared.finish(abandoned_ticket, original, True) is False
+
 
 def test_gui_evidence_cache_key_changes_with_bound_error_file(
     tmp_path: Path,

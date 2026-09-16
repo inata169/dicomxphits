@@ -282,6 +282,28 @@ def test_apply_validates_temporary_copy_before_publication(
     assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
 
 
+def test_preview_guards_retained_error_before_pair_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    retained_error = staging / "dose_err.out"
+    original_prepare = recovery.WorkspaceOutputGuard.prepare
+
+    def reject_retained_error(self, target, *, create_parents=False):
+        if Path(target) == retained_error:
+            raise ValueError("synthetic retained error reparse point")
+        return original_prepare(self, target, create_parents=create_parents)
+
+    monkeypatch.setattr(
+        recovery.WorkspaceOutputGuard,
+        "prepare",
+        reject_retained_error,
+    )
+    with pytest.raises(ValueError, match="retained error reparse point"):
+        recovery.preview_sumtally_relative_error_recovery(root, staging)
+
+
 def test_interrupted_error_publication_requires_new_resume_preview(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -447,6 +469,32 @@ def test_tampered_receipt_never_authorizes_pair(
     with pytest.raises(
         recovery.SumtallyRelativeErrorRecoveryUnavailable,
         match="canonical identity",
+    ):
+        recovery.resolved_combined_relative_error_evidence(root)
+
+
+def test_self_consistent_forged_plan_never_authorizes_pair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    preview = recovery.preview_sumtally_relative_error_recovery(root, staging)
+    recovery.apply_sumtally_relative_error_recovery(
+        root, staging, preview["recovery_plan_sha256"]
+    )
+    receipt_path = root / recovery.RECEIPT_RELATIVE_PATH
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["confirmed_plan"]["retained_pair"]["error_sha256"] = "0" * 64
+    receipt["recovery_plan_sha256"] = recovery._canonical_sha256(
+        receipt["confirmed_plan"]
+    )
+    receipt.pop("receipt_sha256")
+    receipt["receipt_sha256"] = recovery._canonical_sha256(receipt)
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(
+        recovery.SumtallyRelativeErrorRecoveryUnavailable,
+        match="does not match retained staging evidence",
     ):
         recovery.resolved_combined_relative_error_evidence(root)
 
