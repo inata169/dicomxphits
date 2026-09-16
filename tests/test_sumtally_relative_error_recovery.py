@@ -304,6 +304,35 @@ def test_preview_guards_retained_error_before_pair_parser(
         recovery.preview_sumtally_relative_error_recovery(root, staging)
 
 
+def test_preview_guards_manifest_before_binding_validator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    manifest = root / "segments/segment_manifest.json"
+    original_prepare = recovery.WorkspaceOutputGuard.prepare
+
+    def reject_manifest(self, target, *, create_parents=False):
+        if Path(target) == manifest:
+            raise ValueError("synthetic manifest reparse point")
+        return original_prepare(self, target, create_parents=create_parents)
+
+    monkeypatch.setattr(
+        recovery.WorkspaceOutputGuard,
+        "prepare",
+        reject_manifest,
+    )
+    monkeypatch.setattr(
+        recovery,
+        "validate_sumtally_manifest_binding",
+        lambda **_kwargs: pytest.fail(
+            "binding validator must not read an unguarded manifest"
+        ),
+    )
+    with pytest.raises(ValueError, match="manifest reparse point"):
+        recovery.preview_sumtally_relative_error_recovery(root, staging)
+
+
 def test_interrupted_error_publication_requires_new_resume_preview(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

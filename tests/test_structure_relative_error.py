@@ -21,6 +21,7 @@ from dicomxphits.gui import (
 )
 from dicomxphits.phits_observation_format import Mesh
 from dicomxphits.prepare_sumtally import run_phits_sumtally
+from dicomxphits.sumtally_relative_error_recovery import MAX_JSON_BYTES
 from dicomxphits.structure_relative_error import (
     CONTRACT_VERSION,
     NON_CLINICAL_LABEL,
@@ -1189,6 +1190,29 @@ def test_gui_evidence_cache_key_changes_with_bound_error_file(
     error.write_bytes(b"changed and longer")
 
     assert gui_module._structure_evidence_cache_key(workspace) != before
+
+
+def test_gui_evidence_cache_key_does_not_parse_oversized_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    receipt = workspace / "analysis" / "sumtally_relative_error_recovery_summary.json"
+    receipt.parent.mkdir(parents=True)
+    with receipt.open("wb") as stream:
+        stream.seek(MAX_JSON_BYTES)
+        stream.write(b"x")
+    monkeypatch.setattr(
+        gui_module.json,
+        "loads",
+        lambda *_args, **_kwargs: pytest.fail(
+            "oversized recovery receipt must not be parsed on the GUI thread"
+        ),
+    )
+
+    key = gui_module._structure_evidence_cache_key(workspace)
+
+    assert key
 
 
 def test_gui_invalidates_structure_results_for_every_upstream_stage() -> None:

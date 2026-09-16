@@ -775,10 +775,27 @@ def _structure_evidence_cache_key(workspace_root: Path) -> tuple[object, ...]:
     generation_path = root / stage_by_key("generate_sumtally").summary_relative_path
     execution_path = root / stage_by_key("run_sumtally").summary_relative_path
     manifest_path = root / "segments" / "segment_manifest.json"
-    from dicomxphits.sumtally_relative_error_recovery import RECEIPT_RELATIVE_PATH
+    from dicomxphits.sumtally_relative_error_recovery import (
+        MAX_JSON_BYTES,
+        RECEIPT_RELATIVE_PATH,
+    )
 
     receipt_path = root / RECEIPT_RELATIVE_PATH
     paths = {generation_path, execution_path, manifest_path, receipt_path}
+
+    def read_bounded_summary(path: Path) -> dict[str, object] | None:
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(MAX_JSON_BYTES + 1)
+        except OSError:
+            return None
+        if len(raw) > MAX_JSON_BYTES:
+            return None
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
 
     def add_path(value: object) -> None:
         if not isinstance(value, str) or not value.strip():
@@ -805,9 +822,9 @@ def _structure_evidence_cache_key(workspace_root: Path) -> tuple[object, ...]:
             for item in value:
                 collect_paths(item)
 
-    collect_paths(read_summary(generation_path))
-    collect_paths(read_summary(execution_path))
-    collect_paths(read_summary(receipt_path))
+    collect_paths(read_bounded_summary(generation_path))
+    collect_paths(read_bounded_summary(execution_path))
+    collect_paths(read_bounded_summary(receipt_path))
 
     states: list[tuple[object, ...]] = []
     for path in sorted(paths, key=lambda item: os.path.normcase(os.fspath(item))):

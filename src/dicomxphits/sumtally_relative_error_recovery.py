@@ -259,6 +259,11 @@ def _current_context(
             "direct combined relative-error evidence is already present or conflicting"
         )
     _prepare_summary_paths(root, generation, execution, guard=guard)
+    manifest = _workspace_path(
+        root,
+        Path("segments") / "segment_manifest.json",
+        guard=guard,
+    )
     try:
         binding = validate_sumtally_manifest_binding(
             workspace_root=root,
@@ -284,11 +289,15 @@ def _current_context(
     error = phits_error_output_path(dose)
     _relative(root, error)
     guard.prepare(error)
-    manifest = _workspace_path(
+    bound_manifest = _workspace_path(
         root,
         str(binding["manifest_path"]),
         guard=guard,
     )
+    if not _same_path(bound_manifest, manifest):
+        raise SumtallyRelativeErrorRecoveryUnavailable(
+            "validated Sumtally manifest path differs from the guarded public manifest"
+        )
     for label, path, expected in (
         ("generated Sumtally wrapper", sum_input, binding["sum_input_sha256"]),
         (
