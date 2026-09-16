@@ -51,7 +51,12 @@ GEOMETRY = {
 }
 
 
-def _header(*, output: bool) -> str:
+def _header(
+    *,
+    output: bool,
+    epsout: str | None = "1",
+    file_name: str = "dose.out",
+) -> str:
     rows = ["title = Authored completed fixture", "mesh = xyz"]
     for axis, bounds, count in zip("xyz", MESH.bounds, MESH.counts, strict=True):
         rows.extend(
@@ -68,11 +73,12 @@ def _header(*, output: bool) -> str:
             "material = all",
             "output = dose",
             "axis = xy",
-            "file = dose.out",
+            f"file = {file_name}",
             "part = all",
-            "epsout = 1",
         )
     )
+    if epsout is not None:
+        rows.append(f"epsout = {epsout}")
     if output:
         rows.extend(
             ("letmat = 0", "dedxfnc = 0", "deposit = 0", "2D-type = 3", "mother = all")
@@ -82,15 +88,29 @@ def _header(*, output: bool) -> str:
 
 def _deck() -> str:
     return (
-        "$OMP = 2\n[ Parameters ]\n maxcas = 10\n maxbch = 10\n"
+        "$OMP = 2\n[ Parameters ]\n icntl = 13\n maxcas = 10\n maxbch = 10\n"
+        " istdev = -1\n"
         "[ T-Deposit ]\n"
-        + _header(output=False)
+        + _header(output=False, epsout="0", file_name="segment-dose.out")
+        + " infl:{sumtally.inp}\n"
     )
 
 
 def _tally(role: str, values: list[float]) -> bytes:
     nx, ny, nz = MESH.counts
-    rows = ["[ T-Deposit ]", _header(output=True), "#newpage:"]
+    rows = [
+        "[ T-Deposit ]",
+        _header(output=True, epsout=None),
+        "sumtally start",
+        "isumtally = 2",
+        "nfile = 1",
+        "segments/seg_001/dose.out",
+        "1.0",
+        "sfile = dose.out",
+        "sumfactor = 1.0",
+        "sumtally end",
+        "#newpage:",
+    ]
     for index in range(1, nz + 1):
         if index > 1:
             rows.append(" newpage:")
@@ -121,17 +141,6 @@ def _tally(role: str, values: list[float]) -> bytes:
                 "",
             )
         )
-    rows.extend(
-        (
-            "# Information for Restart Calculation",
-            "# This calculation was newly started",
-            "# istdev = 2 # 1:Batch variance, 2:History variance",
-            "# resc2 = 1.00000000000000000E+01 # Total source weight or Total source weight / maxcas",
-            "# resc3 = 1.00000000000000000E+01 # Total history number or Total batch number",
-            "# maxcas = 10 # History / Batch, only used for istdev=1",
-            f"# bitrseed = {'0' * 64} # bit data of rseed",
-        )
-    )
     return ("\n".join(rows) + "\n").encode("ascii")
 
 
@@ -159,6 +168,10 @@ def test_validate_and_promote_combined_sumtally_error_pair(tmp_path: Path) -> No
     sumtally.mkdir(parents=True)
     sum_input = sumtally / "sum.inp"
     sum_input.write_text(_deck(), encoding="utf-8")
+    (sumtally / "sumtally.inp").write_text(
+        "sumtally start\nsumtally end\n",
+        encoding="utf-8",
+    )
     dose_output = sumtally / "dose.out"
     error_output = sumtally / "dose_err.out"
 
@@ -200,12 +213,89 @@ def test_validate_and_promote_combined_sumtally_error_pair(tmp_path: Path) -> No
     ) == pair
 
 
+def test_combined_sumtally_pair_rejects_non_weighted_mode(tmp_path: Path) -> None:
+    sum_input = tmp_path / "sum.inp"
+    sum_input.write_text(_deck(), encoding="utf-8")
+    dose_output = tmp_path / "dose.out"
+    error_output = tmp_path / "dose_err.out"
+    dose_output.write_bytes(_tally("dose", [10.0, 8.0, 6.0, 4.0]))
+    error_output.write_bytes(
+        _tally("error", [0.1, 0.0, 0.3, 0.2]).replace(
+            b"isumtally = 2",
+            b"isumtally = 1",
+        )
+    )
+
+    with pytest.raises(
+        StructureRelativeErrorUnavailable,
+        match="unsupported or mismatched semantics",
+    ):
+        validate_combined_tally_pair(
+            dose_path=dose_output,
+            error_path=error_output,
+            sum_input_path=sum_input,
+            expected_geometry=GEOMETRY,
+        )
+
+
+def test_combined_sumtally_pair_rejects_mismatched_weights(tmp_path: Path) -> None:
+    sum_input = tmp_path / "sum.inp"
+    sum_input.write_text(_deck(), encoding="utf-8")
+    dose_output = tmp_path / "dose.out"
+    error_output = tmp_path / "dose_err.out"
+    dose_output.write_bytes(_tally("dose", [10.0, 8.0, 6.0, 4.0]))
+    error_output.write_bytes(
+        _tally("error", [0.1, 0.0, 0.3, 0.2]).replace(
+            b"segments/seg_001/dose.out\n1.0\n",
+            b"segments/seg_001/dose.out\n2.0\n",
+        )
+    )
+
+    with pytest.raises(
+        StructureRelativeErrorUnavailable,
+        match="unsupported or mismatched semantics",
+    ):
+        validate_combined_tally_pair(
+            dose_path=dose_output,
+            error_path=error_output,
+            sum_input_path=sum_input,
+            expected_geometry=GEOMETRY,
+        )
+
+
+def test_combined_sumtally_wrapper_requires_owned_include(tmp_path: Path) -> None:
+    sum_input = tmp_path / "sum.inp"
+    sum_input.write_text(
+        _deck().replace("infl:{sumtally.inp}", "infl:{other.inp}"),
+        encoding="utf-8",
+    )
+    dose_output = tmp_path / "dose.out"
+    error_output = tmp_path / "dose_err.out"
+    dose_output.write_bytes(_tally("dose", [10.0, 8.0, 6.0, 4.0]))
+    error_output.write_bytes(_tally("error", [0.1, 0.0, 0.3, 0.2]))
+
+    with pytest.raises(
+        StructureRelativeErrorUnavailable,
+        match="unsupported or mismatched semantics",
+    ):
+        validate_combined_tally_pair(
+            dose_path=dose_output,
+            error_path=error_output,
+            sum_input_path=sum_input,
+            expected_geometry=GEOMETRY,
+        )
+
+
 def test_missing_combined_error_keeps_dose_but_is_unavailable(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     sumtally = workspace / "sumtally"
     sumtally.mkdir(parents=True)
     sum_input = sumtally / "sum.inp"
     sum_input.write_text(_deck(), encoding="utf-8")
+    (sumtally / "sumtally.inp").write_text(
+        "sumtally start\nsumtally end\n",
+        encoding="utf-8",
+    )
     dose_output = sumtally / "dose.out"
 
     def fake_runner(command, **kwargs):

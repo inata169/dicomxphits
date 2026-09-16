@@ -76,8 +76,14 @@ FIXED = {"mesh": "xyz", "axis": "xy", "output": "dose", "part": "all",
          "x-type": "2", "y-type": "2", "z-type": "2"}
 
 
-def mesh_from_fields(fields):
-    require(all(fields.get(k) == v for k, v in FIXED.items()))
+def mesh_from_fields(fields, *, epsout="1"):
+    fixed = dict(FIXED)
+    if epsout is None:
+        fixed.pop("epsout")
+        require("epsout" not in fields)
+    else:
+        fixed["epsout"] = epsout
+    require(all(fields.get(k) == v for k, v in fixed.items()))
     require(isinstance(fields.get("title"), str) and 0 < len(fields["title"]) <= 512)
     require(isinstance(fields.get("file"), str) and 0 < len(fields["file"]) <= 1024)
     counts = tuple(integer(fields.get("n" + axis, "")) for axis in "xyz")
@@ -106,6 +112,132 @@ def prepared_contract(text, expected_file):
             found.append(mesh_from_fields(fields))
     require(len(found) == 1)
     return found[0], runtime
+
+
+def prepared_sumtally_contract(text):
+    """Validate the generated PHITS wrapper used for ``isumtally=2``."""
+
+    require(len(text.encode("utf-8")) <= 4 * 1024**2, "resource-limit")
+    require(re.search(r"(?im)^\s*(?:itall|\$MPI)\b", text) is None)
+    istdev = re.findall(
+        r"(?im)^\s*istdev\s*=\s*([+-]?\d+)\s*(?:#.*)?$",
+        text,
+    )
+    require(len(istdev) <= 1 and (not istdev or istdev == ["-1"]))
+    runtime = {}
+    for name in ("maxcas", "maxbch"):
+        values = re.findall(
+            r"(?im)^\s*" + name + r"\s*=\s*(\d+)\s*(?:#.*)?$",
+            text,
+        )
+        require(len(values) == 1)
+        runtime[name] = integer(values[0])
+        require(runtime[name] > 0)
+    icntl = re.findall(r"(?im)^\s*icntl\s*=\s*(\d+)\s*(?:#.*)?$", text)
+    require(icntl == ["13"])
+    omp = re.findall(r"(?im)^\s*\$OMP\s*=\s*(\d+)\s*$", text)
+    require(len(omp) == 1 and integer(omp[0]) > 0)
+    runtime["threads"] = integer(omp[0])
+    found = []
+    for block in re.finditer(
+        r"(?ims)^\s*\[\s*T-Deposit\s*\]\s*\r?\n(.*?)(?=^\s*\[|\Z)",
+        text,
+    ):
+        field_lines = []
+        includes = []
+        for line in block[1].splitlines():
+            include = re.fullmatch(
+                r"\s*infl:\s*\{\s*([^}]+?)\s*\}\s*(?:[#\$!].*)?",
+                line,
+                re.IGNORECASE,
+            )
+            if include:
+                includes.append(include[1].strip())
+            else:
+                field_lines.append(line)
+        fields = assignments("\n".join(field_lines))
+        sumtally_includes = [
+            value
+            for value in includes
+            if value.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            == "sumtally.inp"
+        ]
+        if sumtally_includes:
+            require(len(includes) == len(sumtally_includes) == 1)
+            found.append(mesh_from_fields(fields, epsout="0"))
+    require(len(found) == 1)
+    return found[0], runtime
+
+
+def _sumtally_output_fields(header, expected_file):
+    lines = header.splitlines()
+    require(lines and re.fullmatch(r"\s*\[\s*T-Deposit\s*\]\s*", lines[0]))
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if line.strip().lower() == "sumtally start"
+    ]
+    ends = [
+        index
+        for index, line in enumerate(lines)
+        if line.strip().lower() == "sumtally end"
+    ]
+    require(len(starts) == len(ends) == 1 and 0 < starts[0] < ends[0])
+    start, end = starts[0], ends[0]
+    fields = assignments("\n".join(lines[1:start] + lines[end + 1 :]))
+
+    values = {}
+    source_lines = []
+    for line in lines[start + 1 : end]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = re.fullmatch(r"\s*([\w-]+)\s*=\s*(.*?)\s*(?:#.*)?", line)
+        if match:
+            key, value = match.groups()
+            require(key not in values)
+            values[key] = value.strip()
+        else:
+            source_lines.append(stripped)
+    require(set(values) == {"isumtally", "nfile", "sfile", "sumfactor"})
+    require(values["isumtally"] == "2")
+    nfile = integer(values["nfile"])
+    require(0 < nfile <= 10_000, "resource-limit")
+    sumfactor = number(values["sumfactor"])
+    require(sumfactor > 0)
+    require(
+        values["sfile"].replace("\\", "/").rsplit("/", 1)[-1]
+        == expected_file
+    )
+
+    sources = []
+    cursor = 0
+    for _index in range(nfile):
+        require(cursor < len(source_lines))
+        candidate = source_lines[cursor]
+        cursor += 1
+        combined = re.fullmatch(r"(.+?)\s+(" + NUMBER + r")", candidate)
+        if combined:
+            source_path, weight_token = combined.groups()
+        else:
+            source_path = candidate
+            require(cursor < len(source_lines))
+            weight_token = source_lines[cursor]
+            cursor += 1
+            require(re.fullmatch(NUMBER, weight_token) is not None)
+        require(0 < len(source_path) <= 4096 and "\x00" not in source_path)
+        weight = number(weight_token)
+        require(weight > 0)
+        sources.append({"path": source_path, "weight": weight})
+    require(cursor == len(source_lines))
+    metadata = {
+        "isumtally": 2,
+        "nfile": nfile,
+        "sources": sources,
+        "sfile": values["sfile"],
+        "sumfactor": sumfactor,
+    }
+    return fields, metadata
 
 
 def parse_batch(raw, prepared):
@@ -147,7 +279,7 @@ def parse_identity(header, stdout, threads):
     return "phits-3.35-windows-openmp-xyz-xy-history-v1"
 
 
-def parse_tally(raw, expected, role, deadline):
+def parse_tally(raw, expected, role, deadline, *, sumtally=False):
     require(role in {"dose", "error"})
     require(len(raw) <= MAX_TALLY_BYTES, "resource-limit")
     checkpoint(deadline)
@@ -156,38 +288,52 @@ def parse_tally(raw, expected, role, deadline):
     require(0 < first <= MAX_HEADER_BYTES)
     header = text[:first]
     require(header.startswith("[ T-Deposit ]\n"))
-    fields = assignments(header.split("\n", 1)[1])
-    allowed = set(FIXED) | {"title", "file", "nx", "ny", "nz", "xmin", "xmax", "ymin", "ymax", "zmin", "zmax",
-                           "letmat", "dedxfnc", "deposit", "2D-type", "mother"}
+    if sumtally:
+        fields, metadata = _sumtally_output_fields(header, expected.file)
+        allowed = (set(FIXED) - {"epsout"}) | {
+            "title", "file", "nx", "ny", "nz", "xmin", "xmax", "ymin",
+            "ymax", "zmin", "zmax", "letmat", "dedxfnc", "deposit",
+            "2D-type", "mother",
+        }
+        parsed_mesh = mesh_from_fields(fields, epsout=None)
+    else:
+        fields = assignments(header.split("\n", 1)[1])
+        allowed = set(FIXED) | {"title", "file", "nx", "ny", "nz", "xmin", "xmax", "ymin", "ymax", "zmin", "zmax",
+                               "letmat", "dedxfnc", "deposit", "2D-type", "mother"}
+        parsed_mesh = mesh_from_fields(fields)
     require(set(fields) == allowed)
     require(fields["letmat"] == fields["dedxfnc"] == fields["deposit"] == "0")
     require(fields["2D-type"] == "3" and fields["mother"] == "all")
-    require(mesh_from_fields(fields) == expected, "mesh-mismatch")
+    require(parsed_mesh == expected, "mesh-mismatch")
     restart_marker = "# Information for Restart Calculation\n"
-    require(text.count(restart_marker) == 1)
-    body, restart = text[first + len("#newpage:\n"):].split(restart_marker)
-    require(restart.startswith("# This calculation was newly started\n"), "unsupported-restart")
-    lines = restart.splitlines()
-    require(len(lines) == 6 and restart.endswith("\n"))
-    metadata = {}
-    comments = {"istdev": "1:Batch variance, 2:History variance",
-                "resc2": "Total source weight or Total source weight / maxcas",
-                "resc3": "Total history number or Total batch number",
-                "maxcas": "History / Batch, only used for istdev=1",
-                "bitrseed": "bit data of rseed"}
-    for line, name in zip(lines[1:6], comments):
-        match = re.fullmatch(r"# " + name + r"\s*=\s*(\S+) # " + re.escape(comments[name]), line)
-        require(match is not None)
-        token = match[1]
-        if name == "bitrseed":
-            require(re.fullmatch(SEED, token) is not None)
-            metadata[name] = token
-        else:
-            value = number(token)
-            require(value > 0)
-            metadata[name] = value
-    require(metadata["istdev"] == 2, "unsupported-variance")
-    require(metadata["resc3"].is_integer() and metadata["maxcas"].is_integer())
+    if sumtally:
+        require(restart_marker not in text, "unsupported-restart")
+        body = text[first + len("#newpage:\n"):]
+    else:
+        require(text.count(restart_marker) == 1)
+        body, restart = text[first + len("#newpage:\n"):].split(restart_marker)
+        require(restart.startswith("# This calculation was newly started\n"), "unsupported-restart")
+        lines = restart.splitlines()
+        require(len(lines) == 6 and restart.endswith("\n"))
+        metadata = {}
+        comments = {"istdev": "1:Batch variance, 2:History variance",
+                    "resc2": "Total source weight or Total source weight / maxcas",
+                    "resc3": "Total history number or Total batch number",
+                    "maxcas": "History / Batch, only used for istdev=1",
+                    "bitrseed": "bit data of rseed"}
+        for line, name in zip(lines[1:6], comments):
+            match = re.fullmatch(r"# " + name + r"\s*=\s*(\S+) # " + re.escape(comments[name]), line)
+            require(match is not None)
+            token = match[1]
+            if name == "bitrseed":
+                require(re.fullmatch(SEED, token) is not None)
+                metadata[name] = token
+            else:
+                value = number(token)
+                require(value > 0)
+                metadata[name] = value
+        require(metadata["istdev"] == 2, "unsupported-variance")
+        require(metadata["resc3"].is_integer() and metadata["maxcas"].is_integer())
     pages = body.split(" newpage:\n")
     require(len(pages) == expected.counts[2])
     output = np.empty(expected.cells, dtype=np.float64)
@@ -295,5 +441,27 @@ def paired_tally_values(dose_raw, error_raw, mesh, maxcas, deadline):
         and dose_metadata["maxcas"] == maxcas,
         "pair-mismatch",
     )
+    checkpoint(deadline)
+    return dose, error, dose_metadata
+
+
+def paired_sumtally_values(dose_raw, error_raw, mesh, deadline):
+    """Return one validated PHITS 3.35 ``isumtally=2`` dose/error pair."""
+
+    dose, dose_metadata = parse_tally(
+        dose_raw,
+        mesh,
+        "dose",
+        deadline,
+        sumtally=True,
+    )
+    error, error_metadata = parse_tally(
+        error_raw,
+        mesh,
+        "error",
+        deadline,
+        sumtally=True,
+    )
+    require(dose_metadata == error_metadata, "pair-mismatch")
     checkpoint(deadline)
     return dose, error, dose_metadata

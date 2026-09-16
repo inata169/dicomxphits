@@ -19,8 +19,8 @@ from dicomxphits.ct2phits_datfiles import RAW_CT2PHITS_NAMES
 from dicomxphits.phits_observation_format import (
     MAX_TALLY_BYTES,
     Mesh,
-    paired_tally_values,
-    prepared_contract,
+    paired_sumtally_values,
+    prepared_sumtally_contract,
 )
 from dicomxphits.replace_ct_layer_with_water import (
     CtSeries,
@@ -40,7 +40,7 @@ from dicomxphits.sumtally_inputs import file_sha256
 SCHEMA_VERSION = "dicomxphits_structure_relative_error_v1"
 PAIR_SCHEMA_VERSION = "dicomxphits_sumtally_relative_error_pair_v1"
 CONTRACT_VERSION = "post_completion_structure_relative_error_v1"
-PAIR_SEMANTICS = "phits_3_35_sumtally_history_variance_relative_error_v1"
+PAIR_SEMANTICS = "phits_3_35_sumtally_isumtally_2_relative_error_v1"
 THRESHOLD_FRACTION = 0.5
 THRESHOLD_RULE = "dose_greater_than_0_5_global_combined_dmax_v1"
 STATISTICS_RULE = "unweighted_rerr_percent_mean_median_linear_p95_v1"
@@ -164,16 +164,21 @@ def _read_combined_tally_pair(
     )
     try:
         input_text = input_raw.decode("utf-8")
-        mesh, runtime = prepared_contract(input_text, dose_path.name)
-        if not _mesh_matches_geometry(mesh, expected_geometry):
+        prepared_mesh, _runtime = prepared_sumtally_contract(input_text)
+        if not _mesh_matches_geometry(prepared_mesh, expected_geometry):
             raise StructureRelativeErrorUnavailable(
                 "combined dose/error mesh does not match validated Sumtally geometry"
             )
-        dose, error, metadata = paired_tally_values(
+        mesh = Mesh(
+            prepared_mesh.title,
+            dose_path.name,
+            prepared_mesh.counts,
+            prepared_mesh.bounds,
+        )
+        dose, error, metadata = paired_sumtally_values(
             dose_raw,
             error_raw,
             mesh,
-            runtime["maxcas"],
             time.monotonic() + PAIR_PARSE_SECONDS,
         )
     except StructureRelativeErrorUnavailable:
