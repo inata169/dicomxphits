@@ -119,9 +119,9 @@ def _tally(role: str, values: list[float]) -> bytes:
         page_values = values[(index - 1) * nx * ny : index * nx * ny]
         rows.extend(
             (
-                f"#   no. = {index:2d}   iz  = {index:2d}   part. = all",
+                f"#   no. ={index:3d}   iz  ={index:3d}   part. = all",
                 f"#   z = ( {zlo + (index - 1) * dz:.4E} - {zlo + index * dz:.4E} )",
-                f"'no. = {index:2d},  iz = {index:2d}'",
+                f"'no. ={index:3d},  iz ={index:3d}'",
                 "msuc: {Authored completed fixture}",
                 r"msdl: {\it calculated by \PHITS  3.35}",
                 f"#  ny = {ny:3d}   nx = {nx:3d}",
@@ -211,6 +211,51 @@ def test_validate_and_promote_combined_sumtally_error_pair(tmp_path: Path) -> No
         sum_input_path=sum_input,
         expected_geometry=GEOMETRY,
     ) == pair
+
+
+def test_combined_sumtally_pair_accepts_three_digit_slice_identifiers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mesh = Mesh(
+        MESH.title,
+        MESH.file,
+        (MESH.counts[0], MESH.counts[1], 101),
+        MESH.bounds,
+    )
+    monkeypatch.setitem(globals(), "MESH", mesh)
+    sum_input = tmp_path / "sum.inp"
+    sum_input.write_text(_deck(), encoding="utf-8")
+    (tmp_path / "sumtally.inp").write_text(
+        "sumtally start\nsumtally end\n",
+        encoding="utf-8",
+    )
+    dose_output = tmp_path / "dose.out"
+    error_output = tmp_path / "dose_err.out"
+    cell_count = mesh.counts[0] * mesh.counts[1] * mesh.counts[2]
+    dose_output.write_bytes(_tally("dose", [1.0] * cell_count))
+    error_output.write_bytes(_tally("error", [0.1] * cell_count))
+    geometry = {
+        "axes": {
+            axis: {
+                "minimum_cm": bounds[0],
+                "maximum_cm": bounds[1],
+                "bin_count": count,
+            }
+            for axis, bounds, count in zip(
+                "xyz", mesh.bounds, mesh.counts, strict=True
+            )
+        }
+    }
+
+    evidence = validate_combined_tally_pair(
+        dose_path=dose_output,
+        error_path=error_output,
+        sum_input_path=sum_input,
+        expected_geometry=geometry,
+    )
+
+    assert evidence["validated"] is True
 
 
 def test_combined_sumtally_pair_rejects_non_weighted_mode(tmp_path: Path) -> None:
