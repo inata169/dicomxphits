@@ -705,6 +705,7 @@ def test_generate_sumtally_keeps_segment_runtime_controls_out_of_wrapper(tmp_pat
         "  icntl = 0\n"
         "  maxcas = 250000\n"
         "  maxbch = 24\n"
+        "  istdev = -1\n"
         "  file(6) = phits.out\n"
         "[ T-Deposit ]\n"
         "  title = Segment dose placeholder\n"
@@ -726,6 +727,7 @@ def test_generate_sumtally_keeps_segment_runtime_controls_out_of_wrapper(tmp_pat
     assert "$OMP = 12" not in wrapper
     assert "maxcas = 250000" not in wrapper
     assert "maxbch = 24" not in wrapper
+    assert "istdev = -1" in wrapper
 
 
 def test_generate_sumtally_accepts_zero_mu_skipped_non_treatment_beam(tmp_path):
