@@ -228,6 +228,52 @@ class StructureEvaluationRequestGuard:
         return ticket == (self.generation, tuple(inputs))
 
 
+@dataclass
+class StructureEvidenceReadinessGuard:
+    """Cache one background evidence check only for unchanged file state."""
+
+    generation: int = 0
+    active_ticket: tuple[int, tuple[object, ...]] | None = None
+    cached_key: tuple[object, ...] | None = None
+    cached_ready: bool = False
+
+    def cached(self, key: tuple[object, ...]) -> bool | None:
+        if self.cached_key != key:
+            return None
+        return self.cached_ready
+
+    def begin(
+        self,
+        key: tuple[object, ...],
+    ) -> tuple[int, tuple[object, ...]] | None:
+        if self.cached_key == key:
+            return None
+        if self.active_ticket is not None and self.active_ticket[1] == key:
+            return None
+        self.generation += 1
+        self.active_ticket = (self.generation, key)
+        return self.active_ticket
+
+    def finish(
+        self,
+        ticket: tuple[int, tuple[object, ...]],
+        current_key: tuple[object, ...],
+        ready: bool,
+    ) -> bool:
+        if ticket != self.active_ticket or ticket[1] != current_key:
+            return False
+        self.active_ticket = None
+        self.cached_key = current_key
+        self.cached_ready = ready
+        return True
+
+    def invalidate(self) -> None:
+        self.generation += 1
+        self.active_ticket = None
+        self.cached_key = None
+        self.cached_ready = False
+
+
 STRUCTURE_EVALUATION_UPSTREAM_STAGES = frozenset(
     {
         "run_ct2phits",
@@ -257,6 +303,7 @@ def structure_evaluation_enabled(
     rtplan_path: str,
     ct_reference_path: str,
     busy: bool,
+    combined_error_ready: bool | None = None,
 ) -> bool:
     """Return whether the explicit post-completion action may be offered."""
 
@@ -275,6 +322,8 @@ def structure_evaluation_enabled(
         structure_roi_number(roi_number)
     except GuiValidationError:
         return False
+    if combined_error_ready is not None:
+        return combined_error_ready
     workspace = Path(workspace_root).expanduser()
     return (
         _current_sumtally_binding(workspace, require_combined_error=True)
@@ -717,6 +766,68 @@ def read_summary(path: Path) -> dict[str, object] | None:
     if isinstance(data, dict):
         return data
     return {"summary_error": "summary JSON root is not an object"}
+
+
+def _structure_evidence_cache_key(workspace_root: Path) -> tuple[object, ...]:
+    """Return a cheap identity for files bound by recovered pair evidence."""
+
+    root = Path(os.path.abspath(os.fspath(workspace_root)))
+    generation_path = root / stage_by_key("generate_sumtally").summary_relative_path
+    execution_path = root / stage_by_key("run_sumtally").summary_relative_path
+    manifest_path = root / "segments" / "segment_manifest.json"
+    from dicomxphits.sumtally_relative_error_recovery import RECEIPT_RELATIVE_PATH
+
+    receipt_path = root / RECEIPT_RELATIVE_PATH
+    paths = {generation_path, execution_path, manifest_path, receipt_path}
+
+    def add_path(value: object) -> None:
+        if not isinstance(value, str) or not value.strip():
+            return
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        candidate = Path(os.path.abspath(os.fspath(candidate)))
+        try:
+            common = os.path.commonpath((os.fspath(root), os.fspath(candidate)))
+        except ValueError:
+            return
+        if os.path.normcase(common) == os.path.normcase(os.fspath(root)):
+            paths.add(candidate)
+
+    def collect_paths(value: object) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if key == "path" or key.endswith("_path"):
+                    add_path(item)
+                else:
+                    collect_paths(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect_paths(item)
+
+    collect_paths(read_summary(generation_path))
+    collect_paths(read_summary(execution_path))
+    collect_paths(read_summary(receipt_path))
+
+    states: list[tuple[object, ...]] = []
+    for path in sorted(paths, key=lambda item: os.path.normcase(os.fspath(item))):
+        normalized = os.path.normcase(os.fspath(path))
+        try:
+            stat = path.stat()
+        except OSError:
+            states.append((normalized, None))
+            continue
+        states.append(
+            (
+                normalized,
+                stat.st_mode,
+                stat.st_size,
+                stat.st_mtime_ns,
+                stat.st_ctime_ns,
+                stat.st_ino,
+            )
+        )
+    return tuple(states)
 
 
 def segment_progress_run_id(summary: Mapping[str, object] | None) -> str | None:
@@ -2190,6 +2301,7 @@ def _build_gui() -> int:
     )
     structure_frame = None
     structure_evaluation_guard = StructureEvaluationRequestGuard()
+    structure_evidence_guard = StructureEvidenceReadinessGuard()
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
     recovery_inspection: WorkspaceRecoveryInspection | None = None
@@ -2235,6 +2347,68 @@ def _build_gui() -> int:
         structure_evaluation_guard.invalidate()
         structure_result_status.set(message)
 
+    def current_structure_binding_ready() -> bool:
+        workspace_text = values["workspace_root"].get().strip()
+        if not workspace_text or execution_guard.active_stage is not None:
+            return False
+        workspace = Path(workspace_text).expanduser()
+        if _current_sumtally_binding(
+            workspace,
+            require_combined_error=False,
+        ) is None:
+            return False
+        execution = read_summary(
+            workspace / stage_by_key("run_sumtally").summary_relative_path
+        )
+        if isinstance(execution, Mapping) and isinstance(
+            execution.get("combined_relative_error_evidence"), Mapping
+        ):
+            return (
+                _current_sumtally_binding(
+                    workspace,
+                    require_combined_error=True,
+                )
+                is not None
+            )
+        from dicomxphits.sumtally_relative_error_recovery import (
+            RECEIPT_RELATIVE_PATH,
+        )
+
+        if not (workspace / RECEIPT_RELATIVE_PATH).is_file():
+            return False
+        key = _structure_evidence_cache_key(workspace)
+        cached = structure_evidence_guard.cached(key)
+        if cached is not None:
+            return cached
+        ticket = structure_evidence_guard.begin(key)
+        if ticket is None:
+            return False
+
+        def finish(ready: bool) -> None:
+            current_workspace_text = values["workspace_root"].get().strip()
+            if not current_workspace_text:
+                return
+            current_workspace = Path(current_workspace_text).expanduser()
+            current_key = _structure_evidence_cache_key(current_workspace)
+            structure_evidence_guard.finish(ticket, current_key, ready)
+            refresh_action_button_states()
+
+        def worker() -> None:
+            try:
+                ready = (
+                    _current_sumtally_binding(
+                        workspace,
+                        require_combined_error=True,
+                    )
+                    is not None
+                )
+            except Exception:
+                ready = False
+            root.after(0, lambda: finish(ready))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return False
+
     def stop_button_ready() -> bool:
         return bool(execution_guard.active_stage == "run_segments"
             and phits_control is not None and phits_control.process is not None
@@ -2253,15 +2427,7 @@ def _build_gui() -> int:
     def refresh_action_button_states() -> None:
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
-        workspace_text = values["workspace_root"].get().strip()
-        sumtally_ready = bool(
-            workspace_text
-            and _current_sumtally_binding(
-                Path(workspace_text).expanduser(),
-                require_combined_error=True,
-            )
-            is not None
-        )
+        sumtally_ready = current_structure_binding_ready()
         if structure_frame is not None:
             if sumtally_ready:
                 structure_frame.grid()
@@ -2314,6 +2480,7 @@ def _build_gui() -> int:
                     rtplan_path=values["rtplan_path"].get(),
                     ct_reference_path=values["ct_reference_dicom"].get(),
                     busy=busy,
+                    combined_error_ready=sumtally_ready,
                 )
             else:
                 enabled = (
@@ -4145,6 +4312,7 @@ def _build_gui() -> int:
             rtplan_path=values["rtplan_path"].get(),
             ct_reference_path=values["ct_reference_dicom"].get(),
             busy=False,
+            combined_error_ready=current_structure_binding_ready(),
         ):
             messagebox.showerror(
                 "Structure r.err unavailable",
