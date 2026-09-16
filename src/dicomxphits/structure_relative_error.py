@@ -290,9 +290,23 @@ def _current_combined_source(
     )
     recorded = execution.get("combined_relative_error_evidence")
     if not isinstance(recorded, dict):
-        raise StructureRelativeErrorUnavailable(
-            "verified combined Sumtally statistical-error evidence is unavailable"
+        from dicomxphits.sumtally_relative_error_recovery import (
+            RECEIPT_RELATIVE_PATH,
+            resolved_combined_relative_error_evidence,
         )
+
+        try:
+            recorded, receipt_sha256 = resolved_combined_relative_error_evidence(
+                workspace_root
+            )
+        except Exception as exc:
+            raise StructureRelativeErrorUnavailable(
+                "verified combined Sumtally statistical-error evidence is unavailable"
+            ) from exc
+        control_paths["Sumtally relative-error recovery receipt"] = (
+            workspace_root / RECEIPT_RELATIVE_PATH
+        )
+        control_sha256["Sumtally relative-error recovery receipt"] = receipt_sha256
     dose_path = Path(str(binding["sumtally_output_path"])).resolve()
     error_path = phits_error_output_path(dose_path)
     if str(recorded.get("dose_path") or "") != str(dose_path):

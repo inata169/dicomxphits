@@ -647,6 +647,11 @@ workflow; it is not part of the normal guided case sequence.
 `dicomxphits-fix-rtdose-coordinates` exposes the standalone RTDOSE coordinate
 correction operation for controlled maintenance or investigation. The normal
 RTDOSE Run stage performs its accepted correction handoff automatically.
+`dicomxphits-recover-sumtally-relative-error` provides an explicit preview and
+digest-confirmed, no-external-execution recovery for one unchanged workspace
+and one retained Sumtally staging directory. Its supplemental receipt is
+authority only for the existing post-completion Structure relative-error
+section; see the CLI reference for the fail-closed boundaries.
 
 ## Related Documentation
 

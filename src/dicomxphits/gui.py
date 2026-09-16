@@ -1225,6 +1225,17 @@ def _current_sumtally_binding(
         )
 
         pair_evidence = execution.get("combined_relative_error_evidence")
+        if not isinstance(pair_evidence, Mapping):
+            try:
+                from dicomxphits.sumtally_relative_error_recovery import (
+                    resolved_combined_relative_error_evidence,
+                )
+
+                pair_evidence, _receipt_sha256 = (
+                    resolved_combined_relative_error_evidence(workspace_root)
+                )
+            except Exception:
+                return None
         if (
             not isinstance(pair_evidence, Mapping)
             or pair_evidence.get("schema_version") != PAIR_SCHEMA_VERSION
