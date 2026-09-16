@@ -19,6 +19,8 @@ from dicomxphits.sumtally_inputs import file_sha256
 PLAN_SCHEMA_VERSION = "dicomxphits_sumtally_relative_error_recovery_plan_v1"
 RECEIPT_SCHEMA_VERSION = "dicomxphits_sumtally_relative_error_recovery_v1"
 RECOVERY_CONTRACT_VERSION = "retained_sumtally_relative_error_recovery_v1"
+GENERATION_SCHEMA_VERSION = "dicomxphits_public_sumtally_generation_v1"
+EXECUTION_SCHEMA_VERSION = "dicomxphits_public_sumtally_execution_v1"
 RECEIPT_RELATIVE_PATH = (
     Path("analysis") / "sumtally_relative_error_recovery_summary.json"
 )
@@ -134,7 +136,15 @@ def _require_same_workspace(
     generation: Mapping[str, Any],
     execution: Mapping[str, Any],
 ) -> None:
-    for label, summary in (("generation", generation), ("execution", execution)):
+    summaries = (
+        ("generation", generation, GENERATION_SCHEMA_VERSION),
+        ("execution", execution, EXECUTION_SCHEMA_VERSION),
+    )
+    for label, summary, expected_schema in summaries:
+        if summary.get("schema_version") != expected_schema:
+            raise SumtallyRelativeErrorRecoveryUnavailable(
+                f"Sumtally {label} summary has an unsupported schema_version"
+            )
         recorded = str(summary.get("workspace_root") or "")
         if not recorded or not _same_path(Path(recorded), root):
             raise SumtallyRelativeErrorRecoveryUnavailable(
@@ -339,6 +349,8 @@ def _publish_file_new_only(
     guard: WorkspaceOutputGuard,
     source: Path,
     destination: Path,
+    *,
+    expected_sha256: str,
 ) -> None:
     """Atomically publish a guarded source without replacing a destination."""
 
@@ -350,6 +362,10 @@ def _publish_file_new_only(
     )
     try:
         guard.copy_file(source, temporary, overwrite=False)
+        if file_sha256(temporary) != expected_sha256:
+            raise SumtallyRelativeErrorRecoveryUnavailable(
+                "retained error changed while being copied; nothing was published"
+            )
         guard.prepare_file_target(destination)
         if os.name == "nt":
             os.rename(temporary, destination)
@@ -718,7 +734,12 @@ def apply_sumtally_relative_error_recovery(
         official_error = root / plan["intended_receipt"]["official_pair"]["error_path"]
         receipt_path = root / RECEIPT_RELATIVE_PATH
         if plan["destination_state"] == "missing_error_and_receipt":
-            _publish_file_new_only(guard, retained_error, official_error)
+            _publish_file_new_only(
+                guard,
+                retained_error,
+                official_error,
+                expected_sha256=plan["retained_pair"]["error_sha256"],
+            )
         if file_sha256(official_error) != plan["retained_pair"]["error_sha256"]:
             raise SumtallyRelativeErrorRecoveryUnavailable(
                 "published official error does not match the confirmed retained evidence"

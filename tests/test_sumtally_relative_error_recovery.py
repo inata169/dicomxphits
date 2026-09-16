@@ -135,6 +135,7 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
 
     bound_manifest_sha256 = manifest_sha256(manifest)
     generation = {
+        "schema_version": recovery.GENERATION_SCHEMA_VERSION,
         "stage_status": "success",
         "workspace_root": str(root.resolve()),
         "manifest_sha256": bound_manifest_sha256,
@@ -154,6 +155,7 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
     }
     execution = {
         **{key: value for key, value in generation.items() if key != "outputs"},
+        "schema_version": recovery.EXECUTION_SCHEMA_VERSION,
         "expected_sumtally_output": str(dose.resolve()),
         "expected_sumtally_output_updated_by_run": True,
         "expected_sumtally_output_sha256": file_sha256(dose),
@@ -252,6 +254,34 @@ def test_apply_rejects_stale_plan_before_writing(
     assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
 
 
+def test_apply_validates_temporary_copy_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    preview = recovery.preview_sumtally_relative_error_recovery(root, staging)
+    original_copy = recovery.WorkspaceOutputGuard.copy_file
+
+    def copy_changed_source(self, source, destination, *, overwrite=True):
+        Path(source).write_bytes(_tally([0.4, 0.3, 0.2, 0.1], role="error"))
+        return original_copy(self, source, destination, overwrite=overwrite)
+
+    monkeypatch.setattr(
+        recovery.WorkspaceOutputGuard,
+        "copy_file",
+        copy_changed_source,
+    )
+    with pytest.raises(
+        recovery.SumtallyRelativeErrorRecoveryUnavailable,
+        match="changed while being copied",
+    ):
+        recovery.apply_sumtally_relative_error_recovery(
+            root, staging, preview["recovery_plan_sha256"]
+        )
+    assert not (root / "sumtally/dose_err.out").exists()
+    assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
+
+
 def test_interrupted_error_publication_requires_new_resume_preview(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -339,6 +369,43 @@ def test_preview_rejects_changed_or_unsupported_evidence(
     with pytest.raises(
         recovery.SumtallyRelativeErrorRecoveryUnavailable,
         match=message,
+    ):
+        recovery.preview_sumtally_relative_error_recovery(root, staging)
+    assert not (root / "sumtally/dose_err.out").exists()
+    assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
+
+
+@pytest.mark.parametrize(
+    ("summary_name", "schema_version"),
+    [
+        ("generation", None),
+        ("generation", "dicomxphits_public_sumtally_generation_future"),
+        ("execution", None),
+        ("execution", "dicomxphits_public_sumtally_execution_future"),
+    ],
+)
+def test_preview_rejects_missing_or_unknown_summary_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    summary_name: str,
+    schema_version: str | None,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    path = root / (
+        recovery.GENERATION_RELATIVE_PATH
+        if summary_name == "generation"
+        else recovery.EXECUTION_RELATIVE_PATH
+    )
+    summary = json.loads(path.read_text(encoding="utf-8"))
+    if schema_version is None:
+        summary.pop("schema_version")
+    else:
+        summary["schema_version"] = schema_version
+    path.write_text(json.dumps(summary), encoding="utf-8")
+
+    with pytest.raises(
+        recovery.SumtallyRelativeErrorRecoveryUnavailable,
+        match=rf"{summary_name} summary has an unsupported schema_version",
     ):
         recovery.preview_sumtally_relative_error_recovery(root, staging)
     assert not (root / "sumtally/dose_err.out").exists()
