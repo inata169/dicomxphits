@@ -282,6 +282,70 @@ def test_apply_validates_temporary_copy_before_publication(
     assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
 
 
+def test_apply_revalidates_full_plan_after_staging_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    preview = recovery.preview_sumtally_relative_error_recovery(root, staging)
+    original_copy = recovery.WorkspaceOutputGuard.copy_file
+
+    def copy_then_change_summary(self, source, destination, *, overwrite=True):
+        result = original_copy(self, source, destination, overwrite=overwrite)
+        (root / recovery.GENERATION_RELATIVE_PATH).write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+        return result
+
+    monkeypatch.setattr(
+        recovery.WorkspaceOutputGuard,
+        "copy_file",
+        copy_then_change_summary,
+    )
+    with pytest.raises(
+        recovery.SumtallyRelativeErrorRecoveryUnavailable,
+        match="generation summary",
+    ):
+        recovery.apply_sumtally_relative_error_recovery(
+            root, staging, preview["recovery_plan_sha256"]
+        )
+    assert not (root / "sumtally/dose_err.out").exists()
+    assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
+
+
+def test_apply_revalidates_full_plan_after_staging_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    preview = recovery.preview_sumtally_relative_error_recovery(root, staging)
+    original_write_json = recovery.WorkspaceOutputGuard.write_json
+
+    def write_then_change_summary(self, path, value, *, overwrite=True):
+        result = original_write_json(self, path, value, overwrite=overwrite)
+        (root / recovery.GENERATION_RELATIVE_PATH).write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+        return result
+
+    monkeypatch.setattr(
+        recovery.WorkspaceOutputGuard,
+        "write_json",
+        write_then_change_summary,
+    )
+    with pytest.raises(
+        recovery.SumtallyRelativeErrorRecoveryUnavailable,
+        match="generation summary",
+    ):
+        recovery.apply_sumtally_relative_error_recovery(
+            root, staging, preview["recovery_plan_sha256"]
+        )
+    assert (root / "sumtally/dose_err.out").is_file()
+    assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
+
+
 def test_preview_guards_retained_error_before_pair_parser(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

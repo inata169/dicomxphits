@@ -7,7 +7,7 @@ import os
 import re
 import secrets
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from dicomxphits.prepare_rtdose import validate_sumtally_manifest_binding
 from dicomxphits.prepare_sumtally import transitive_phits_include_paths
@@ -361,6 +361,7 @@ def _publish_file_new_only(
     destination: Path,
     *,
     expected_sha256: str,
+    validate_before_publish: Callable[[], None] | None = None,
 ) -> None:
     """Atomically publish a guarded source without replacing a destination."""
 
@@ -376,6 +377,8 @@ def _publish_file_new_only(
             raise SumtallyRelativeErrorRecoveryUnavailable(
                 "retained error changed while being copied; nothing was published"
             )
+        if validate_before_publish is not None:
+            validate_before_publish()
         guard.prepare_file_target(destination)
         if os.name == "nt":
             os.rename(temporary, destination)
@@ -390,6 +393,8 @@ def _publish_json_new_only(
     guard: WorkspaceOutputGuard,
     destination: Path,
     value: Mapping[str, Any],
+    *,
+    validate_before_publish: Callable[[], None] | None = None,
 ) -> None:
     """Atomically publish one JSON object without replacing a destination."""
 
@@ -401,6 +406,8 @@ def _publish_json_new_only(
     )
     try:
         guard.write_json(temporary, value, overwrite=False)
+        if validate_before_publish is not None:
+            validate_before_publish()
         guard.prepare_file_target(destination)
         if os.name == "nt":
             os.rename(temporary, destination)
@@ -784,45 +791,52 @@ def apply_sumtally_relative_error_recovery(
         retained_error = root / plan["retained_pair"]["error_path"]
         official_error = root / plan["intended_receipt"]["official_pair"]["error_path"]
         receipt_path = root / RECEIPT_RELATIVE_PATH
+
+        def validate_confirmed_plan_before_error_publish() -> None:
+            current = _build_preview(root, staging, guard=guard)
+            if (
+                current["recovery_plan_sha256"] != expected_plan_sha256
+                or current["plan"] != plan
+            ):
+                raise SumtallyRelativeErrorRecoveryUnavailable(
+                    "recovery plan changed before error publication"
+                )
+
         if plan["destination_state"] == "missing_error_and_receipt":
             _publish_file_new_only(
                 guard,
                 retained_error,
                 official_error,
                 expected_sha256=plan["retained_pair"]["error_sha256"],
+                validate_before_publish=validate_confirmed_plan_before_error_publish,
             )
         if file_sha256(official_error) != plan["retained_pair"]["error_sha256"]:
             raise SumtallyRelativeErrorRecoveryUnavailable(
                 "published official error does not match the confirmed retained evidence"
             )
-        post_publication = _build_preview(root, staging, guard=guard)["plan"]
-        for field in (
-            "schema_version",
-            "contract_version",
-            "workspace",
-            "staging_directory",
-            "receipt_path",
-            "retained_inputs",
-            "retained_pair",
-            "intended_receipt",
-        ):
-            if post_publication[field] != plan[field]:
+        receipt_plan = {
+            **plan,
+            "destination_state": "identical_existing_error_without_receipt",
+        }
+
+        def validate_plan_before_receipt_publish() -> None:
+            if _build_preview(root, staging, guard=guard)["plan"] != receipt_plan:
                 raise SumtallyRelativeErrorRecoveryUnavailable(
-                    "recovery evidence changed after error publication; receipt was not published"
+                    "recovery evidence changed before receipt publication"
                 )
-        if post_publication["destination_state"] != (
-            "identical_existing_error_without_receipt"
-        ):
-            raise SumtallyRelativeErrorRecoveryUnavailable(
-                "recovery destination state changed after error publication"
-            )
+
         receipt = {
             **plan["intended_receipt"],
             "recovery_plan_sha256": expected_plan_sha256,
             "confirmed_plan": plan,
         }
         receipt["receipt_sha256"] = _canonical_sha256(receipt)
-        _publish_json_new_only(guard, receipt_path, receipt)
+        _publish_json_new_only(
+            guard,
+            receipt_path,
+            receipt,
+            validate_before_publish=validate_plan_before_receipt_publish,
+        )
     pair, receipt_file_sha256 = resolved_combined_relative_error_evidence(root)
     return {
         "status": "recovered",
