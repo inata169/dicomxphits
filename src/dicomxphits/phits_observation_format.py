@@ -350,7 +350,11 @@ def parse_tally(raw, expected, role, deadline, *, sumtally=False):
         require(number(page_header[3]) == float(f"{lo + (index-1)*step:.4e}") and
                 number(page_header[4]) == float(f"{lo + index*step:.4e}"), "slice-mismatch")
         require(page.count("msdl: {\\it calculated by \\PHITS  3.35}") == 1, "unsupported-identity")
-        require(page.count(f"'no. = {index:2d},  iz = {index:2d}'") == 1)
+        page_identity = re.findall(
+            r"(?m)^'no\. =[ \t]*(0|[1-9]\d*),[ \t]+iz =[ \t]*(0|[1-9]\d*)'[ \t]*$",
+            page,
+        )
+        require(page_identity == [(str(index), str(index))])
         count_match = re.findall(r"#  ny =\s*(\d+)   nx =\s*(\d+)", page)
         require(count_match == [(str(ny), str(nx))])
         require(page.count(data_marker) == 1)
