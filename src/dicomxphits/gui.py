@@ -779,11 +779,13 @@ def _structure_evidence_cache_key(workspace_root: Path) -> tuple[object, ...]:
         MAX_JSON_BYTES,
         RECEIPT_RELATIVE_PATH,
     )
+    from dicomxphits.safe_output import WorkspaceOutputGuard
 
     receipt_path = root / RECEIPT_RELATIVE_PATH
     paths = {generation_path, execution_path, manifest_path, receipt_path}
 
     def read_bounded_summary(path: Path) -> dict[str, object] | None:
+        path = guard.prepare(path)
         try:
             with path.open("rb") as stream:
                 raw = stream.read(MAX_JSON_BYTES + 1)
@@ -822,29 +824,37 @@ def _structure_evidence_cache_key(workspace_root: Path) -> tuple[object, ...]:
             for item in value:
                 collect_paths(item)
 
-    collect_paths(read_bounded_summary(generation_path))
-    collect_paths(read_bounded_summary(execution_path))
-    collect_paths(read_bounded_summary(receipt_path))
+    try:
+        with WorkspaceOutputGuard(root, read_only=True) as guard:
+            collect_paths(read_bounded_summary(generation_path))
+            collect_paths(read_bounded_summary(execution_path))
+            collect_paths(read_bounded_summary(receipt_path))
 
-    states: list[tuple[object, ...]] = []
-    for path in sorted(paths, key=lambda item: os.path.normcase(os.fspath(item))):
-        normalized = os.path.normcase(os.fspath(path))
-        try:
-            stat = path.stat()
-        except OSError:
-            states.append((normalized, None))
-            continue
-        states.append(
-            (
-                normalized,
-                stat.st_mode,
-                stat.st_size,
-                stat.st_mtime_ns,
-                stat.st_ctime_ns,
-                stat.st_ino,
-            )
-        )
-    return tuple(states)
+            states: list[tuple[object, ...]] = []
+            for path in sorted(
+                paths,
+                key=lambda item: os.path.normcase(os.fspath(item)),
+            ):
+                path = guard.prepare(path)
+                normalized = os.path.normcase(os.fspath(path))
+                try:
+                    stat = path.stat()
+                except OSError:
+                    states.append((normalized, None))
+                    continue
+                states.append(
+                    (
+                        normalized,
+                        stat.st_mode,
+                        stat.st_size,
+                        stat.st_mtime_ns,
+                        stat.st_ctime_ns,
+                        stat.st_ino,
+                    )
+                )
+            return tuple(states)
+    except Exception:
+        return ((os.path.normcase(os.fspath(root)), "unsafe_or_unavailable"),)
 
 
 def segment_progress_run_id(summary: Mapping[str, object] | None) -> str | None:
@@ -2373,17 +2383,11 @@ def _build_gui() -> int:
             structure_evidence_guard.invalidate()
             return False
         workspace = Path(workspace_text).expanduser()
-        if _current_sumtally_binding(
-            workspace,
-            require_combined_error=False,
-        ) is None:
-            return False
-        execution = read_summary(
-            workspace / stage_by_key("run_sumtally").summary_relative_path
+        from dicomxphits.sumtally_relative_error_recovery import (
+            RECEIPT_RELATIVE_PATH,
         )
-        if isinstance(execution, Mapping) and isinstance(
-            execution.get("combined_relative_error_evidence"), Mapping
-        ):
+
+        if not os.path.lexists(workspace / RECEIPT_RELATIVE_PATH):
             return (
                 _current_sumtally_binding(
                     workspace,
@@ -2391,12 +2395,6 @@ def _build_gui() -> int:
                 )
                 is not None
             )
-        from dicomxphits.sumtally_relative_error_recovery import (
-            RECEIPT_RELATIVE_PATH,
-        )
-
-        if not (workspace / RECEIPT_RELATIVE_PATH).is_file():
-            return False
         key = _structure_evidence_cache_key(workspace)
         cached = structure_evidence_guard.cached(key)
         if cached is not None:

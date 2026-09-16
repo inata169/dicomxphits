@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import dicomxphits.gui as gui_module
+import dicomxphits.safe_output as safe_output_module
 import dicomxphits.structure_relative_error as module
 import dicomxphits.workspace_execution as workspace_execution_module
 from dicomxphits.gui import (
@@ -1178,6 +1179,7 @@ def test_gui_evidence_cache_key_changes_with_bound_error_file(
     workspace = tmp_path / "workspace"
     error = workspace / "sumtally" / "dose_err.out"
     error.parent.mkdir(parents=True)
+    (workspace / "segments").mkdir()
     error.write_bytes(b"initial")
     receipt = workspace / "analysis" / "sumtally_relative_error_recovery_summary.json"
     receipt.parent.mkdir()
@@ -1213,6 +1215,38 @@ def test_gui_evidence_cache_key_does_not_parse_oversized_receipt(
     key = gui_module._structure_evidence_cache_key(workspace)
 
     assert key
+
+
+def test_gui_evidence_cache_key_guards_receipt_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    receipt = workspace / "analysis" / "sumtally_relative_error_recovery_summary.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{}", encoding="utf-8")
+    original_prepare = safe_output_module.WorkspaceOutputGuard.prepare
+    original_open = Path.open
+
+    def reject_receipt(self, target, *, create_parents=False):
+        if Path(target) == receipt:
+            raise ValueError("synthetic receipt reparse point")
+        return original_prepare(self, target, create_parents=create_parents)
+
+    def fail_if_receipt_opened(self, *args, **kwargs):
+        if self == receipt:
+            pytest.fail("unguarded recovery receipt was opened on the GUI thread")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        safe_output_module.WorkspaceOutputGuard,
+        "prepare",
+        reject_receipt,
+    )
+    monkeypatch.setattr(Path, "open", fail_if_receipt_opened)
+
+    key = gui_module._structure_evidence_cache_key(workspace)
+    assert key[0][1] == "unsafe_or_unavailable"
 
 
 def test_gui_invalidates_structure_results_for_every_upstream_stage() -> None:

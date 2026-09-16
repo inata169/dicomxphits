@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from dicomxphits.prepare_rtdose import validate_sumtally_manifest_binding
 from dicomxphits.prepare_sumtally import transitive_phits_include_paths
+from dicomxphits.phits_observation_format import MAX_TALLY_BYTES
 from dicomxphits.run_segments import phits_error_output_path
 from dicomxphits.safe_output import WorkspaceOutputGuard
 from dicomxphits.sumtally_inputs import file_sha256
@@ -660,11 +661,13 @@ def _build_preview(
         retained_dose,
         guard=guard,
         label="retained combined Sumtally dose",
+        maximum_bytes=MAX_TALLY_BYTES,
     )
     _official_raw, official_dose_sha256 = _stable_bytes(
         context["dose"],
         guard=guard,
         label="official combined Sumtally dose",
+        maximum_bytes=MAX_TALLY_BYTES,
     )
     if retained_dose_sha256 != official_dose_sha256 or official_dose_sha256 != context[
         "binding"
@@ -691,6 +694,7 @@ def _build_preview(
             context["error"],
             guard=guard,
             label="existing official combined Sumtally error",
+            maximum_bytes=MAX_TALLY_BYTES,
         )
         if official_error_sha256 != retained_pair["error_sha256"]:
             raise SumtallyRelativeErrorRecoveryUnavailable(

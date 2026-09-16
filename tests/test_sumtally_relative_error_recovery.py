@@ -333,6 +333,20 @@ def test_preview_guards_manifest_before_binding_validator(
         recovery.preview_sumtally_relative_error_recovery(root, staging)
 
 
+def test_preview_bounds_retained_dose_before_pair_parser(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(recovery, "MAX_TALLY_BYTES", 1)
+
+    with pytest.raises(
+        recovery.SumtallyRelativeErrorRecoveryUnavailable,
+        match="retained combined Sumtally dose exceeds its size limit",
+    ):
+        recovery.preview_sumtally_relative_error_recovery(root, staging)
+
+
 def test_interrupted_error_publication_requires_new_resume_preview(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
