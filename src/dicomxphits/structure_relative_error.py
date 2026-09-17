@@ -221,6 +221,21 @@ def validate_combined_tally_pair(
     return evidence
 
 
+def _supplemental_receipt_path(workspace_root: Path) -> Path:
+    from dicomxphits.sumtally_relative_error_recovery import RECEIPT_RELATIVE_PATH
+
+    return workspace_root / RECEIPT_RELATIVE_PATH
+
+
+def reject_supplemental_receipt_with_direct_evidence(workspace_root: Path) -> None:
+    """Reject contradictory direct and fixed supplemental pair authority."""
+
+    if os.path.lexists(_supplemental_receipt_path(workspace_root)):
+        raise StructureRelativeErrorUnavailable(
+            "supplemental recovery receipt conflicts with direct evidence"
+        )
+
+
 def _current_combined_source(
     workspace_root: Path,
 ) -> tuple[
@@ -289,10 +304,27 @@ def _current_combined_source(
         execution=execution,
     )
     recorded = execution.get("combined_relative_error_evidence")
-    if not isinstance(recorded, dict):
-        raise StructureRelativeErrorUnavailable(
-            "verified combined Sumtally statistical-error evidence is unavailable"
+    direct_evidence = isinstance(recorded, dict)
+    if direct_evidence:
+        reject_supplemental_receipt_with_direct_evidence(workspace_root)
+    else:
+        from dicomxphits.sumtally_relative_error_recovery import (
+            RECEIPT_RELATIVE_PATH,
+            resolved_combined_relative_error_evidence,
         )
+
+        try:
+            recorded, receipt_sha256 = resolved_combined_relative_error_evidence(
+                workspace_root
+            )
+        except Exception as exc:
+            raise StructureRelativeErrorUnavailable(
+                "verified combined Sumtally statistical-error evidence is unavailable"
+            ) from exc
+        control_paths["Sumtally relative-error recovery receipt"] = (
+            workspace_root / RECEIPT_RELATIVE_PATH
+        )
+        control_sha256["Sumtally relative-error recovery receipt"] = receipt_sha256
     dose_path = Path(str(binding["sumtally_output_path"])).resolve()
     error_path = phits_error_output_path(dose_path)
     if str(recorded.get("dose_path") or "") != str(dose_path):
@@ -328,6 +360,8 @@ def _current_combined_source(
             raise StructureRelativeErrorUnavailable(
                 f"{label} changed during Structure relative-error evaluation"
             )
+    if direct_evidence:
+        reject_supplemental_receipt_with_direct_evidence(workspace_root)
     control_evidence = {
         "files": [
             {
@@ -1109,17 +1143,30 @@ def _capture_retained_validation(
         raise StructureRelativeErrorUnavailable(
             "retained control-file evidence is unavailable"
         )
+    receipt_path = Path(
+        os.path.abspath(os.fspath(_supplemental_receipt_path(root)))
+    )
+    supplemental_receipt_captured = False
     for record in control_files:
         if not isinstance(record, dict):
             raise StructureRelativeErrorUnavailable(
                 "retained control-file evidence is invalid"
             )
+        control_path = Path(
+            os.path.abspath(os.fspath(Path(str(record.get("path") or ""))))
+        )
+        if os.path.normcase(os.fspath(control_path)) == os.path.normcase(
+            os.fspath(receipt_path)
+        ):
+            supplemental_receipt_captured = True
         add(
-            Path(str(record.get("path") or "")),
+            control_path,
             label=str(record.get("label") or "control file"),
             expected_sha256=str(record.get("sha256") or ""),
             poll_sha256=True,
         )
+    if not supplemental_receipt_captured:
+        reject_supplemental_receipt_with_direct_evidence(root)
     add(
         Path(str(sumtally_binding["sumtally_input_path"])),
         label="Sumtally normalization input",
@@ -1289,6 +1336,11 @@ def _capture_retained_validation(
         },
         "sumtally_binding": json.loads(json.dumps(sumtally_binding)),
         "pair_evidence": json.loads(json.dumps(pair_evidence)),
+        "pair_authority": (
+            "supplemental_receipt"
+            if supplemental_receipt_captured
+            else "direct_execution"
+        ),
         "ct_evidence": json.loads(json.dumps(ct_evidence)),
         "placement": json.loads(json.dumps(placement)),
         "files": files,
@@ -1333,12 +1385,37 @@ def _verify_retained_validation(
         raise StructureRelativeErrorUnavailable(
             "retained Structure relative-error source evidence is unavailable"
         )
+    receipt_path = Path(
+        os.path.abspath(os.fspath(_supplemental_receipt_path(workspace_root)))
+    )
+    supplemental_receipt_captured = False
     for record in files:
         if not isinstance(record, dict):
             raise StructureRelativeErrorUnavailable(
                 "retained Structure relative-error source evidence is invalid"
             )
+        retained_path = Path(str(record.get("path") or ""))
+        if os.path.normcase(os.fspath(retained_path)) == os.path.normcase(
+            os.fspath(receipt_path)
+        ):
+            supplemental_receipt_captured = True
         _verify_retained_file_snapshot(record)
+    pair_authority = retained.get("pair_authority")
+    if pair_authority == "direct_execution":
+        if supplemental_receipt_captured:
+            raise StructureRelativeErrorUnavailable(
+                "retained direct evidence includes a supplemental recovery receipt"
+            )
+        reject_supplemental_receipt_with_direct_evidence(workspace_root)
+    elif pair_authority == "supplemental_receipt":
+        if not supplemental_receipt_captured:
+            raise StructureRelativeErrorUnavailable(
+                "retained supplemental recovery receipt evidence is unavailable"
+            )
+    else:
+        raise StructureRelativeErrorUnavailable(
+            "retained Structure relative-error pair authority is invalid"
+        )
     directories = retained.get("directories")
     if not isinstance(directories, list):
         raise StructureRelativeErrorUnavailable(

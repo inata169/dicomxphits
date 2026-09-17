@@ -104,6 +104,41 @@ The generated Sumtally output is MU-weighted all-segments totalfield output. It
 is not a per-beam `beamMU` output. Sumtally input and wrapper generation use
 package-owned helper code and do not require private `scripts/` imports.
 
+### Retained relative-error recovery
+
+An unchanged workspace whose successful historical Sumtally Run recorded no
+combined relative-error evidence may be eligible for bounded recovery from the
+single retained staging directory produced by that same run. Preview is
+read-only and requires both paths explicitly; it never searches for a staging
+directory or starts PHITS, Sumtally, phits2dicom, or another external tool:
+
+```powershell
+dicomxphits-recover-sumtally-relative-error `
+  --workspace-root "C:\outside-repo\dicomxphits-work\case-id" `
+  --staging-directory "C:\outside-repo\dicomxphits-work\case-id\.sumtally-run-0123456789abcdef"
+```
+
+After reviewing the returned `recovery_plan_sha256`, apply requires that exact
+digest and revalidates the complete plan under the workspace execution lease:
+
+```powershell
+dicomxphits-recover-sumtally-relative-error `
+  --workspace-root "C:\outside-repo\dicomxphits-work\case-id" `
+  --staging-directory "C:\outside-repo\dicomxphits-work\case-id\.sumtally-run-0123456789abcdef" `
+  --apply `
+  --expected-plan-sha256 "<sha256 returned by preview>"
+```
+
+Apply creates only the missing official `*_err.out` and the fixed supplemental
+receipt `analysis/sumtally_relative_error_recovery_summary.json`, both new-only.
+It does not rewrite the original summaries, dose, RTDOSE evidence, or retained
+staging tree. The receipt authorizes only the existing explicit post-completion
+Structure relative-error evaluation. It does not change Sumtally or RTDOSE
+completion, clinical meaning, convergence, stopping, or patient-QA status.
+Relocated workspaces, conflicting destinations, stale evidence, invalid
+receipts, and arbitrary legacy repairs fail closed. Do not delete the retained
+staging tree as part of this workflow.
+
 ## RTDOSE Adapter
 
 The RTDOSE adapters prepare and run conversion for the preceding all-segments

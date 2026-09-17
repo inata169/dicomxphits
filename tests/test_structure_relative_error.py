@@ -9,17 +9,23 @@ import numpy as np
 import pytest
 
 import dicomxphits.gui as gui_module
+import dicomxphits.safe_output as safe_output_module
 import dicomxphits.structure_relative_error as module
 import dicomxphits.workspace_execution as workspace_execution_module
 from dicomxphits.gui import (
     GuiValidationError,
     STRUCTURE_EVALUATION_UPSTREAM_STAGES,
+    StructureEvidenceReadinessGuard,
     StructureEvaluationRequestGuard,
     structure_evaluation_enabled,
     structure_roi_number,
 )
 from dicomxphits.phits_observation_format import Mesh
 from dicomxphits.prepare_sumtally import run_phits_sumtally
+from dicomxphits.sumtally_relative_error_recovery import (
+    MAX_JSON_BYTES,
+    RECEIPT_RELATIVE_PATH,
+)
 from dicomxphits.structure_relative_error import (
     CONTRACT_VERSION,
     NON_CLINICAL_LABEL,
@@ -565,6 +571,22 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         roi_number=7,
     ) == (binding, pair, ct_evidence, placement)
 
+    receipt = workspace / RECEIPT_RELATIVE_PATH
+    receipt.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        StructureRelativeErrorUnavailable,
+        match="supplemental recovery receipt conflicts with direct evidence",
+    ):
+        module._verify_retained_validation(
+            retained,
+            workspace_root=workspace,
+            rtstruct_path=rtstruct,
+            rtplan_path=rtplan,
+            ct_reference_path=reference,
+            roi_number=7,
+        )
+    receipt.unlink()
+
     added_ct = ct_root / "added.dcm"
     added_ct.write_bytes(b"matching-series race placeholder")
     with pytest.raises(
@@ -1016,6 +1038,35 @@ def test_gui_action_requires_verified_sumtally_and_explicit_inputs(
         structure_roi_number("PTV")
 
 
+def test_gui_action_can_use_background_combined_error_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    common = {
+        "workspace_root": "workspace",
+        "rtstruct_path": "RTSTRUCT.dcm",
+        "roi_number": "7",
+        "rtplan_path": "RTPLAN.dcm",
+        "ct_reference_path": "CT.dcm",
+        "busy": False,
+    }
+    monkeypatch.setattr(
+        gui_module,
+        "_current_sumtally_binding",
+        lambda *_args, **_kwargs: pytest.fail(
+            "cached background readiness must avoid synchronous pair validation"
+        ),
+    )
+
+    assert structure_evaluation_enabled(
+        **common,
+        combined_error_ready=True,
+    ) is True
+    assert structure_evaluation_enabled(
+        **common,
+        combined_error_ready=False,
+    ) is False
+
+
 def test_gui_action_requires_validated_combined_error_evidence(
     tmp_path: Path,
 ) -> None:
@@ -1111,6 +1162,110 @@ def test_gui_result_ticket_rejects_changed_or_changed_back_inputs() -> None:
     guard.invalidate()
 
     assert guard.is_current(ticket, original) is False
+
+
+def test_gui_evidence_readiness_cache_rejects_changed_or_stale_state() -> None:
+    guard = StructureEvidenceReadinessGuard()
+    original = (("dose.out", 1, 100), ("dose_err.out", 1, 100))
+    changed = (("dose.out", 1, 100), ("dose_err.out", 2, 101))
+    ticket = guard.begin(original)
+
+    assert ticket is not None
+    assert guard.begin(original) is None
+    assert guard.finish(ticket, original, True) is True
+    assert guard.cached(original) is True
+    assert guard.cached(changed) is None
+
+    stale_ticket = guard.begin(changed)
+    assert stale_ticket is not None
+    newer_ticket = guard.begin((("dose.out", 2, 102),))
+    assert newer_ticket is not None
+    assert guard.finish(stale_ticket, changed, True) is False
+    assert guard.finish(newer_ticket, newer_ticket[1], False) is True
+    assert guard.cached(newer_ticket[1]) is False
+
+    cleared = StructureEvidenceReadinessGuard()
+    abandoned_ticket = cleared.begin(original)
+    assert abandoned_ticket is not None
+    cleared.invalidate()
+    assert cleared.begin(original) is not None
+    assert cleared.finish(abandoned_ticket, original, True) is False
+
+
+def test_gui_evidence_cache_key_changes_with_bound_error_file(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    error = workspace / "sumtally" / "dose_err.out"
+    error.parent.mkdir(parents=True)
+    (workspace / "segments").mkdir()
+    error.write_bytes(b"initial")
+    receipt = workspace / "analysis" / "sumtally_relative_error_recovery_summary.json"
+    receipt.parent.mkdir()
+    receipt.write_text(
+        json.dumps({"official_pair": {"error_path": "sumtally/dose_err.out"}}),
+        encoding="utf-8",
+    )
+
+    before = gui_module._structure_evidence_cache_key(workspace)
+    error.write_bytes(b"changed and longer")
+
+    assert gui_module._structure_evidence_cache_key(workspace) != before
+
+
+def test_gui_evidence_cache_key_does_not_parse_oversized_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    receipt = workspace / "analysis" / "sumtally_relative_error_recovery_summary.json"
+    receipt.parent.mkdir(parents=True)
+    with receipt.open("wb") as stream:
+        stream.seek(MAX_JSON_BYTES)
+        stream.write(b"x")
+    monkeypatch.setattr(
+        gui_module.json,
+        "loads",
+        lambda *_args, **_kwargs: pytest.fail(
+            "oversized recovery receipt must not be parsed on the GUI thread"
+        ),
+    )
+
+    key = gui_module._structure_evidence_cache_key(workspace)
+
+    assert key
+
+
+def test_gui_evidence_cache_key_guards_receipt_before_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    receipt = workspace / "analysis" / "sumtally_relative_error_recovery_summary.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text("{}", encoding="utf-8")
+    original_prepare = safe_output_module.WorkspaceOutputGuard.prepare
+    original_open = Path.open
+
+    def reject_receipt(self, target, *, create_parents=False):
+        if Path(target) == receipt:
+            raise ValueError("synthetic receipt reparse point")
+        return original_prepare(self, target, create_parents=create_parents)
+
+    def fail_if_receipt_opened(self, *args, **kwargs):
+        if self == receipt:
+            pytest.fail("unguarded recovery receipt was opened on the GUI thread")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        safe_output_module.WorkspaceOutputGuard,
+        "prepare",
+        reject_receipt,
+    )
+    monkeypatch.setattr(Path, "open", fail_if_receipt_opened)
+
+    key = gui_module._structure_evidence_cache_key(workspace)
+    assert key[0][1] == "unsafe_or_unavailable"
 
 
 def test_gui_invalidates_structure_results_for_every_upstream_stage() -> None:
