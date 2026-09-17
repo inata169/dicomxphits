@@ -1360,10 +1360,16 @@ def _current_sumtally_binding(
         from dicomxphits.structure_relative_error import (
             PAIR_SCHEMA_VERSION,
             PAIR_SEMANTICS,
+            reject_supplemental_receipt_with_direct_evidence,
         )
 
         pair_evidence = execution.get("combined_relative_error_evidence")
-        if not isinstance(pair_evidence, Mapping):
+        if isinstance(pair_evidence, Mapping):
+            try:
+                reject_supplemental_receipt_with_direct_evidence(workspace_root)
+            except Exception:
+                return None
+        else:
             try:
                 from dicomxphits.sumtally_relative_error_recovery import (
                     resolved_combined_relative_error_evidence,

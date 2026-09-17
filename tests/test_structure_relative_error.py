@@ -22,7 +22,10 @@ from dicomxphits.gui import (
 )
 from dicomxphits.phits_observation_format import Mesh
 from dicomxphits.prepare_sumtally import run_phits_sumtally
-from dicomxphits.sumtally_relative_error_recovery import MAX_JSON_BYTES
+from dicomxphits.sumtally_relative_error_recovery import (
+    MAX_JSON_BYTES,
+    RECEIPT_RELATIVE_PATH,
+)
 from dicomxphits.structure_relative_error import (
     CONTRACT_VERSION,
     NON_CLINICAL_LABEL,
@@ -567,6 +570,22 @@ def test_retained_validation_tracks_all_proven_source_groups(tmp_path: Path) -> 
         ct_reference_path=reference,
         roi_number=7,
     ) == (binding, pair, ct_evidence, placement)
+
+    receipt = workspace / RECEIPT_RELATIVE_PATH
+    receipt.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(
+        StructureRelativeErrorUnavailable,
+        match="supplemental recovery receipt conflicts with direct evidence",
+    ):
+        module._verify_retained_validation(
+            retained,
+            workspace_root=workspace,
+            rtstruct_path=rtstruct,
+            rtplan_path=rtplan,
+            ct_reference_path=reference,
+            roi_number=7,
+        )
+    receipt.unlink()
 
     added_ct = ct_root / "added.dcm"
     added_ct.write_bytes(b"matching-series race placeholder")

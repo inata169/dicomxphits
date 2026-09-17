@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import dicomxphits.prepare_rtdose as prepare_rtdose
+import dicomxphits.structure_relative_error as structure_relative_error
 import dicomxphits.sumtally_relative_error_recovery as recovery
 from dicomxphits.gui import _current_sumtally_binding
 from dicomxphits.run_segments import phits_error_output_path
@@ -619,6 +621,58 @@ def test_recovery_receipt_enables_only_existing_gui_structure_binding(
     assert _current_sumtally_binding(root, require_combined_error=True) is not None
     execution = json.loads((root / recovery.EXECUTION_RELATIVE_PATH).read_text())
     assert execution["combined_relative_error_evidence"] is None
+
+
+@pytest.mark.parametrize("receipt_kind", ["malformed", "linked"])
+def test_structure_direct_evidence_rejects_fixed_recovery_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    receipt_kind: str,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch)
+    dose = root / "sumtally/dose.out"
+    error = phits_error_output_path(dose)
+    sum_input = root / "sumtally/segment_sum.inp"
+    error.write_bytes((staging / error.name).read_bytes())
+    pair = structure_relative_error.validate_combined_tally_pair(
+        dose_path=dose,
+        error_path=error,
+        sum_input_path=sum_input,
+        expected_geometry=GEOMETRY,
+    )
+    execution_path = root / recovery.EXECUTION_RELATIVE_PATH
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution["combined_relative_error_evidence"] = pair
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    (root / "analysis/segment_preflight.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        prepare_rtdose,
+        "validate_sumtally_manifest_binding",
+        recovery.validate_sumtally_manifest_binding,
+    )
+
+    assert structure_relative_error._current_combined_source(root)[4] == pair
+    assert _current_sumtally_binding(root, require_combined_error=True) is not None
+
+    receipt = root / recovery.RECEIPT_RELATIVE_PATH
+    if receipt_kind == "malformed":
+        receipt.write_text("{}\n", encoding="utf-8")
+    else:
+        target = tmp_path / "linked-recovery-receipt.json"
+        target.write_text("{}\n", encoding="utf-8")
+        try:
+            receipt.symlink_to(target)
+        except OSError:
+            pytest.skip("file symlink creation is unavailable")
+
+    with pytest.raises(
+        structure_relative_error.StructureRelativeErrorUnavailable,
+        match="supplemental recovery receipt conflicts with direct evidence",
+    ):
+        structure_relative_error._current_combined_source(root)
+    assert _current_sumtally_binding(root, require_combined_error=True) is None
 
 
 def test_preview_rejects_non_explicit_or_linked_staging(
