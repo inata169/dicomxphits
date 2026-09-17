@@ -95,7 +95,14 @@ def mesh_from_fields(fields, *, epsout="1"):
 
 def prepared_contract(text, expected_file):
     require(len(text.encode("utf-8")) <= 4 * 1024**2, "resource-limit")
-    require(re.search(r"(?im)^\s*(?:istdev|itall|\$MPI)\b", text) is None)
+    require(re.search(r"(?im)^\s*(?:itall|\$MPI)\b", text) is None)
+    # Public segment generation explicitly writes this default. It permits
+    # observation setup, not acceptance of an output variance mode: both
+    # output records still require independent identity and metadata validation.
+    variance_lines = re.findall(r"(?im)^[ \t]*istdev\b[^\r\n]*", text)
+    require(len(variance_lines) <= 1 and all(
+        re.fullmatch(r"[ \t]*istdev[ \t]*=[ \t]*-1[ \t]*(?:#.*)?", line, re.I)
+        for line in variance_lines))
     runtime = {}
     for name in ("maxcas", "maxbch"):
         values = re.findall(r"(?im)^\s*" + name + r"\s*=\s*(\d+)\s*(?:#.*)?$", text)
@@ -262,6 +269,10 @@ def parse_batch(raw, prepared):
     return remaining
 
 
+LIVE_PARSER = "phits-3.35-windows-openmp-xyz-xy-variance-v2"
+LIVE_PARSERS = frozenset({LIVE_PARSER, "phits-3.35-windows-openmp-xyz-xy-history-v1"})
+
+
 def parse_identity(header, stdout, threads):
     require(len(header) <= MAX_HEADER_BYTES and len(stdout) <= MAX_HEADER_BYTES, "resource-limit")
     text = header.decode("ascii")
@@ -276,10 +287,10 @@ def parse_identity(header, stdout, threads):
         require(ordinal not in seen, "unsupported-identity")
         seen.add(ordinal)
     require(len(seen) == threads, "waiting-identity")
-    return "phits-3.35-windows-openmp-xyz-xy-history-v1"
+    return LIVE_PARSER
 
 
-def parse_tally(raw, expected, role, deadline, *, sumtally=False):
+def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=None):
     require(role in {"dose", "error"})
     require(len(raw) <= MAX_TALLY_BYTES, "resource-limit")
     checkpoint(deadline)
@@ -332,7 +343,10 @@ def parse_tally(raw, expected, role, deadline, *, sumtally=False):
                 value = number(token)
                 require(value > 0)
                 metadata[name] = value
-        require(metadata["istdev"] == 2, "unsupported-variance")
+        require(metadata["istdev"] == 2 or (live_maxbch is not None and metadata["istdev"] == 1),
+                "unsupported-variance")
+        if metadata["istdev"] == 1:
+            require(metadata["resc3"] <= live_maxbch, "batch-budget")
         require(metadata["resc3"].is_integer() and metadata["maxcas"].is_integer())
     pages = body.split(" newpage:\n")
     require(len(pages) == expected.counts[2])
@@ -419,13 +433,14 @@ def isocenter_flat_index(mesh):
     return (z * mesh.counts[1] + (mesh.counts[1] - 1 - y)) * nx + x
 
 
-def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline):
+def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline, *, live_maxbch=None):
     dose, error, _metadata = paired_tally_values(
         dose_raw,
         error_raw,
         mesh,
         maxcas,
         deadline,
+        live_maxbch=live_maxbch,
     )
     index = isocenter_flat_index(mesh)
     require(dose[index] > 0 and error[index] > 0, "isocenter-unavailable")
@@ -435,11 +450,11 @@ def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline):
     return result
 
 
-def paired_tally_values(dose_raw, error_raw, mesh, maxcas, deadline):
+def paired_tally_values(dose_raw, error_raw, mesh, maxcas, deadline, *, live_maxbch=None):
     """Return one completely validated PHITS 3.35 dose/error grid pair."""
 
-    dose, dose_metadata = parse_tally(dose_raw, mesh, "dose", deadline)
-    error, error_metadata = parse_tally(error_raw, mesh, "error", deadline)
+    dose, dose_metadata = parse_tally(dose_raw, mesh, "dose", deadline, live_maxbch=live_maxbch)
+    error, error_metadata = parse_tally(error_raw, mesh, "error", deadline, live_maxbch=live_maxbch)
     require(
         dose_metadata == error_metadata
         and dose_metadata["maxcas"] == maxcas,

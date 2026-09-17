@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dicomxphits.phits_observation_format import (
-    MAX_HEADER_BYTES, MAX_TALLY_BYTES, ObservationError, checkpoint,
+    LIVE_PARSERS, MAX_HEADER_BYTES, MAX_TALLY_BYTES, ObservationError, checkpoint,
     paired_isocenter_error, parse_batch, parse_identity, prepared_contract,
     require,
 )
@@ -172,7 +172,8 @@ class Observer:
                 dose, ds = read_snapshot(self.staging, self.dose_path, MAX_TALLY_BYTES, deadline)
                 error, es = read_snapshot(self.staging, self.error_path, MAX_TALLY_BYTES, deadline)
                 result = paired_isocenter_error(
-                    dose, error, self.mesh, self.runtime["maxcas"], deadline)
+                    dose, error, self.mesh, self.runtime["maxcas"], deadline,
+                    live_maxbch=self.runtime["maxbch"])
                 self.error.offer((ds, es), result, time.monotonic())
             except (OSError, ValueError, UnicodeError) as exc:
                 self.error.reject(reason_for(exc))
@@ -296,7 +297,7 @@ class Presentation:
                 require(isinstance(record, dict) and set(record) == {"schema_version", "binding", "parser", "published_monotonic", "batch", "error", "sequence"})
                 require(record.get("schema_version") == SCHEMA and record.get("binding") == binding)
                 require(type(record.get("sequence")) is int and record["sequence"] >= max(1, self.sequence))
-                require(record.get("parser") in {None, "phits-3.35-windows-openmp-xyz-xy-history-v1"})
+                require(record.get("parser") is None or record.get("parser") in LIVE_PARSERS)
                 require(type(record.get("published_monotonic")) in {int, float} and math_finite(record["published_monotonic"]) and 0 <= record["published_monotonic"] <= now)
                 require(record["sequence"] != self.sequence or record == self.record)
                 self.record, self.sequence = record, record["sequence"]
@@ -327,7 +328,7 @@ def format_record(record, now):
             parts.append(f"{kind}: {state}")
             continue
         age = channel["sample_age_seconds"]
-        require(record["parser"] == "phits-3.35-windows-openmp-xyz-xy-history-v1")
+        require(record["parser"] in LIVE_PARSERS)
         require(isinstance(channel["sample_utc"], str) and len(channel["sample_utc"]) < 64)
         sampled = datetime.fromisoformat(channel["sample_utc"])
         require(sampled.tzinfo is not None)
