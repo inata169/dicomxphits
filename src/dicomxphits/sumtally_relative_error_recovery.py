@@ -321,7 +321,8 @@ def _current_context(
             include_path.relative_to(sum_input.parent)
         except ValueError as exc:
             raise SumtallyRelativeErrorRecoveryUnavailable(
-                "a recorded Sumtally include is outside its execution directory"
+                "a recorded Sumtally include outside its execution directory "
+                "has no retained staging evidence"
             ) from exc
         _raw, current_sha256 = _stable_bytes(
             include_path,
@@ -626,7 +627,8 @@ def _build_preview(
             relative = current.relative_to(sum_input.parent)
         except ValueError as exc:
             raise SumtallyRelativeErrorRecoveryUnavailable(
-                "a generated Sumtally include is outside its execution directory"
+                "a generated Sumtally include outside its execution directory "
+                "has no retained staging evidence"
             ) from exc
         retained = staging / relative
         _current_raw, current_sha256 = _stable_bytes(

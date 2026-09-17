@@ -115,7 +115,12 @@ def _tally(values: list[float], *, role: str = "dose") -> bytes:
     return ("\n".join(rows) + "\n").encode("ascii")
 
 
-def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+def _workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    workspace_include: bool = False,
+) -> tuple[Path, Path]:
     root = tmp_path / "workspace"
     analysis = root / "analysis"
     sumtally = root / "sumtally"
@@ -129,9 +134,15 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
     manifest_path = segments / "segment_manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     sum_input = sumtally / "segment_sum.inp"
+    external_include = root / "CTmaterial.dat"
+    if workspace_include:
+        external_include.write_text("synthetic workspace include\n", encoding="utf-8")
     sum_input.write_text(_deck(), encoding="utf-8")
     sumtally_input = sumtally / "sumtally.inp"
-    sumtally_input.write_text("sumtally start\nisumtally = 2\nsumtally end\n", encoding="utf-8")
+    sumtally_text = "sumtally start\nisumtally = 2\nsumtally end\n"
+    if workspace_include:
+        sumtally_text += "infl:{../CTmaterial.dat}\n"
+    sumtally_input.write_text(sumtally_text, encoding="utf-8")
     dose = sumtally / "dose.out"
     dose.write_bytes(_tally([10.0, 8.0, 6.0, 4.0]))
 
@@ -145,7 +156,20 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
         "sumtally_input_sha256": file_sha256(sumtally_input),
         "segment_output_evidence": [],
         "wrapper_include_evidence": [
-            {"path": str(sumtally_input.resolve()), "sha256": file_sha256(sumtally_input)}
+            {
+                "path": str(sumtally_input.resolve()),
+                "sha256": file_sha256(sumtally_input),
+            },
+            *(
+                [
+                    {
+                        "path": str(external_include.resolve()),
+                        "sha256": file_sha256(external_include),
+                    }
+                ]
+                if workspace_include
+                else []
+            ),
         ],
         "outputs": {
             "sum_input": str(sum_input.resolve()),
@@ -194,6 +218,22 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, P
         _tally([0.1, 0.2, 0.3, 0.4], role="error")
     )
     return root, staging
+
+
+def test_preview_rejects_workspace_include_without_retained_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, staging = _workspace(tmp_path, monkeypatch, workspace_include=True)
+
+    with pytest.raises(
+        recovery.SumtallyRelativeErrorRecoveryUnavailable,
+        match="outside its execution directory has no retained staging evidence",
+    ):
+        recovery.preview_sumtally_relative_error_recovery(root, staging)
+
+    assert not (root / "sumtally/dose_err.out").exists()
+    assert not (root / recovery.RECEIPT_RELATIVE_PATH).exists()
 
 
 def test_preview_and_apply_publish_only_error_and_receipt(
