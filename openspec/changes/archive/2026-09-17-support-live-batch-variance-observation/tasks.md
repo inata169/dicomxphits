@@ -13,7 +13,7 @@
 - [x] Run focused and full public checks; review the final diff.
 - [x] Record whether separately authorized real-run observation was performed.
 - [x] Promote accepted deltas, archive this completed change, and validate the tree.
-- [ ] Create a reviewable PR without private paths, records, or calculation data.
+- [x] Create a reviewable PR without private paths, records, or calculation data (draft PR #77).
 
 ## Validation notes
 
