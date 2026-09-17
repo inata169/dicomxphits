@@ -220,33 +220,15 @@ def _workspace(
     return root, staging
 
 
-def test_preview_accepts_recorded_workspace_include_used_in_place(
+def test_preview_rejects_workspace_include_without_retained_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root, staging = _workspace(tmp_path, monkeypatch, workspace_include=True)
-
-    preview = recovery.preview_sumtally_relative_error_recovery(root, staging)
-
-    assert preview["status"] == "eligible"
-    assert {
-        (record["current_path"], record["retained_path"])
-        for record in preview["plan"]["retained_inputs"]
-    } >= {("CTmaterial.dat", "CTmaterial.dat")}
-
-
-def test_preview_rejects_changed_workspace_include_used_in_place(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    root, staging = _workspace(tmp_path, monkeypatch, workspace_include=True)
-    (root / "CTmaterial.dat").write_text(
-        "changed workspace include\n", encoding="utf-8"
-    )
 
     with pytest.raises(
         recovery.SumtallyRelativeErrorRecoveryUnavailable,
-        match="generated Sumtally include does not match recorded evidence",
+        match="outside its execution directory has no retained staging evidence",
     ):
         recovery.preview_sumtally_relative_error_recovery(root, staging)
 

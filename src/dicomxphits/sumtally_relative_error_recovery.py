@@ -317,6 +317,13 @@ def _current_context(
     )
     for record in recorded_includes:
         include_path = _workspace_path(root, record["path"], guard=guard)
+        try:
+            include_path.relative_to(sum_input.parent)
+        except ValueError as exc:
+            raise SumtallyRelativeErrorRecoveryUnavailable(
+                "a recorded Sumtally include outside its execution directory "
+                "has no retained staging evidence"
+            ) from exc
         _raw, current_sha256 = _stable_bytes(
             include_path,
             guard=guard,
@@ -618,14 +625,12 @@ def _build_preview(
     for current in [sum_input, *includes]:
         try:
             relative = current.relative_to(sum_input.parent)
-        except ValueError:
-            # The runner deliberately leaves workspace-contained dependencies
-            # outside the execution directory in place.  Because each staging
-            # directory is a sibling of that directory, the same relative
-            # include resolves to the original guarded workspace file.
-            retained = current
-        else:
-            retained = staging / relative
+        except ValueError as exc:
+            raise SumtallyRelativeErrorRecoveryUnavailable(
+                "a generated Sumtally include outside its execution directory "
+                "has no retained staging evidence"
+            ) from exc
+        retained = staging / relative
         _current_raw, current_sha256 = _stable_bytes(
             current,
             guard=guard,
