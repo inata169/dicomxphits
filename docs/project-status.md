@@ -16,7 +16,7 @@ For the v1.0.1 release completion, see the
 [`2026-08-05 development handoff`](development-handoff-2026-08-05.md). For the
 Windows launcher correction and manual evidence record, see the
 [`2026-08-06 development handoff`](development-handoff-2026-08-06.md).
-For the current restart boundary after the public-feasibility documentation
+For the historical restart boundary after the public-feasibility documentation
 review and pull request #30 closeout, see the
 [`2026-08-07 development handoff`](development-handoff-2026-08-07.md).
 For the current aggregate account of the bounded non-patient demonstrations,
@@ -34,16 +34,33 @@ post-merge stopping boundary, see the
 For the v1.0.3 publication boundary and the decision to publish without a
 Windows offline ZIP, see the
 [`v1.0.3 release notes`](release-notes-v1.0.3.md).
+For the current experimental release and its validation limits, see the
+[v1.1.0 release notes](release-notes-v1.1.0.md).
 
 ## Current baseline
 
-- Public release: [`v1.0.3`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.3)
-- Previous public release: `v1.0.2`
-- Release state: v1.0.3 published on 2026-08-19 without a custom offline asset
+- Public release: [`v1.1.0`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0)
+- Previous public release: `v1.0.3`
+- Release state: v1.1.0 published on 2026-09-18 for experimental evaluation,
+  with source archives only and no custom offline asset
 - Public workflow scope: documented fixed-field 3D-CRT
-- Release tag and commit: `v1.0.3` at
-  `63dea40cdbced8c85d0d50c8f92aeb513ff78622` (2026-08-19)
+- Release tag and commit: `v1.1.0` at
+  `12ea1b2ff65fac2fde276624ea692327d5fa710d` (2026-09-18)
+- Release-preparation pull request: [#81](https://github.com/inata169/dicomxphits/pull/81)
+- Validation: final preparation suite 1448 passed, 14 skipped; bounded synthetic
+  GUI checks passed; Codex re-review found no major issues; final-head and
+  release-commit Ubuntu/Windows CI passed
+- Stability: real external-tool stability, final-version PHITS/controller E2E
+  execution and eight-thread performance remain unverified. Preserve inputs
+  and results and evaluate in a separate non-patient test workspace.
 - Published custom asset: none
+
+## Historical release records
+
+The v1.0.2 and v1.0.3 records below remain historical evidence; they do not
+establish v1.1.0 stability or external-tool acceptance. The current release
+baseline above was reviewed on 2026-09-18.
+
 - Withdrawn historical v1.0.2 custom asset:
   `dicomxphits-offline-win64-1.0.2.zip` (removed from GitHub on 2026-08-19)
 - Historical v1.0.2 asset SHA-256:
@@ -199,7 +216,7 @@ public-tree audit passes 138 tracked files.
 
 The following chronology is retained as historical evidence. Its references to
 then-current specification counts and active changes are superseded by the
-v1.0.3 current baseline and release closeout above.
+v1.1.0 current baseline above; prior release closeouts remain historical.
 
 The completion state for pull request #8 was validated locally on Windows
 with:
@@ -405,6 +422,11 @@ paragraph records the earlier boundary rather than the current OpenSpec state.
 
 ## Human-decision queue
 
+The human approved v1.1.0 source-only publication at the release commit above.
+Publication is complete. The Experimental documentation clarification does not
+authorize new calculations, physical validation or a public offline asset.
+The following v1.0.3 decisions are retained as historical context.
+
 The human approved v1.0.3 release preparation after reporting the bounded GUI
 release gate passed. Pull request #48 was reviewed and merged. The human then
 separately approved the v1.0.3 tag, GitHub Release publication without an
@@ -433,17 +455,19 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, branch, clean status, remote, recent history,
    and tags before making changes.
-3. Confirm that `main` contains v1.0.3 release commit
-   `63dea40cdbced8c85d0d50c8f92aeb513ff78622`, that annotated tag `v1.0.3`
+3. Confirm that `main` contains v1.1.0 release commit
+   `12ea1b2ff65fac2fde276624ea692327d5fa710d`, that annotated tag `v1.1.0`
    dereferences to that exact commit, and that historical tag `v1.0.2` still
    dereferences to `efb0dace568fbcb12019f3d320a468dcfb446e34`.
 4. Read this document, the
+   [v1.1.0 release notes](release-notes-v1.1.0.md), the historical
    [v1.0.3 release notes](release-notes-v1.0.3.md), the
    [v1.0.2 release closeout](development-handoff-2026-08-15-v1.0.2.md), the
    [2026-08-17 development handoff](development-handoff-2026-08-17.md), and
    [2026-08-18 development handoff](development-handoff-2026-08-18.md), then
    read the [workflow stage guide](workflow_stages.md) and verify that their
-   baseline still matches `main`.
+   current baseline still matches `main`; do not treat dated historical
+   handoffs as the current release authority.
 5. Confirm current OpenSpec specifications and active-change state before
    proposing any new behavior. Do not recreate an unapproved proposal by
    inference.

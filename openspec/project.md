@@ -9,14 +9,18 @@ certification software.
 
 ## Current Public Release
 
-- The current public release is `v1.0.3`, tagged at commit
-  `63dea40cdbced8c85d0d50c8f92aeb513ff78622`.
-- No custom Windows offline asset is published for v1.0.3. The v1.0.2 custom
+- The current public release is `v1.1.0`, tagged at commit
+  `12ea1b2ff65fac2fde276624ea692327d5fa710d` (2026-09-18).
+- v1.1.0 is experimental education-and-research software. Automated tests and
+  bounded synthetic GUI checks passed, but stable real external-tool operation
+  and final-version PHITS/controller end-to-end execution remain unverified.
+- No custom Windows offline asset is published for v1.1.0. The v1.0.2 custom
   offline asset was withdrawn and removed; its historical identity remains
   documented in `docs/release-notes-v1.0.2.md`.
 - Release publication does not expand the normative public scope below. The
   accepted contracts remain under `openspec/specs/`, and no active OpenSpec
-  change remains after the v1.0.3 closeout.
+  change remains at the v1.1.0 publication checkpoint. Historical v1.0.3
+  acceptance evidence is not v1.1.0 external-tool validation.
 
 ## Technology
 

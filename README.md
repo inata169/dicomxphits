@@ -5,6 +5,18 @@ fixed-field 3D-CRT PHITS inputs from DICOM RT Plans and for controlling the
 explicit PHITS, Sumtally, RTDOSE, coordinate-correction, and external GPR
 handoff stages.
 
+> **Status: Experimental — v1.1.0**
+>
+> v1.1.0 is available for education and research evaluation.
+> It has passed automated tests and bounded synthetic GUI checks,
+> but stable operation across real external-tool workflows has not
+> been established. The final v1.1.0 PHITS/controller end-to-end
+> workflow remains unverified.
+>
+> Unexpected failures may occur. Preserve existing inputs and results,
+> and evaluate this version in a separate non-patient test workspace.
+> This software is not validated for clinical use.
+
 Within its documented non-patient phantom scope, this repository is a working
 public implementation of that complete chain rather than only a proposal that
 the interfaces might be connected. It provides a bounded engineering
@@ -43,16 +55,17 @@ All paths retain the same education-and-research-only boundary stated above.
 
 ## Status
 
-Version 1.1.0 is in release preparation and includes standalone public adapters
-for strict 3D-CRT workspace preparation, PHITS segment execution, Sumtally
-generation and execution,
-RTDOSE conversion and coordinate correction, and an optional external
-GPR-comparing handoff. See the [v1.1.0 release notes](docs/release-notes-v1.1.0.md)
+Version 1.1.0 is published for experimental evaluation and includes standalone
+public adapters for strict 3D-CRT workspace preparation, PHITS segment execution,
+Sumtally generation and execution, RTDOSE conversion and coordinate correction,
+and an optional external GPR-comparing handoff. See the
+[published v1.1.0 release notes](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0)
 for the changes since v1.0.3 and the current validation limits. The package and
-GUI About dialog identify this source version as 1.1.0; publication is pending.
+GUI About dialog identify this source version as 1.1.0. Publication does not
+establish stable operation across real external-tool workflows.
 
 The current public release is
-[`v1.0.3`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.3). It is
+[`v1.1.0`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0). It is
 published without a custom Windows offline ZIP. The v1.0.2 custom offline ZIP
 was withdrawn and removed after a later endpoint-protection compatibility
 failure and should not be used. The v1.0.2 tag, GitHub Release, source archives,
@@ -117,7 +130,7 @@ is not digitally signed, keep the machine or organization execution policy in
 place and use `run_gui_venv.cmd`. Neither launcher creates an environment,
 installs dependencies, or reuses the Dev Container's Linux Python. See
 [Guided Desktop GUI](#guided-desktop-gui) for tool setup and case-path behavior.
-For the complete v1.0.x walkthrough, see the
+For the complete v1 walkthrough, see the
 [GUI User Guide](docs/gui-user-guide.md).
 
 After the GUI opens:
@@ -130,7 +143,8 @@ After the GUI opens:
 
 ## Windows Offline Installation
 
-The v1.0.3 GitHub Release does not include a public Windows offline ZIP. A
+The v1.1.0 GitHub Release provides source archives only, with no public Windows
+offline ZIP. The earlier v1.0.3 release also had no public offline ZIP. A
 locally built v1.0.3 bundle passed bounded human installation and GUI-startup
 checks, but behavior-based endpoint protection blocked the verified
 uninstaller. The candidate was therefore not accepted as a public release
@@ -143,7 +157,7 @@ v1.0.2 tag, GitHub Release, and source archives remain available, but the custom
 ZIP should not be used or redistributed.
 
 The repository retains the bundle builder for maintainer evaluation; its
-output is not a v1.0.3 public release artifact. A future public offline asset
+output is not a validated public release artifact. A future public offline asset
 requires a newly reviewed exact-HEAD bundle and a successful complete
 install/launch/verified-uninstall lifecycle under the intended endpoint
 protection environment.
