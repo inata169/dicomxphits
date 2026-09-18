@@ -2366,6 +2366,10 @@ def _build_gui() -> int:
     structure_evidence_guard = StructureEvidenceReadinessGuard()
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
+    sumtally_readiness_generation = 0
+    sumtally_readiness_active = False
+    sumtally_readiness_pending: tuple[int, GuiConfig] | None = None
+    sumtally_readiness_closed = False
     recovery_inspection: WorkspaceRecoveryInspection | None = None
     tool_profile_resolution = resolve_tool_profile(defaults)
     active_tool_profile_mode = values["tool_profile_mode"].get()
@@ -2479,7 +2483,46 @@ def _build_gui() -> int:
             and phits_preflight["phase"] in {"preparing", "verifying"}
             and progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path))
 
+    def start_sumtally_readiness() -> None:
+        nonlocal sumtally_readiness_active, sumtally_readiness_pending
+        if sumtally_readiness_closed or sumtally_readiness_active or sumtally_readiness_pending is None:
+            return
+        ticket, config = sumtally_readiness_pending
+        sumtally_readiness_pending = None
+        sumtally_readiness_active = True
+
+        def finish(ready: bool) -> None:
+            nonlocal sumtally_readiness_active
+            sumtally_readiness_active = False
+            if sumtally_readiness_closed:
+                return
+            if (ticket == sumtally_readiness_generation
+                and execution_guard.active_stage is None
+                and not existing_case_mode.get()
+                and config == config_from_entries()
+                and tool_profile_resolution.ready_for_stage("run_sumtally")):
+                button = action_buttons.get("run_sumtally")
+                if button is not None:
+                    button.state(["!disabled"] if ready else ["disabled"])
+            start_sumtally_readiness()
+
+        def worker() -> None:
+            try:
+                ready = run_action_ready(config, "run_sumtally")
+            except Exception:
+                ready = False
+            if not sumtally_readiness_closed:
+                try:
+                    root.after(0, lambda: finish(ready))
+                except (RuntimeError, tk.TclError):
+                    pass  # The owned GUI may have closed while reading evidence.
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def refresh_action_button_states() -> None:
+        nonlocal sumtally_readiness_generation, sumtally_readiness_pending
+        sumtally_readiness_generation += 1
+        sumtally_readiness_pending = None
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
         sumtally_ready = current_structure_binding_ready()
@@ -2547,8 +2590,12 @@ def _build_gui() -> int:
                         allow_overwrite=overwrite.get(),
                     )
                 )
-                if stage_key in {"run_segments", "run_sumtally"}:
+                if stage_key == "run_segments":
                     enabled = enabled and run_action_ready(config_from_entries(), stage_key)
+                elif stage_key == "run_sumtally":
+                    if enabled and not existing_case_mode.get():
+                        sumtally_readiness_pending = (sumtally_readiness_generation, config_from_entries())
+                    enabled = False
                 if stage_key == "generate_sumtally":
                     workspace_text = values["workspace_root"].get().strip()
                     invocation_is_current = True
@@ -2589,6 +2636,7 @@ def _build_gui() -> int:
                 }:
                     enabled = False
             button.state(["!disabled"] if enabled else ["disabled"])
+        start_sumtally_readiness()
 
     overwrite.trace_add(
         "write",
@@ -4731,6 +4779,7 @@ def _build_gui() -> int:
     refresh_action_button_states()
 
     def close_gui() -> None:
+        nonlocal sumtally_readiness_closed, sumtally_readiness_pending
         if execution_guard.active_stage is not None:
             messagebox.showwarning(
                 "Stage running",
@@ -4739,6 +4788,8 @@ def _build_gui() -> int:
             return
         if refresh_tool_profile().ready:
             save_local_settings()
+        sumtally_readiness_closed = True
+        sumtally_readiness_pending = None
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", close_gui)

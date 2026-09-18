@@ -3,6 +3,8 @@
 import ast
 import inspect
 import json
+import queue
+import threading
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -80,14 +82,25 @@ class Value:
         self.value = value
 
 
-def callback(name, state):
+def callbacks(names, state):
     """Execute a real nested callback with synthetic closure variables, without Tk."""
     tree = ast.parse(inspect.getsource(gui._build_gui))
-    node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
-    node.body = [ast.Global(names=n.names) if isinstance(n, ast.Nonlocal) else n for n in node.body]
+    nodes = [next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+             for name in names]
+
+    class SyntheticClosure(ast.NodeTransformer):
+        def visit_Nonlocal(self, node):
+            return ast.Global(names=node.names)
+
+    nodes = [SyntheticClosure().visit(node) for node in nodes]
     namespace = {**vars(gui), **state}
-    code = compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), "<gui-callback>", "exec")
+    code = compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), "<gui-callback>", "exec")
     exec(code, namespace)
+    return namespace
+
+
+def callback(name, state):
+    namespace = callbacks([name], state)
     return namespace[name]
 
 
@@ -127,7 +140,98 @@ def test_run_buttons_use_readiness_and_busy_gates(ready, busy):
         "overwrite": Value(False), "existing_case_mode": Value(False),
         "action_buttons": actions, "config_from_entries": lambda: None,
         "run_action_ready": lambda *args: ready,
+        "sumtally_readiness_generation": 0, "sumtally_readiness_pending": None,
+        "start_sumtally_readiness": lambda: None,
     })
     refresh()
-    assert all(state == (["!disabled"] if ready and not busy else ["disabled"])
-               for state in states.values())
+    assert states["run_segments"] == (["!disabled"] if ready and not busy else ["disabled"])
+    assert states["run_sumtally"] == ["disabled"]  # Pending background validation.
+
+
+def readiness_callbacks(check, thread_module=threading):
+    states, scheduled = {}, queue.Queue()
+    selection = Value("workspace-a")
+    state = {
+        "execution_guard": SimpleNamespace(active_stage=None),
+        "current_rtdose_state": lambda: gui.RTDOSE_NOT_PREPARED,
+        "current_structure_binding_ready": lambda: False,
+        "structure_frame": None, "nav_status": {"rtdose": Value("Not run")},
+        "tool_profile_resolution": SimpleNamespace(ready_for_stage=lambda key: True),
+        "overwrite": Value(False), "existing_case_mode": Value(False),
+        "action_buttons": {"run_sumtally": SimpleNamespace(state=lambda value: states.update(button=value))},
+        "config_from_entries": selection.get, "run_action_ready": check,
+        "sumtally_readiness_generation": 0, "sumtally_readiness_pending": None,
+        "sumtally_readiness_active": False, "sumtally_readiness_closed": False,
+        "root": SimpleNamespace(after=lambda delay, fn: scheduled.put(fn)),
+        "threading": thread_module,
+    }
+    namespace = callbacks(["refresh_action_button_states", "start_sumtally_readiness"], state)
+    return namespace, states, scheduled, selection
+
+
+def test_sumtally_scan_runs_off_event_thread_and_returns_before_read_completes():
+    started, release = threading.Event(), threading.Event()
+    event_thread = threading.get_ident()
+
+    def blocked_scan(*args):
+        assert threading.get_ident() != event_thread
+        started.set()
+        assert release.wait(5)
+        return True
+
+    ns, states, scheduled, _ = readiness_callbacks(blocked_scan)
+    try:
+        ns["refresh_action_button_states"]()
+        assert started.wait(2)
+        assert states["button"] == ["disabled"]
+        assert scheduled.empty()
+    finally:
+        release.set()
+    scheduled.get(timeout=5)()
+    assert states["button"] == ["!disabled"]
+
+
+@pytest.mark.parametrize("change", ["workspace", "busy", "existing_case", "closed", "failure", "settings"])
+def test_background_readiness_rejects_stale_results_and_coalesces_requests(change):
+    workers, calls = [], []
+    fake_threads = SimpleNamespace(Thread=lambda *, target, daemon: SimpleNamespace(start=lambda: workers.append(target)))
+
+    def scan(config, stage):
+        calls.append(config)
+        if change == "failure":
+            raise OSError("synthetic unavailable evidence")
+        return True
+
+    ns, states, scheduled, selection = readiness_callbacks(scan, fake_threads)
+    refresh = ns["refresh_action_button_states"]
+    refresh()
+    if change == "workspace":
+        selection.set("workspace-b")
+        refresh()
+        selection.set("workspace-c")
+        refresh()
+    elif change == "busy":
+        ns["execution_guard"].active_stage = "run_segments"
+        refresh()
+    elif change == "existing_case":
+        ns["existing_case_mode"].set(True)
+        refresh()
+    elif change == "closed":
+        ns["sumtally_readiness_closed"] = True
+    elif change == "settings":
+        selection.set("changed-without-refresh")
+    assert len(workers) == 1
+    workers.pop(0)()
+    if change == "closed":
+        assert scheduled.empty()
+    else:
+        scheduled.get_nowait()()
+    assert states["button"] == ["disabled"]
+    if change == "workspace":
+        assert len(workers) == 1
+        workers.pop(0)()
+        scheduled.get_nowait()()
+        assert calls == ["workspace-a", "workspace-c"]
+        assert states["button"] == ["!disabled"]
+    else:
+        assert not workers
