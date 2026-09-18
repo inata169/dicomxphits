@@ -4044,6 +4044,7 @@ def _build_gui() -> int:
     def finish_stage_error(spec: StageSpec, message: str, *, validation: bool) -> None:
         if spec.key == "run_segments" and execution_guard.active_stage == "run_segments":
             if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+                phits_stop_status.set(terminal_stop_hint(None))
                 append("Previous workspace invocation failed; inspect that workspace for details.", "error")
                 set_busy(None)
                 return
@@ -4075,6 +4076,7 @@ def _build_gui() -> int:
     def finish_stage_success(spec: StageSpec, result: StageResult) -> None:
         status = _stage_status(result)
         if spec.key == "run_segments" and not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+            phits_stop_status.set(terminal_stop_hint(None))
             append("Previous workspace invocation ended; inspect the selected workspace for its status.")
             set_busy(None)
             return

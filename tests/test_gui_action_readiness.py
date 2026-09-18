@@ -125,6 +125,28 @@ def test_terminal_callback_clears_previous_stop_available_hint(status, matches):
     assert "is available" not in hint.get()
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_workspace_mismatch_terminal_exits_clear_old_stop_hint(failed):
+    hint = Value("Stop after current segment is available.")
+    busy = []
+    finish = callback("finish_stage_error" if failed else "finish_stage_success", {
+        "phits_stop_status": hint,
+        "execution_guard": SimpleNamespace(active_stage="run_segments"),
+        "values": {"workspace_root": Value("new-workspace")},
+        "phits_progress_summary_path": Path("old-workspace/analysis/segment_execution_summary.json"),
+        "progress_workspace_matches": lambda *args: False,
+        "_stage_status": lambda result: "success", "append": lambda *args: None,
+        "set_busy": busy.append,
+    })
+    spec = gui.stage_by_key("run_segments")
+    if failed:
+        finish(spec, "synthetic failure", validation=False)
+    else:
+        finish(spec, None)
+    assert hint.get() == gui.terminal_stop_hint(None)
+    assert busy == [None]
+
+
 @pytest.mark.parametrize("ready", [False, True])
 @pytest.mark.parametrize("busy", [False, True])
 def test_run_buttons_use_readiness_and_busy_gates(ready, busy):
