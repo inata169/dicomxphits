@@ -150,7 +150,7 @@ def test_run_buttons_use_readiness_and_busy_gates(ready, busy):
 
 def readiness_callbacks(check, thread_module=threading):
     states, scheduled = {}, queue.Queue()
-    selection = Value("workspace-a")
+    selection = Value(SimpleNamespace(workspace_root="workspace-a", phits_executable_path="synthetic-phits", allow_overwrite=False))
     state = {
         "execution_guard": SimpleNamespace(active_stage=None),
         "current_rtdose_state": lambda: gui.RTDOSE_NOT_PREPARED,
@@ -197,7 +197,7 @@ def test_background_readiness_rejects_stale_results_and_coalesces_requests(chang
     fake_threads = SimpleNamespace(Thread=lambda *, target, daemon: SimpleNamespace(start=lambda: workers.append(target)))
 
     def scan(config, stage):
-        calls.append(config)
+        calls.append(config.workspace_root)
         if change == "failure":
             raise OSError("synthetic unavailable evidence")
         return True
@@ -206,9 +206,9 @@ def test_background_readiness_rejects_stale_results_and_coalesces_requests(chang
     refresh = ns["refresh_action_button_states"]
     refresh()
     if change == "workspace":
-        selection.set("workspace-b")
+        selection.set(SimpleNamespace(**{**vars(selection.get()), "workspace_root": "workspace-b"}))
         refresh()
-        selection.set("workspace-c")
+        selection.set(SimpleNamespace(**{**vars(selection.get()), "workspace_root": "workspace-c"}))
         refresh()
     elif change == "busy":
         ns["execution_guard"].active_stage = "run_segments"
@@ -219,7 +219,7 @@ def test_background_readiness_rejects_stale_results_and_coalesces_requests(chang
     elif change == "closed":
         ns["sumtally_readiness_closed"] = True
     elif change == "settings":
-        selection.set("changed-without-refresh")
+        selection.set(SimpleNamespace(**{**vars(selection.get()), "phits_executable_path": "changed-without-refresh"}))
     assert len(workers) == 1
     workers.pop(0)()
     if change == "closed":
@@ -235,3 +235,24 @@ def test_background_readiness_rejects_stale_results_and_coalesces_requests(chang
         assert states["button"] == ["!disabled"]
     else:
         assert not workers
+
+
+@pytest.mark.parametrize("changed", ["timeout", "workspace", "executable", "overwrite"])
+def test_sumtally_result_ignores_unrelated_nan_but_binds_launch_settings(tmp_path, changed):
+    workers = []
+    fake_threads = SimpleNamespace(Thread=lambda *, target, daemon: SimpleNamespace(start=lambda: workers.append(target)))
+    ns, states, scheduled, selection = readiness_callbacks(lambda *args: True, fake_threads)
+    config = base_config(tmp_path)
+    selection.set(config)
+    # Parsing an invalid CT2PHITS timeout produces a fresh NaN each time.
+    ns["config_from_entries"] = lambda: replace(selection.get(), ct2phits_timeout_seconds=float("nan"))
+    ns["refresh_action_button_states"]()
+    if changed == "workspace":
+        selection.set(replace(config, workspace_root="changed"))
+    elif changed == "executable":
+        selection.set(replace(config, phits_executable_path="changed"))
+    elif changed == "overwrite":
+        selection.set(replace(config, allow_overwrite=True))
+    workers.pop(0)()
+    scheduled.get_nowait()()
+    assert states["button"] == (["!disabled"] if changed == "timeout" else ["disabled"])

@@ -658,6 +658,11 @@ def run_action_ready(config: GuiConfig, stage_key: str) -> bool:
     return True
 
 
+def sumtally_readiness_selection(config: GuiConfig) -> tuple[str, str, bool]:
+    """Only Sumtally launch settings bind a background readiness result."""
+    return config.workspace_root, config.phits_executable_path, config.allow_overwrite
+
+
 def terminal_stop_hint(summary: Mapping[str, object] | None) -> str:
     status = summary.get("stage_status") if summary is not None else None
     if status == "success":
@@ -2499,7 +2504,7 @@ def _build_gui() -> int:
             if (ticket == sumtally_readiness_generation
                 and execution_guard.active_stage is None
                 and not existing_case_mode.get()
-                and config == config_from_entries()
+                and sumtally_readiness_selection(config) == sumtally_readiness_selection(config_from_entries())
                 and tool_profile_resolution.ready_for_stage("run_sumtally")):
                 button = action_buttons.get("run_sumtally")
                 if button is not None:
