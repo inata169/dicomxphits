@@ -610,7 +610,7 @@ def validate_stage(
     if (
         spec.fail_on_existing_summary
         and summary_path.exists()
-        and not config.allow_overwrite
+        and (spec.key == "run_segments" or not config.allow_overwrite)
         and not (spec.key == "run_segments" and config.retry_source_sha256)
     ):
         existing_summary = read_summary(summary_path)

@@ -1105,17 +1105,22 @@ def test_rectangular_prepare_requires_non_patient_ct_confirmation(tmp_path: Path
     assert calls == []
 
 
-def test_existing_stage_summary_does_not_start_subprocess(tmp_path: Path) -> None:
+@pytest.mark.parametrize("allow_overwrite", [False, True])
+@pytest.mark.parametrize("summary_text", ['{}', '{"stage_status": "success"}'])
+def test_existing_stage_summary_does_not_start_subprocess(
+    tmp_path: Path, allow_overwrite: bool, summary_text: str
+) -> None:
     calls: list[list[str]] = []
     workspace = write_dir(tmp_path / "workspace")
     summary = workspace / stage_by_key("run_segments").summary_relative_path
-    write_file(summary, "{}")
-    config = base_config(tmp_path, workspace=workspace)
+    write_file(summary, summary_text)
+    config = base_config(tmp_path, workspace=workspace, allow_overwrite=allow_overwrite)
 
     with pytest.raises(GuiValidationError, match="stage output already exists"):
         run_stage(config, "run_segments", runner=lambda cmd, **kwargs: calls.append(cmd))
 
     assert calls == []
+    assert summary.read_text(encoding="utf-8") == summary_text
 
 
 def test_segment_stage_uses_run_segments_adapter_and_reads_summary(tmp_path: Path) -> None:
