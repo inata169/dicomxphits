@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import sys
@@ -187,9 +188,13 @@ class ControllerPipe:
         self.cancel_request_id = None
 
     def run(self, command, *, cwd, **kwargs):
+        # Retry preview hashes Python's environment. Native libraries (notably
+        # Tcl/Tk on Windows) can change the inherited process environment without
+        # updating os.environ; explicitly pass the same mapping to the controller.
+        environment = os.environ.copy()
         process = subprocess.Popen([*command, "--control-stdin", "--preflight-nonce", self.nonce], cwd=cwd,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace", shell=False)
+            text=True, encoding="utf-8", errors="replace", shell=False, env=environment)
         self.process = process
         output = ["", ""]
 
