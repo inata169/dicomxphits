@@ -165,3 +165,21 @@ def test_live_exact_integer_exponent_spelling_remains_supported():
     _, _, metadata = paired_tally_values(altered("dose"), altered("error"),
                                          MESH, 10, time.monotonic()+2, live_maxbch=10)
     assert metadata["istdev"] == 1 and metadata["resc3"] == 10
+
+
+@pytest.mark.parametrize("weight,accepted", [
+    (b"1.00000000000000001E+01", False),
+    (b"10.0000", True),
+    (b"1D+1", True),
+])
+def test_live_source_weights_match_exactly(weight, accepted):
+    error = batch_tally("error").replace(
+        b"# resc2 = 1.00000000000000000E+01", b"# resc2 = " + weight)
+    def parse():
+        return paired_tally_values(batch_tally(), error, MESH, 10,
+                                    time.monotonic()+2, live_maxbch=10)
+    if accepted:
+        assert parse()[2]["resc2"] == 10
+    else:
+        with pytest.raises(ObservationError, match="pair-mismatch"):
+            parse()

@@ -342,11 +342,14 @@ def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=No
             else:
                 value = number(token)
                 require(value > 0)
-                if live_maxbch is not None and name in {"istdev", "resc3", "maxcas"}:
-                    # Validate integer metadata before binary-float rounding.
+                if live_maxbch is not None:
+                    # Preserve exact source weights and integer metadata for pairing.
                     exact = Decimal(token.replace("D", "E").replace("d", "e"))
-                    require(exact == exact.to_integral_value())
-                    value = int(exact)
+                    if name == "resc2":
+                        value = exact
+                    else:
+                        require(exact == exact.to_integral_value())
+                        value = int(exact)
                 metadata[name] = value
         require(metadata["istdev"] == 2 or (live_maxbch is not None and metadata["istdev"] == 1),
                 "unsupported-variance")

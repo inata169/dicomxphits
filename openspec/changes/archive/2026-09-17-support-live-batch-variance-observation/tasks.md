@@ -39,3 +39,10 @@ unchanged. Added fractional-rounding, large-budget and D-exponent regressions.
 Focused observation tests: 69 passed. Full public checks and remote review
 are recorded on the pull request before merge. This correction restores the
 already specified supported-mode/integral-budget contract; no new capability.
+
+Second review correction: retain live resc2 source weights as exact Decimal
+values so distinct weights hidden by float rounding cannot match. Numerically
+equivalent decimal/D-exponent spellings still match. Added three regressions;
+focused tests passed 72 cases. The preceding first-correction full suite passed
+1315 cases with 14 skipped; final-head CI and full-suite results are reported
+on the PR before merge. No shared non-live mode or physics contract changed.
