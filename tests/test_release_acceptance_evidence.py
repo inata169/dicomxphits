@@ -161,7 +161,7 @@ def test_public_offline_guides_match_withdrawal_policy() -> None:
     assert "maintainer evaluation" in japanese
     assert "Do not install or upgrade from the withdrawn" in prior_release_notes
     assert "does not include a Windows offline ZIP" in release_notes
-    assert "The current public release is\n[`v1.0.3`]" in readme
+    assert "The current public release is\n[`v1.1.0`]" in readme
     assert "The current public release is `v1.0.3`" in project
     assert "- Public release: [`v1.0.3`]" in status
     assert "manual GitHub removal pending" not in status
