@@ -181,3 +181,30 @@ requirement bodies match the promoted specification. The archive command left
 an extra blank line at the current specification's EOF; `git diff --check`
 reported it, and one whitespace-only correction removed it. The repeated check
 passed. Compilation and public-tree audit also passed.
+
+## Authorized PR review closeout on 2026-09-18
+
+The user subsequently authorized PR publication, review-driven fixes, merge
+after passing, and branch deletion, including dependency PR #77. PR #78 includes
+the dependency's exact decimal metadata fixes. Integrated full validation before
+the benchmark correction: 1398 passed, 14 skipped in 318.05 seconds.
+
+Review identified that benchmark acceptance omitted the independent batch
+channel. Qualifying attempts now require a successfully parsed authored batch
+count as well as the full pair; confirmation requires both expected values and
+successful candidate reasons within the limit. Four regressions cover valid,
+malformed, wrong-count and rejected-after-confirmation batch records.
+Focused numeric/benchmark tests: 84 passed. The initial sandboxed invocation
+had 75 passes and 9 temporary-directory permission errors; the approved
+external-temporary-directory invocation passed without changing assertions.
+
+Five final integrated attempts with user-reported seven-thread load were
+1.896476, 1.878213, 1.781215, 1.716034 and 2.012893 seconds. Median 1.878213,
+mean 1.856966; the last attempt timed out and is not a completed parse.
+Four full pairs and all five batch candidates validated; both authored values
+were confirmed. The approved median acceptance passed, including the failed
+attempt in timing statistics. No concurrent pytest ran during measurement.
+GUI/process state and eight-thread performance remain unverified.
+Compilation, 363-file public-tree audit, 19-specification strict validation
+and diff checks passed. Final-head CI and full-suite results are recorded in
+the PR closeout; no physics, DICOM meaning or execution guards changed.

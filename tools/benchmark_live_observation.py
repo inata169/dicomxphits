@@ -95,12 +95,19 @@ def main():
         # offer() sets previous only after full pair validation; reject() clears it.
         # The display reason "updating" alone can also mean an unstable read.
         records.append({"seconds": seconds, "full_pair_validated": live.error.previous is not None,
+                        "batch_validated": live.batch.previous is not None and live.last_remaining == 10,
                         "batch": record["batch"], "error": record["error"]})
         time.sleep(max(0, live.interval - seconds))
     elapsed = [row["seconds"] for row in records]
     completed = [row["seconds"] for row in records
-                 if row["full_pair_validated"] and row["seconds"] <= 2]
-    confirmed = any(row["error"]["value"] == {"relative_error_percent": 12.34} for row in records)
+                 if row["full_pair_validated"] and row["batch_validated"] and row["seconds"] <= 2]
+    confirmed = any(
+        row["full_pair_validated"] and row["batch_validated"] and row["seconds"] <= 2
+        and row["batch"]["reason"] == "available"
+        and row["batch"]["value"] == {"remaining": 10, "prepared_total": 10}
+        and row["error"]["reason"] == "available"
+        and row["error"]["value"] == {"relative_error_percent": 12.34}
+        for row in records)
     result = {
         "scope": "Complete synchronous Observer.sample; excludes worker, publication and GUI",
         "python": platform.python_version(), "numpy": np.__version__,

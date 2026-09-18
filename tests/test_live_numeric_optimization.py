@@ -1,8 +1,12 @@
 """Differential and resource checks using authored values and mocked I/O."""
 import hashlib
+import importlib.util
+import json
 import os
+import sys
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,6 +14,46 @@ import pytest
 from dicomxphits import phits_observation as observer
 from dicomxphits import phits_observation_format as fmt
 from test_phits_live_observation import MESH, observer_fixture, tally
+
+
+@pytest.mark.parametrize("batch_mode", ["valid", "malformed", "wrong-count", "rejected-after-confirmation"])
+def test_benchmark_requires_complete_batch_observation(tmp_path, monkeypatch, capsys, batch_mode):
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_live", Path(__file__).resolve().parents[1] / "tools/benchmark_live_observation.py")
+    benchmark = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(benchmark)
+    original = benchmark.prepare
+
+    def prepare(root, n):
+        live, dose, error, mesh = original(root, 3)
+        batch = root / "batch.out"
+        if batch_mode == "malformed":
+            batch.write_text("malformed", encoding="ascii")
+        elif batch_mode == "wrong-count":
+            batch.write_text(batch.read_text("ascii").replace("10 <---", "9 <---"), encoding="ascii")
+        elif batch_mode == "rejected-after-confirmation":
+            sample = live.sample
+            calls = 0
+
+            def rejecting_sample():
+                nonlocal calls
+                calls += 1
+                if calls == 3:
+                    batch.write_text("malformed", encoding="ascii")
+                return sample()
+
+            live.sample = rejecting_sample
+        return live, dose, error, mesh
+
+    monkeypatch.setattr(benchmark, "prepare", prepare)
+    monkeypatch.setattr(benchmark.time, "sleep", lambda _: None)
+    root = tmp_path / "benchmark"
+    monkeypatch.setattr(sys, "argv", ["benchmark", "--output-directory", str(root)])
+    benchmark.main()
+    result = json.loads((root / "results.json").read_text("utf-8"))
+    assert all(row["full_pair_validated"] for row in result["measurements"])
+    assert result["provisional_pass"] is (batch_mode == "valid")
+    capsys.readouterr()
 
 
 def compare(text, count):
