@@ -638,6 +638,35 @@ def validate_stage(
     return workspace
 
 
+def run_action_ready(config: GuiConfig, stage_key: str) -> bool:
+    """Readiness for ordinary Run buttons; execution still revalidates."""
+    if stage_key not in {"run_segments", "run_sumtally"}:
+        raise ValueError(f"Unsupported Run action: {stage_key}")
+    try:
+        # An ordinary Run button must not inherit a selective retry exemption.
+        workspace = validate_stage(replace(config, retry_source_sha256=""), stage_by_key(stage_key))
+        if stage_key == "run_sumtally":
+            from dicomxphits.prepare_sumtally import validate_sumtally_run_inputs
+            from dicomxphits.run_segments import phits_environment
+
+            if not segment_execution_authorizes_sumtally(workspace):
+                return False
+            inputs = validate_sumtally_run_inputs(workspace)
+            phits_environment(inputs.selected_sum_input)
+    except (OSError, ValueError, TypeError, KeyError, WorkspaceRecoveryError):
+        return False
+    return True
+
+
+def terminal_stop_hint(summary: Mapping[str, object] | None) -> str:
+    status = summary.get("stage_status") if summary is not None else None
+    if status == "success":
+        return "PHITS completed; no active segment to stop."
+    if status in {"failed", "gate_failed"}:
+        return "PHITS ended without success; no active segment to stop."
+    return "Stop unavailable: no owned active PHITS invocation."
+
+
 def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
     workspace = _resolved_path(config, spec.workspace_field)
     command = [*spec.command, "--workspace-root", str(workspace)]
@@ -2518,6 +2547,8 @@ def _build_gui() -> int:
                         allow_overwrite=overwrite.get(),
                     )
                 )
+                if stage_key in {"run_segments", "run_sumtally"}:
+                    enabled = enabled and run_action_ready(config_from_entries(), stage_key)
                 if stage_key == "generate_sumtally":
                     workspace_text = values["workspace_root"].get().strip()
                     invocation_is_current = True
@@ -3925,6 +3956,7 @@ def _build_gui() -> int:
         nonlocal phits_progress_run_id
         observation_presentation.reset()
         phits_observation_status.set("Observation unavailable: no owned active segment.")
+        phits_stop_status.set(terminal_stop_hint(None))
         if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
             return
         if summary is None and phits_progress_summary_path is not None:
@@ -3946,6 +3978,7 @@ def _build_gui() -> int:
         )
         if selected is not None:
             phits_progress_run_id = segment_progress_run_id(selected)
+        phits_stop_status.set(terminal_stop_hint(selected))
         phits_progress_status.set(
             format_terminal_segment_progress(
                 summary,
