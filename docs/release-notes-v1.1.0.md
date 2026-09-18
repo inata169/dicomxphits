@@ -7,6 +7,13 @@ Stable operation across real external-tool workflows has not been established.
 Preserve existing inputs and results and evaluate in a separate non-patient
 test workspace. This software is not validated for clinical use.
 
+This post-publication status clarification updates the documentation on `main`.
+The immutable v1.1.0 source archives remain bound to the release commit above
+and retain preparation-era status text, including the old README release label;
+they do not contain this clarification or the later Experimental banner.
+Use the published GitHub Release and current `main` documentation for current
+status. This documentation update does not replace or revalidate those archives.
+
 Version 1.1.0 brings the reviewed post-v1.0.3 workflow additions and fixes to
 the education-and-research fixed-field 3D-CRT workflow. Package metadata and
 the GUI Help -> About dialog now report 1.1.0.
