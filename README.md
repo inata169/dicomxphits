@@ -43,11 +43,13 @@ All paths retain the same education-and-research-only boundary stated above.
 
 ## Status
 
-Version 1.0.3 includes standalone public adapters for strict 3D-CRT workspace
-preparation, PHITS segment execution, Sumtally generation and execution,
+Version 1.1.0 is in release preparation and includes standalone public adapters
+for strict 3D-CRT workspace preparation, PHITS segment execution, Sumtally
+generation and execution,
 RTDOSE conversion and coordinate correction, and an optional external
-GPR-comparing handoff. See the [v1.0.3 release notes](docs/release-notes-v1.0.3.md)
-for the changes since v1.0.2.
+GPR-comparing handoff. See the [v1.1.0 release notes](docs/release-notes-v1.1.0.md)
+for the changes since v1.0.3 and the current validation limits. The package and
+GUI About dialog identify this source version as 1.1.0; publication is pending.
 
 The current public release is
 [`v1.0.3`](https://github.com/inata169/dicomxphits/releases/tag/v1.0.3). It is
