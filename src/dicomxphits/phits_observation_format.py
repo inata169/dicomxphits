@@ -290,7 +290,60 @@ def parse_identity(header, stdout, threads):
     return LIVE_PARSER
 
 
-def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=None):
+NUMERIC_SCAN_CHARS = 65536
+NUMERIC_CHUNK_TOKENS = 4096
+
+
+def _numeric_chunks(text, deadline):
+    """Bound token scratch even for one very large page or whitespace run."""
+    carry = ""
+    for start in range(0, len(text), NUMERIC_SCAN_CHARS):
+        checkpoint(deadline)
+        end = min(start + NUMERIC_SCAN_CHARS, len(text))
+        block = carry + text[start:end]
+        tokens = block.split()
+        carry = ""
+        if end < len(text) and block and not block[-1].isspace():
+            carry = tokens.pop()
+            require(len(carry) <= 64, "resource-limit")
+        for offset in range(0, len(tokens), NUMERIC_CHUNK_TOKENS):
+            checkpoint(deadline)
+            yield tokens[offset:offset + NUMERIC_CHUNK_TOKENS]
+        checkpoint(deadline)
+
+
+def _parse_numeric_page(text, output, deadline):
+    """Validate every cell and fill the caller's array view without a page copy."""
+    checkpoint(deadline)
+    consumed = 0
+    for tokens in _numeric_chunks(text, deadline):
+        require(consumed + len(tokens) <= output.size)
+        canonical = set(map(len, tokens)) == {9}
+        if canonical:
+            raw = (" ".join(tokens) + " ").encode("ascii")
+            chars = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 10)
+            digits = chars[:, [0, 2, 3, 4, 7, 8]]
+            canonical = bool(
+                ((digits >= 48) & (digits <= 57)).all()
+                and (chars[:, 1] == 46).all()
+                and (chars[:, 5] == 69).all()
+                and ((chars[:, 6] == 43) | (chars[:, 6] == 45)).all()
+            )
+        if canonical:
+            values = np.asarray(tokens, dtype=np.float64)
+            require(np.isfinite(values).all())
+        else:
+            values = np.array([number(token) for token in tokens])
+        require((values >= 0).all(), "invalid-numeric")
+        output[consumed:consumed + len(tokens)] = values
+        consumed += len(tokens)
+        checkpoint(deadline)
+    require(consumed == output.size)
+    checkpoint(deadline)
+
+
+def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=None,
+                live_numeric=False):
     require(role in {"dose", "error"})
     require(len(raw) <= MAX_TALLY_BYTES, "resource-limit")
     checkpoint(deadline)
@@ -394,16 +447,19 @@ def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=No
         split = tail.find("#" + "-" * 78)
         require(split >= 0)
         numeric, plot = tail[:split], tail[split:]
-        consumed = 0
-        for match in re.finditer(r"\S+", numeric):
-            if consumed % 4096 == 0:
-                checkpoint(deadline)
-            require(consumed < nx*ny)
-            value = number(match[0])
-            require(value >= 0, "invalid-numeric")
-            output[(index-1)*nx*ny + consumed] = value
-            consumed += 1
-        require(consumed == nx*ny)
+        if live_numeric:
+            _parse_numeric_page(numeric, output[(index-1)*nx*ny:index*nx*ny], deadline)
+        else:
+            consumed = 0
+            for match in re.finditer(r"\S+", numeric):
+                if consumed % 4096 == 0:
+                    checkpoint(deadline)
+                require(consumed < nx*ny)
+                value = number(match[0])
+                require(value >= 0, "invalid-numeric")
+                output[(index-1)*nx*ny + consumed] = value
+                consumed += 1
+            require(consumed == nx*ny)
         require(plot.count("hc:") == 1 and len(re.findall(r"(?m)^y: " + re.escape(role_label) + r" *$", plot)) == 1, "role-mismatch")
         legend = plot.split("hc:", 1)[1].split("\n", 1)[1].split("z:", 1)[0]
         require(legend.split() == [str(i) for i in range(1, 101)])
@@ -441,7 +497,8 @@ def isocenter_flat_index(mesh):
     return (z * mesh.counts[1] + (mesh.counts[1] - 1 - y)) * nx + x
 
 
-def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline, *, live_maxbch=None):
+def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline, *, live_maxbch=None,
+                          live_numeric=False):
     dose, error, _metadata = paired_tally_values(
         dose_raw,
         error_raw,
@@ -449,6 +506,7 @@ def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline, *, live_
         maxcas,
         deadline,
         live_maxbch=live_maxbch,
+        live_numeric=live_numeric,
     )
     index = isocenter_flat_index(mesh)
     require(dose[index] > 0 and error[index] > 0, "isocenter-unavailable")
@@ -458,11 +516,14 @@ def paired_isocenter_error(dose_raw, error_raw, mesh, maxcas, deadline, *, live_
     return result
 
 
-def paired_tally_values(dose_raw, error_raw, mesh, maxcas, deadline, *, live_maxbch=None):
+def paired_tally_values(dose_raw, error_raw, mesh, maxcas, deadline, *, live_maxbch=None,
+                        live_numeric=False):
     """Return one completely validated PHITS 3.35 dose/error grid pair."""
 
-    dose, dose_metadata = parse_tally(dose_raw, mesh, "dose", deadline, live_maxbch=live_maxbch)
-    error, error_metadata = parse_tally(error_raw, mesh, "error", deadline, live_maxbch=live_maxbch)
+    dose, dose_metadata = parse_tally(dose_raw, mesh, "dose", deadline,
+                                      live_maxbch=live_maxbch, live_numeric=live_numeric)
+    error, error_metadata = parse_tally(error_raw, mesh, "error", deadline,
+                                       live_maxbch=live_maxbch, live_numeric=live_numeric)
     require(
         dose_metadata == error_metadata
         and dose_metadata["maxcas"] == maxcas,
