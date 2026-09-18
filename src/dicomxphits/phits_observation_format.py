@@ -342,12 +342,17 @@ def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=No
             else:
                 value = number(token)
                 require(value > 0)
+                if live_maxbch is not None and name in {"istdev", "resc3", "maxcas"}:
+                    # Validate integer metadata before binary-float rounding.
+                    exact = Decimal(token.replace("D", "E").replace("d", "e"))
+                    require(exact == exact.to_integral_value())
+                    value = int(exact)
                 metadata[name] = value
         require(metadata["istdev"] == 2 or (live_maxbch is not None and metadata["istdev"] == 1),
                 "unsupported-variance")
         if metadata["istdev"] == 1:
             require(metadata["resc3"] <= live_maxbch, "batch-budget")
-        require(metadata["resc3"].is_integer() and metadata["maxcas"].is_integer())
+        require(all(value == int(value) for value in (metadata["resc3"], metadata["maxcas"])))
     pages = body.split(" newpage:\n")
     require(len(pages) == expected.counts[2])
     output = np.empty(expected.cells, dtype=np.float64)
