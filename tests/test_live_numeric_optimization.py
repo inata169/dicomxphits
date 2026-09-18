@@ -16,7 +16,7 @@ from dicomxphits import phits_observation_format as fmt
 from test_phits_live_observation import MESH, observer_fixture, tally
 
 
-@pytest.mark.parametrize("batch_mode", ["valid", "malformed", "wrong-count", "rejected-after-confirmation"])
+@pytest.mark.parametrize("batch_mode", ["valid", "malformed", "wrong-count", "rejected-after-confirmation", "identity-timeout"])
 def test_benchmark_requires_complete_batch_observation(tmp_path, monkeypatch, capsys, batch_mode):
     spec = importlib.util.spec_from_file_location(
         "benchmark_live", Path(__file__).resolve().parents[1] / "tools/benchmark_live_observation.py")
@@ -47,12 +47,32 @@ def test_benchmark_requires_complete_batch_observation(tmp_path, monkeypatch, ca
 
     monkeypatch.setattr(benchmark, "prepare", prepare)
     monkeypatch.setattr(benchmark.time, "sleep", lambda _: None)
+    if batch_mode == "identity-timeout":
+        original_read = observer.read_snapshot
+        header_reads = 0
+
+        def timeout_read(root, path, *args, **kwargs):
+            nonlocal header_reads
+            if path.name == "phits.out":
+                header_reads += 1
+                if header_reads > 3:
+                    raise fmt.ObservationError("resource-limit")
+            return original_read(root, path, *args, **kwargs)
+
+        monkeypatch.setattr(observer, "read_snapshot", timeout_read)
+        ticks = iter([0, 1, 2, 3, 4, 5, 6, 8.01, 9, 11.01])
+        monkeypatch.setattr(benchmark.time, "perf_counter", lambda: next(ticks))
     root = tmp_path / "benchmark"
     monkeypatch.setattr(sys, "argv", ["benchmark", "--output-directory", str(root)])
     benchmark.main()
     result = json.loads((root / "results.json").read_text("utf-8"))
-    assert all(row["full_pair_validated"] for row in result["measurements"])
-    assert result["provisional_pass"] is (batch_mode == "valid")
+    if batch_mode == "identity-timeout":
+        assert result["timeouts"] == 2
+        assert all(row["error"]["reason"] == "unsupported-identity"
+                   for row in result["measurements"][3:])
+    else:
+        assert all(row["full_pair_validated"] for row in result["measurements"])
+    assert result["provisional_pass"] is (batch_mode in {"valid", "identity-timeout"})
     capsys.readouterr()
 
 

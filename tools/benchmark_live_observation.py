@@ -116,10 +116,14 @@ def main():
         "measurements": records, "median_seconds": statistics.median(elapsed),
         "mean_seconds": statistics.mean(elapsed), "maximum_seconds": max(elapsed),
         "completed_parse_seconds": completed,
-        "timeouts": sum(row["error"]["reason"] == "resource-limit" for row in records),
+        # Identity failures mask resource-limit as unsupported-identity. Count
+        # elapsed budget overruns independently of either channel's reason.
+        "timeouts": sum(row["seconds"] > 2 or any(
+            row[channel]["reason"] == "resource-limit" for channel in ("batch", "error"))
+            for row in records),
         "authored_value_confirmed": confirmed,
         "provisional_pass": statistics.median(elapsed) <= 2 and len(completed) >= 3 and confirmed,
-        "timeout_note": "Timeout durations are censored failed attempts, not complete parsing times",
+        "timeout_note": "Counts resource-limit rejections or elapsed budget overruns; these are failed attempts, not complete parsing times",
     }
     (root / "results.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2))

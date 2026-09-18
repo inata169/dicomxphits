@@ -208,3 +208,11 @@ GUI/process state and eight-thread performance remain unverified.
 Compilation, 363-file public-tree audit, 19-specification strict validation
 and diff checks passed. Final-head CI and full-suite results are recorded in
 the PR closeout; no physics, DICOM meaning or execution guards changed.
+
+The first review-corrected full suite passed 1402 tests, with 14 skipped in
+358.78 seconds. A second benchmark review found that identity-stage deadline
+rejections mask their reason as unsupported identity. Timeout accounting now
+includes elapsed two-second budget overruns and resource-limit reasons from
+either channel. A mocked identity-stage regression retains three successes and
+two expired attempts, asserting both timeouts remain counted even when the
+approved median acceptance passes. Runtime sampling behavior is unchanged.
