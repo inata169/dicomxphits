@@ -1,7 +1,11 @@
 # dicomxphits v1.1.0 Release Notes
 
-Status: release preparation; no v1.1.0 tag or GitHub Release has been published
-as part of this preparation. The current published release remains v1.0.3.
+Status: published on 2026-09-18 for experimental education-and-research
+evaluation. The [v1.1.0 GitHub Release](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0)
+and annotated tag refer to commit `12ea1b2ff65fac2fde276624ea692327d5fa710d`.
+Stable operation across real external-tool workflows has not been established.
+Preserve existing inputs and results and evaluate in a separate non-patient
+test workspace. This software is not validated for clinical use.
 
 Version 1.1.0 brings the reviewed post-v1.0.3 workflow additions and fixes to
 the education-and-research fixed-field 3D-CRT workflow. Package metadata and
@@ -57,7 +61,10 @@ whitespace checks. The first full invocation used a repository-internal test
 directory and reported 67 failures, including existing workspace-boundary
 rejections and restricted Tk/process failures. The unchanged code passed with
 a fresh external synthetic-test directory and approved execution permissions;
-no assertions or guards were weakened. Review and CI remain publication gates.
+no assertions or guards were weakened. The final packaging correction passed
+6 focused checks, the full suite (1448 passed, 14 skipped) and an isolated
+source-distribution inclusion check. Codex re-review found no major issues;
+Ubuntu and Windows CI passed for the final PR head and the release commit.
 
 Final-version real PHITS/controller end-to-end execution
 and eight-thread performance remain unverified. Synthetic timing acceptance
@@ -78,8 +85,9 @@ IMRT, dynamic MLC delivery or VMAT.
 
 ## Distribution
 
-No Windows offline bundle has been validated or published for v1.1.0 during
-this preparation. The existing withdrawal policy remains: a future public
+The published v1.1.0 release provides GitHub source archives only. No Windows
+offline ZIP is attached or claimed as validated. The existing withdrawal
+policy remains: a future public
 offline asset requires separate review and an exact-source candidate that
 passes installation, GUI startup and verified uninstallation under the
 intended endpoint protection environment. See
