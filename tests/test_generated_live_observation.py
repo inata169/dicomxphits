@@ -135,3 +135,51 @@ def test_live_batch_pair_rejects_invalid_or_excess_counts(count):
     with pytest.raises(ObservationError):
         paired_tally_values(altered("dose"), altered("error"), MESH, 10,
                             time.monotonic()+2, live_maxbch=10)
+
+
+@pytest.mark.parametrize("old,new", [
+    (b"# istdev = 1", b"# istdev = 1.00000000000000001"),
+    (b"# resc3 = 1.00000000000000000E+01", b"# resc3 = 1.00000000000000001E+01"),
+    (b"# maxcas = 10", b"# maxcas = 10.00000000000000001"),
+])
+def test_live_integer_metadata_rejects_values_rounded_by_float(old, new):
+    with pytest.raises(ObservationError):
+        paired_tally_values(batch_tally().replace(old, new),
+                            batch_tally("error").replace(old, new), MESH, 10,
+                            time.monotonic()+2, live_maxbch=10)
+
+
+def test_live_batch_budget_retains_exact_large_integer():
+    # Both numbers become the same binary float; exact count exceeds budget.
+    def altered(role):
+        return batch_tally(role).replace(b"# resc3 = 1.00000000000000000E+01",
+                                         b"# resc3 = 9007199254740993")
+    with pytest.raises(ObservationError, match="batch-budget"):
+        paired_tally_values(altered("dose"), altered("error"), MESH, 10,
+                            time.monotonic()+2, live_maxbch=9007199254740992)
+
+
+def test_live_exact_integer_exponent_spelling_remains_supported():
+    def altered(role):
+        return batch_tally(role).replace(b"# istdev = 1", b"# istdev = 1.0D+0")
+    _, _, metadata = paired_tally_values(altered("dose"), altered("error"),
+                                         MESH, 10, time.monotonic()+2, live_maxbch=10)
+    assert metadata["istdev"] == 1 and metadata["resc3"] == 10
+
+
+@pytest.mark.parametrize("weight,accepted", [
+    (b"1.00000000000000001E+01", False),
+    (b"10.0000", True),
+    (b"1D+1", True),
+])
+def test_live_source_weights_match_exactly(weight, accepted):
+    error = batch_tally("error").replace(
+        b"# resc2 = 1.00000000000000000E+01", b"# resc2 = " + weight)
+    def parse():
+        return paired_tally_values(batch_tally(), error, MESH, 10,
+                                    time.monotonic()+2, live_maxbch=10)
+    if accepted:
+        assert parse()[2]["resc2"] == 10
+    else:
+        with pytest.raises(ObservationError, match="pair-mismatch"):
+            parse()
