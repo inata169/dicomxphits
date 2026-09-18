@@ -638,6 +638,40 @@ def validate_stage(
     return workspace
 
 
+def run_action_ready(config: GuiConfig, stage_key: str) -> bool:
+    """Readiness for ordinary Run buttons; execution still revalidates."""
+    if stage_key not in {"run_segments", "run_sumtally"}:
+        raise ValueError(f"Unsupported Run action: {stage_key}")
+    try:
+        # An ordinary Run button must not inherit a selective retry exemption.
+        workspace = validate_stage(replace(config, retry_source_sha256=""), stage_by_key(stage_key))
+        if stage_key == "run_sumtally":
+            from dicomxphits.prepare_sumtally import validate_sumtally_run_inputs
+            from dicomxphits.run_segments import phits_environment
+
+            if not segment_execution_authorizes_sumtally(workspace):
+                return False
+            inputs = validate_sumtally_run_inputs(workspace)
+            phits_environment(inputs.selected_sum_input)
+    except (OSError, ValueError, TypeError, KeyError, WorkspaceRecoveryError):
+        return False
+    return True
+
+
+def sumtally_readiness_selection(config: GuiConfig) -> tuple[str, str, bool]:
+    """Only Sumtally launch settings bind a background readiness result."""
+    return config.workspace_root, config.phits_executable_path, config.allow_overwrite
+
+
+def terminal_stop_hint(summary: Mapping[str, object] | None) -> str:
+    status = summary.get("stage_status") if summary is not None else None
+    if status == "success":
+        return "PHITS completed; no active segment to stop."
+    if status in {"failed", "gate_failed"}:
+        return "PHITS ended without success; no active segment to stop."
+    return "Stop unavailable: no owned active PHITS invocation."
+
+
 def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
     workspace = _resolved_path(config, spec.workspace_field)
     command = [*spec.command, "--workspace-root", str(workspace)]
@@ -2337,6 +2371,10 @@ def _build_gui() -> int:
     structure_evidence_guard = StructureEvidenceReadinessGuard()
     execution_guard = StageExecutionGuard()
     action_buttons: dict[str, ttk.Button] = {}
+    sumtally_readiness_generation = 0
+    sumtally_readiness_active = False
+    sumtally_readiness_pending: tuple[int, GuiConfig] | None = None
+    sumtally_readiness_closed = False
     recovery_inspection: WorkspaceRecoveryInspection | None = None
     tool_profile_resolution = resolve_tool_profile(defaults)
     active_tool_profile_mode = values["tool_profile_mode"].get()
@@ -2450,7 +2488,46 @@ def _build_gui() -> int:
             and phits_preflight["phase"] in {"preparing", "verifying"}
             and progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path))
 
+    def start_sumtally_readiness() -> None:
+        nonlocal sumtally_readiness_active, sumtally_readiness_pending
+        if sumtally_readiness_closed or sumtally_readiness_active or sumtally_readiness_pending is None:
+            return
+        ticket, config = sumtally_readiness_pending
+        sumtally_readiness_pending = None
+        sumtally_readiness_active = True
+
+        def finish(ready: bool) -> None:
+            nonlocal sumtally_readiness_active
+            sumtally_readiness_active = False
+            if sumtally_readiness_closed:
+                return
+            if (ticket == sumtally_readiness_generation
+                and execution_guard.active_stage is None
+                and not existing_case_mode.get()
+                and sumtally_readiness_selection(config) == sumtally_readiness_selection(config_from_entries())
+                and tool_profile_resolution.ready_for_stage("run_sumtally")):
+                button = action_buttons.get("run_sumtally")
+                if button is not None:
+                    button.state(["!disabled"] if ready else ["disabled"])
+            start_sumtally_readiness()
+
+        def worker() -> None:
+            try:
+                ready = run_action_ready(config, "run_sumtally")
+            except Exception:
+                ready = False
+            if not sumtally_readiness_closed:
+                try:
+                    root.after(0, lambda: finish(ready))
+                except (RuntimeError, tk.TclError):
+                    pass  # The owned GUI may have closed while reading evidence.
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def refresh_action_button_states() -> None:
+        nonlocal sumtally_readiness_generation, sumtally_readiness_pending
+        sumtally_readiness_generation += 1
+        sumtally_readiness_pending = None
         busy = execution_guard.active_stage is not None
         rtdose_state = current_rtdose_state()
         sumtally_ready = current_structure_binding_ready()
@@ -2518,6 +2595,12 @@ def _build_gui() -> int:
                         allow_overwrite=overwrite.get(),
                     )
                 )
+                if stage_key == "run_segments":
+                    enabled = enabled and run_action_ready(config_from_entries(), stage_key)
+                elif stage_key == "run_sumtally":
+                    if enabled and not existing_case_mode.get():
+                        sumtally_readiness_pending = (sumtally_readiness_generation, config_from_entries())
+                    enabled = False
                 if stage_key == "generate_sumtally":
                     workspace_text = values["workspace_root"].get().strip()
                     invocation_is_current = True
@@ -2558,6 +2641,7 @@ def _build_gui() -> int:
                 }:
                     enabled = False
             button.state(["!disabled"] if enabled else ["disabled"])
+        start_sumtally_readiness()
 
     overwrite.trace_add(
         "write",
@@ -3925,6 +4009,7 @@ def _build_gui() -> int:
         nonlocal phits_progress_run_id
         observation_presentation.reset()
         phits_observation_status.set("Observation unavailable: no owned active segment.")
+        phits_stop_status.set(terminal_stop_hint(None))
         if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
             return
         if summary is None and phits_progress_summary_path is not None:
@@ -3946,6 +4031,7 @@ def _build_gui() -> int:
         )
         if selected is not None:
             phits_progress_run_id = segment_progress_run_id(selected)
+        phits_stop_status.set(terminal_stop_hint(selected))
         phits_progress_status.set(
             format_terminal_segment_progress(
                 summary,
@@ -3958,6 +4044,7 @@ def _build_gui() -> int:
     def finish_stage_error(spec: StageSpec, message: str, *, validation: bool) -> None:
         if spec.key == "run_segments" and execution_guard.active_stage == "run_segments":
             if not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+                phits_stop_status.set(terminal_stop_hint(None))
                 append("Previous workspace invocation failed; inspect that workspace for details.", "error")
                 set_busy(None)
                 return
@@ -3989,6 +4076,7 @@ def _build_gui() -> int:
     def finish_stage_success(spec: StageSpec, result: StageResult) -> None:
         status = _stage_status(result)
         if spec.key == "run_segments" and not progress_workspace_matches(values["workspace_root"].get(), phits_progress_summary_path):
+            phits_stop_status.set(terminal_stop_hint(None))
             append("Previous workspace invocation ended; inspect the selected workspace for its status.")
             set_busy(None)
             return
@@ -4698,6 +4786,7 @@ def _build_gui() -> int:
     refresh_action_button_states()
 
     def close_gui() -> None:
+        nonlocal sumtally_readiness_closed, sumtally_readiness_pending
         if execution_guard.active_stage is not None:
             messagebox.showwarning(
                 "Stage running",
@@ -4706,6 +4795,8 @@ def _build_gui() -> int:
             return
         if refresh_tool_profile().ready:
             save_local_settings()
+        sumtally_readiness_closed = True
+        sumtally_readiness_pending = None
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", close_gui)

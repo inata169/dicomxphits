@@ -878,6 +878,176 @@ def run_sumtally(
                 )
 
 
+@dataclass(frozen=True)
+class SumtallyRunInputs:
+    generation_summary: dict[str, Any]
+    current_manifest_sha256: str
+    selected_sum_input: Path
+    current_sum_input_sha256: str
+    current_sumtally_input_sha256: str
+    normalization_evidence: dict[str, Any]
+    current_segment_output_evidence: list[dict[str, str]]
+    current_wrapper_include_evidence: list[dict[str, str]]
+    current_tally_geometry_binding: dict[str, Any]
+    expected_output: Path
+
+
+def validate_sumtally_run_inputs(
+    workspace_root: Path, sum_input: Path | None = None,
+) -> SumtallyRunInputs:
+    """Read current generation evidence without creating files or launching tools."""
+    workspace_root = workspace_root.resolve()
+    manifest, _ = load_manifest(workspace_root)
+    validate_manifest_for_sumtally(manifest)
+    validate_segment_outputs_exist(workspace_root, manifest)
+
+    generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
+    generation_summary = load_json_object(generation_summary_path)
+    if generation_summary.get("stage_status") != "success":
+        raise ValueError("Sumtally generation summary is not successful")
+    current_manifest_sha256 = manifest_sha256(manifest)
+    generation_manifest_sha256 = str(
+        generation_summary.get("manifest_sha256") or ""
+    )
+    if not generation_manifest_sha256:
+        raise ValueError(
+            "Sumtally generation summary is missing manifest_sha256; "
+            "rerun Sumtally Generate"
+        )
+    if generation_manifest_sha256 != current_manifest_sha256:
+        raise ValueError(
+            "Segment manifest changed after Sumtally Generate; "
+            "rerun Sumtally Generate"
+        )
+    outputs = generation_summary.get("outputs")
+    if not isinstance(outputs, dict):
+        raise ValueError(
+            "Sumtally generation summary is missing generated input paths; "
+            "rerun Sumtally Generate"
+        )
+    recorded_sum_input_value = str(outputs.get("sum_input") or "")
+    recorded_sumtally_input_value = str(outputs.get("sumtally_input") or "")
+    if not recorded_sum_input_value or not recorded_sumtally_input_value:
+        raise ValueError(
+            "Sumtally generation summary is missing generated input paths; "
+            "rerun Sumtally Generate"
+        )
+    generated_sum_input = resolve_workspace_path(
+        workspace_root,
+        recorded_sum_input_value,
+    ).resolve()
+    generated_sumtally_input = resolve_workspace_path(
+        workspace_root,
+        recorded_sumtally_input_value,
+    ).resolve()
+    requested_sum_input = (
+        resolve_workspace_path(workspace_root, sum_input)
+        if sum_input is not None
+        else generated_sum_input
+    )
+    if requested_sum_input.resolve() != generated_sum_input:
+        raise ValueError(
+            "--sum-input must reference the wrapper recorded by Sumtally "
+            "Generate; rerun Sumtally Generate for a different input"
+        )
+    selected_sum_input = generated_sum_input
+    if not selected_sum_input.is_file():
+        raise FileNotFoundError(f"Sumtally wrapper input not found: {selected_sum_input}")
+    if not generated_sumtally_input.is_file():
+        raise FileNotFoundError(
+            f"Generated Sumtally input not found: {generated_sumtally_input}"
+        )
+    generation_sum_input_sha256 = str(
+        generation_summary.get("sum_input_sha256") or ""
+    )
+    generation_sumtally_input_sha256 = str(
+        generation_summary.get("sumtally_input_sha256") or ""
+    )
+    if not generation_sum_input_sha256 or not generation_sumtally_input_sha256:
+        raise ValueError(
+            "Sumtally generation summary is missing input digest evidence; "
+            "rerun Sumtally Generate"
+        )
+    current_sum_input_sha256 = file_sha256(selected_sum_input)
+    current_sumtally_input_sha256 = file_sha256(generated_sumtally_input)
+    if current_sum_input_sha256 != generation_sum_input_sha256:
+        raise ValueError(
+            "Generated Sumtally wrapper changed after Sumtally Generate; "
+            "rerun Sumtally Generate"
+        )
+    if current_sumtally_input_sha256 != generation_sumtally_input_sha256:
+        raise ValueError(
+            "Generated sumtally.inp changed after Sumtally Generate; "
+            "rerun Sumtally Generate"
+        )
+    normalization_evidence = validate_sumtally_normalization_input(
+        generated_sumtally_input,
+        manifest=manifest,
+        recorded_evidence=generation_summary.get(
+            "sumtally_normalization_evidence"
+        ),
+    )
+    if generation_summary.get("sumtally_normalization") != SUMTALLY_NORMALIZATION:
+        raise ValueError(
+            "Sumtally normalization contract is stale; rerun Sumtally Generate"
+        )
+    if generation_summary.get("rt_dose_conversion_hint") != RT_DOSE_CONVERSION_HINT:
+        raise ValueError(
+            "Sumtally RTDOSE conversion hint is stale; rerun Sumtally Generate"
+        )
+    current_segment_output_evidence = validate_file_digest_evidence(
+        generation_summary.get("segment_output_evidence"),
+        current_paths=expected_segment_outputs(workspace_root, manifest),
+        label="segment output",
+    )
+    current_wrapper_include_evidence = validate_file_digest_evidence(
+        generation_summary.get("wrapper_include_evidence"),
+        current_paths=transitive_phits_include_paths(
+            selected_sum_input,
+            execution_cwd=selected_sum_input.parent,
+        ),
+        label="wrapper include",
+    )
+    current_tally_geometry_binding = segment_tally_geometry_binding(
+        expected_segment_outputs(workspace_root, manifest)
+    )
+    recorded_tally_geometry_binding = generation_summary.get(
+        "tally_geometry_binding"
+    )
+    if not isinstance(recorded_tally_geometry_binding, dict):
+        raise ValueError(
+            "Sumtally generation summary is missing tally geometry evidence; "
+            "rerun Sumtally Generate"
+        )
+    if current_tally_geometry_binding != recorded_tally_geometry_binding:
+        raise ValueError(
+            "Active segment tally geometry changed after Sumtally Generate; "
+            "rerun Sumtally Generate"
+        )
+    expected_output = Path(
+        os.path.abspath(
+            os.fspath(
+                resolve_workspace_path(
+                    workspace_root,
+                    str(outputs["sumtally_output"]),
+                )
+            )
+        )
+    )
+    return SumtallyRunInputs(
+        generation_summary=generation_summary,
+        current_manifest_sha256=current_manifest_sha256,
+        selected_sum_input=selected_sum_input,
+        current_sum_input_sha256=current_sum_input_sha256,
+        current_sumtally_input_sha256=current_sumtally_input_sha256,
+        normalization_evidence=normalization_evidence,
+        current_segment_output_evidence=current_segment_output_evidence,
+        current_wrapper_include_evidence=current_wrapper_include_evidence,
+        current_tally_geometry_binding=current_tally_geometry_binding,
+        expected_output=expected_output,
+    )
+
+
 def _run_sumtally_locked(
     *,
     workspace_root: Path,
@@ -891,143 +1061,17 @@ def _run_sumtally_locked(
     phits_started = False
     try:
         require_execution_paths(paths)
-        manifest, _ = load_manifest(workspace_root)
-        validate_manifest_for_sumtally(manifest)
-        validate_segment_outputs_exist(workspace_root, manifest)
-
-        generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
-        generation_summary = load_json_object(generation_summary_path)
-        if generation_summary.get("stage_status") != "success":
-            raise ValueError("Sumtally generation summary is not successful")
-        current_manifest_sha256 = manifest_sha256(manifest)
-        generation_manifest_sha256 = str(
-            generation_summary.get("manifest_sha256") or ""
-        )
-        if not generation_manifest_sha256:
-            raise ValueError(
-                "Sumtally generation summary is missing manifest_sha256; "
-                "rerun Sumtally Generate"
-            )
-        if generation_manifest_sha256 != current_manifest_sha256:
-            raise ValueError(
-                "Segment manifest changed after Sumtally Generate; "
-                "rerun Sumtally Generate"
-            )
-        outputs = generation_summary.get("outputs")
-        if not isinstance(outputs, dict):
-            raise ValueError(
-                "Sumtally generation summary is missing generated input paths; "
-                "rerun Sumtally Generate"
-            )
-        recorded_sum_input_value = str(outputs.get("sum_input") or "")
-        recorded_sumtally_input_value = str(outputs.get("sumtally_input") or "")
-        if not recorded_sum_input_value or not recorded_sumtally_input_value:
-            raise ValueError(
-                "Sumtally generation summary is missing generated input paths; "
-                "rerun Sumtally Generate"
-            )
-        generated_sum_input = resolve_workspace_path(
-            workspace_root,
-            recorded_sum_input_value,
-        ).resolve()
-        generated_sumtally_input = resolve_workspace_path(
-            workspace_root,
-            recorded_sumtally_input_value,
-        ).resolve()
-        requested_sum_input = (
-            resolve_workspace_path(workspace_root, sum_input)
-            if sum_input is not None
-            else generated_sum_input
-        )
-        if requested_sum_input.resolve() != generated_sum_input:
-            raise ValueError(
-                "--sum-input must reference the wrapper recorded by Sumtally "
-                "Generate; rerun Sumtally Generate for a different input"
-            )
-        selected_sum_input = generated_sum_input
-        if not selected_sum_input.is_file():
-            raise FileNotFoundError(f"Sumtally wrapper input not found: {selected_sum_input}")
-        if not generated_sumtally_input.is_file():
-            raise FileNotFoundError(
-                f"Generated Sumtally input not found: {generated_sumtally_input}"
-            )
-        generation_sum_input_sha256 = str(
-            generation_summary.get("sum_input_sha256") or ""
-        )
-        generation_sumtally_input_sha256 = str(
-            generation_summary.get("sumtally_input_sha256") or ""
-        )
-        if not generation_sum_input_sha256 or not generation_sumtally_input_sha256:
-            raise ValueError(
-                "Sumtally generation summary is missing input digest evidence; "
-                "rerun Sumtally Generate"
-            )
-        current_sum_input_sha256 = file_sha256(selected_sum_input)
-        current_sumtally_input_sha256 = file_sha256(generated_sumtally_input)
-        if current_sum_input_sha256 != generation_sum_input_sha256:
-            raise ValueError(
-                "Generated Sumtally wrapper changed after Sumtally Generate; "
-                "rerun Sumtally Generate"
-            )
-        if current_sumtally_input_sha256 != generation_sumtally_input_sha256:
-            raise ValueError(
-                "Generated sumtally.inp changed after Sumtally Generate; "
-                "rerun Sumtally Generate"
-            )
-        normalization_evidence = validate_sumtally_normalization_input(
-            generated_sumtally_input,
-            manifest=manifest,
-            recorded_evidence=generation_summary.get(
-                "sumtally_normalization_evidence"
-            ),
-        )
-        if generation_summary.get("sumtally_normalization") != SUMTALLY_NORMALIZATION:
-            raise ValueError(
-                "Sumtally normalization contract is stale; rerun Sumtally Generate"
-            )
-        if generation_summary.get("rt_dose_conversion_hint") != RT_DOSE_CONVERSION_HINT:
-            raise ValueError(
-                "Sumtally RTDOSE conversion hint is stale; rerun Sumtally Generate"
-            )
-        current_segment_output_evidence = validate_file_digest_evidence(
-            generation_summary.get("segment_output_evidence"),
-            current_paths=expected_segment_outputs(workspace_root, manifest),
-            label="segment output",
-        )
-        current_wrapper_include_evidence = validate_file_digest_evidence(
-            generation_summary.get("wrapper_include_evidence"),
-            current_paths=transitive_phits_include_paths(
-                selected_sum_input,
-                execution_cwd=selected_sum_input.parent,
-            ),
-            label="wrapper include",
-        )
-        current_tally_geometry_binding = segment_tally_geometry_binding(
-            expected_segment_outputs(workspace_root, manifest)
-        )
-        recorded_tally_geometry_binding = generation_summary.get(
-            "tally_geometry_binding"
-        )
-        if not isinstance(recorded_tally_geometry_binding, dict):
-            raise ValueError(
-                "Sumtally generation summary is missing tally geometry evidence; "
-                "rerun Sumtally Generate"
-            )
-        if current_tally_geometry_binding != recorded_tally_geometry_binding:
-            raise ValueError(
-                "Active segment tally geometry changed after Sumtally Generate; "
-                "rerun Sumtally Generate"
-            )
-        expected_output = Path(
-            os.path.abspath(
-                os.fspath(
-                    resolve_workspace_path(
-                        workspace_root,
-                        str(outputs["sumtally_output"]),
-                    )
-                )
-            )
-        )
+        inputs = validate_sumtally_run_inputs(workspace_root, sum_input)
+        generation_summary = inputs.generation_summary
+        current_manifest_sha256 = inputs.current_manifest_sha256
+        selected_sum_input = inputs.selected_sum_input
+        current_sum_input_sha256 = inputs.current_sum_input_sha256
+        current_sumtally_input_sha256 = inputs.current_sumtally_input_sha256
+        normalization_evidence = inputs.normalization_evidence
+        current_segment_output_evidence = inputs.current_segment_output_evidence
+        current_wrapper_include_evidence = inputs.current_wrapper_include_evidence
+        current_tally_geometry_binding = inputs.current_tally_geometry_binding
+        expected_output = inputs.expected_output
         expected_error_output = phits_error_output_path(expected_output)
         stdout_path = workspace_root / "sumtally" / "sumtally_stdout.txt"
         stderr_path = workspace_root / "sumtally" / "sumtally_stderr.txt"
