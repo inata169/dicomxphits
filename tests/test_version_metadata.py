@@ -19,3 +19,6 @@ def test_release_version_metadata_is_consistent() -> None:
         encoding="utf-8-sig"
     )
     assert (ROOT / "docs" / f"release-notes-v{TARGET_VERSION}.md").is_file()
+    assert f"include docs/release-notes-v{TARGET_VERSION}.md" in (
+        ROOT / "MANIFEST.in"
+    ).read_text(encoding="utf-8-sig").splitlines()
