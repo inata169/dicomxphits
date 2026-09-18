@@ -77,19 +77,21 @@ def read_snapshot(root, path, limit, deadline, *, prefix=False):
         before = file_identity(os.fstat(stream.fileno()))
         require(prefix or before[2] <= limit, "resource-limit")
         chunks, size = [], 0
+        digest = hashlib.sha256()
         while size < min(before[2], limit):
             checkpoint(deadline)
             chunk = stream.read(min(65536, min(before[2], limit)-size))
             if not chunk:
                 break
             chunks.append(chunk)
+            digest.update(chunk)
             size += len(chunk)
         after = file_identity(os.fstat(stream.fileno()))
     safe_path(root, path)
     require(before == after == file_identity(path.stat()) and size == min(before[2], limit), "updating")
     raw = b"".join(chunks)
     checkpoint(deadline)
-    return raw, (before, hashlib.sha256(raw).hexdigest())
+    return raw, (before, digest.hexdigest())
 
 
 class Candidate:
@@ -173,7 +175,7 @@ class Observer:
                 error, es = read_snapshot(self.staging, self.error_path, MAX_TALLY_BYTES, deadline)
                 result = paired_isocenter_error(
                     dose, error, self.mesh, self.runtime["maxcas"], deadline,
-                    live_maxbch=self.runtime["maxbch"])
+                    live_maxbch=self.runtime["maxbch"], live_numeric=True)
                 self.error.offer((ds, es), result, time.monotonic())
             except (OSError, ValueError, UnicodeError) as exc:
                 self.error.reject(reason_for(exc))
