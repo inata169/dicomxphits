@@ -410,7 +410,8 @@ def test_lock_is_retained_by_child_after_controller_exits(tmp_path, launcher):
         process.wait(timeout=10)
 
 
-def test_gui_retry_command_uses_preview_and_does_not_require_overwrite(tmp_path):
+@pytest.mark.parametrize("allow_overwrite", [False, True])
+def test_gui_retry_command_uses_preview_and_does_not_require_overwrite(tmp_path, allow_overwrite):
     from test_gui import base_config
     from dicomxphits.gui import build_stage_command, stage_by_key, validate_stage
     root, _, paths, _ = partial(tmp_path)
@@ -418,7 +419,7 @@ def test_gui_retry_command_uses_preview_and_does_not_require_overwrite(tmp_path)
     config = replace(base_config(tmp_path, workspace=root),
         phits_root_folder=paths.phits_root_folder,
         phits_executable_path=paths.phits_executable_path,
-        retry_source_sha256=plan["source_sha256"], allow_overwrite=False)
+        retry_source_sha256=plan["source_sha256"], allow_overwrite=allow_overwrite)
     spec = stage_by_key("run_segments")
     assert validate_stage(config, spec) == root
     command = build_stage_command(config, spec)
