@@ -675,6 +675,7 @@ section; see the CLI reference for the fail-closed boundaries.
 - [Development handoff — 2026-08-13](docs/development-handoff-2026-08-13.md)
 - [Public feasibility demonstration and research boundaries](docs/public-feasibility-demonstration.md)
 - [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
+- GUI operating manuals (v1.1.0 functionality plus PR #83/#84 repairs): [日本語](docs/instruction/_manual/gui-manual.ja.md) / [English](docs/instruction/_manual/gui-manual.en.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)
 - [Windows offline installation validation — 2026-08-07](docs/windows-offline-installation-validation-2026-08-07.md)
 - [Development handoff — 2026-08-07](docs/development-handoff-2026-08-07.md)
