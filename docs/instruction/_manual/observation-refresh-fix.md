@@ -9,15 +9,15 @@ PR #84 passed review and CI and is merged into main; its remote branch was delet
 
 The authorized read-only inspection found `unsupported-format` for the batch channel. The current complete batch record used a minutes-and-seconds CPU duration, while the parser accepted seconds only. This explains the retained initial count.
 
-完全な記録の検証を維持し、分・秒形式を受け付けるよう修正した。負値、非数、欠損、余分な文字、分付きで60秒以上の値は拒否する。修正後の読み取り確認では残り203を取得した。これは確認時点の暫定値であり、完了証拠ではない。
+完全な記録の検証を維持し、分・秒形式を受け付けるよう修正した。負値、非数、欠損、余分な文字、分付きで60秒以上の値は拒否する。読み取り確認で残数の解析を確認したが、実計算の値は公開資料に転記しない。観測値は完了証拠ではない。
 
-The parser now accepts minutes-and-seconds durations while retaining complete-record validation. Negative, nonnumeric, incomplete, extra-text and invalid seconds fields remain rejected. A subsequent read-only check parsed 203 remaining at that instant; this is provisional observation, not completion evidence.
+The parser now accepts minutes-and-seconds durations while retaining complete-record validation. Negative, nonnumeric, incomplete, extra-text and invalid seconds fields remain rejected. A read-only check confirmed parsing; real-run values are omitted from this public record. Observations do not establish completion.
 
 ## Isocenter相対誤差 / Isocenter relative error
 
-表示に使う観測JSONの更新は前日15:44に停止していた。その後の読み取り専用確認では、現行の線量・誤差ペアを2回とも正常に解析し、1.989%を取得した（約0.56秒/回）。実PHITS出力が表示値の6.06%で止まっていたわけではない。
+表示に使う観測JSONの更新が停止していた一方、その後の読み取り専用確認では現行の線量・誤差ペアを解析できた。表示更新の停止と元出力の停止は区別する必要がある。実計算の相対誤差、時刻、解析時間は公開資料に転記しない。
 
-The observation sidecar had stopped updating at 15:44 on the preceding day. Two read-only parses of the current pair succeeded at approximately 0.56 seconds each and returned 1.989%. The PHITS pair itself was not frozen at the displayed 6.06%.
+The observation sidecar had stopped updating, while a subsequent read-only inspection could parse the current dose/error pair. A frozen display must be distinguished from frozen source output. Real-run relative-error values, timestamps and parsing timings are omitted from this public record.
 
 観測JSONの書き込み例外で観測処理を永久停止する実装を確認した。Windowsの一時的なアクセス・共有競合（5/32/33）では、そのサンプルを採用せず、次の新しいサンプルで通常の安全な出力処理を再試行する。50msの所有者ポーリングごとの再試行は行わない。危険なパス、その他の例外、終了済み観測の拒否は維持する。合成ファイルを通常のWindows読み取りハンドルで開いて置換を阻害するテストで、停止と復帰を検証した。
 

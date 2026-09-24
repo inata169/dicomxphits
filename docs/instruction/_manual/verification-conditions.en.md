@@ -10,13 +10,13 @@ Status: **proposal prepared; execution not approved or performed**. The request 
 | --- | --- |
 | Start prerequisite | After the current calculation ends, its terminal state is confirmed, and exact run conditions and paths are approved. |
 | GUI | Launch code containing PR #84: repair `95fc06d`, merge `fa5f0a3`; local `b45e623` has identical repaired contents. Do not replace the running GUI. |
-| Candidate case | `TG119hnwp`, identified in the earlier authorized read-only investigation. Its name alone does not prove non-patient status; confirm permission and non-patient phantom provenance before execution. No source-data inspection was repeated here. |
+| Candidate case | `<approved-non-patient-case>`; the real case identifier is not published. Confirm permission and non-patient phantom provenance before execution. No source-data inspection was repeated here. |
 | Inputs | Propose the case's validated frozen CT2PHITS handoff as input to a fresh workspace. Do not overwrite its existing calculation workspace or results. Confirm the exact frozen inputs and validity before preparation. |
 | PHITS | Supported PHITS 3.35 Windows OpenMP; exact executable path and version remain to be confirmed. |
 | Threads | 10 |
 | maxcas | 4,000,000 histories/batch |
-| maxbch | 10 batches/segment, reduced from the earlier 500. Apply through new-workspace preparation settings, not by editing existing generated inputs. |
-| Segments | Earlier observation showed two active segments. Confirm the same two before execution and perform one normal all-active GUI run. Revise the proposal if the count differs; no selective omission, addition or automatic retry. |
+| maxbch | Propose 10 batches/segment. Apply through new-workspace preparation settings, not by editing existing generated inputs. |
+| Segments | Assume two active segments for this proposal. Confirm before execution and perform one normal all-active GUI run. Revise the proposal if the count differs; no selective omission, addition or automatic retry. |
 | Mesh, geometry and physics | Preserve the original approved case conditions. No observation-driven mesh, coordinate, source, physics, MU or normalization change is proposed. Record the actual mesh before execution. |
 | Output | A fresh `gui-pr84-check-001` workspace under an approved verification parent, independent of the repository, PHITS installation, source data and existing calculation destinations. The absolute path is unresolved. If occupied, propose a different fresh name rather than reuse it. |
 | Records | Propose a separate fresh sibling `gui-pr84-check-001-evidence`. Keep real data and local configuration outside the repository. Neither directory is created in this task. |
@@ -33,7 +33,7 @@ The user estimates that “4,000,000 takes about five minutes.” This proposal 
 | One segment, ten batches | 40,000,000 | About 50 minutes |
 | Two segments | 80,000,000 | About 100 minutes |
 
-Preparation, output, transitions and result validation add time. Segments and computer load may differ. Nominal histories are 1/50 of the earlier two-segment, 500-batch configuration, but elapsed time is not guaranteed to scale by exactly 1/50. Do not equate PHITS `cpu time` with elapsed time. Separately establish whether the minute/second format actually occurs.
+Preparation, output, transitions and result validation add time. Segments and computer load may differ. Elapsed time is not guaranteed to scale directly with nominal histories. Do not equate PHITS `cpu time` with elapsed time. Separately establish whether the minute/second format actually occurs.
 
 ## Observation and ending policy
 

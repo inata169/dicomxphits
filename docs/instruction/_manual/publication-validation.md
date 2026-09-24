@@ -37,6 +37,12 @@ Automatic approval review rejected the first image upload because personal-compu
 
 After this evidence and reduced scope were supplied, the first clean image upload was accepted. The remote documentation commit is built directly on merged main, so local commits containing excluded images are not pushed. Final link checks require every local target to be in the Git index, not merely present on disk.
 
-## 未検証 / Unverified
+## PR review correction — round 1
+
+Codex review identified copied real-run observations and a local case identifier in the supporting records. The repair record and handoff now describe the incident without measured values, timestamps or parsing timings; both condition proposals and the handoff use a generic case placeholder. Historical real-run batch settings were also removed from the comparison. Proposed future conditions and synthetic test measurements remain clearly distinguished. This correction changes documentation only; focused text/link/bilingual checks and public-tree audit are rerun. The earlier full runtime suite remains applicable because runtime and tests are unchanged.
+
+The correction updates the current files; it does not erase already published PR history or review comments. No force-push or history rewrite is performed.
+
+## 未検証事項 / Remaining unverified items
 
 No real tools, live GUI operations, calculation-directory reads/writes, GUI restart, power-loss simulation or real folder deletion were performed for publication. Real-run observation refresh, long-duration behavior and full-dataset Structure hashing performance remain unverified. Blank real-verification records remain blank. The proposed real execution still requires its own exact conditions and approval.
