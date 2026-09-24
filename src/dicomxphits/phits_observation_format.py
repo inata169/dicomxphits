@@ -258,14 +258,17 @@ def parse_batch(raw, prepared):
     # Full updated record, not merely a first-line integer.
     pattern = (r"(\d+) <--- number of remaining batches \n\n-{79}\n"
         r"bat\[\s*(\d+)\] ncas =\s*(\d+)\.\n"
-        r" bitrseed = " + SEED + r"\n\s*cpu time =\s*(" + NUMBER + r") s\.\n\n"
+        r" bitrseed = " + SEED + r"\n\s*cpu time =\s*(?:(\d+) m\.\s+)?(" + NUMBER + r") s\.\n\n"
         r" date = \d{4}-\d{2}-\d{2}\n time = \d{2}h \d{2}m \d{2}s\n\n"
         r"-{79}\nnext initial random seed:\n bitrseed = " + SEED + r"\n")
     match = re.fullmatch(pattern, text)
     require(match is not None)
     remaining, batch, histories = (integer(match[i]) for i in (1, 2, 3))
     require(0 <= remaining <= prepared and 1 <= batch <= prepared and histories > 0)
-    require(number(match[4]) >= 0)
+    seconds = number(match[5])
+    require(seconds >= 0)
+    if match[4] is not None:
+        require(integer(match[4]) > 0 and seconds < 60)
     return remaining
 
 

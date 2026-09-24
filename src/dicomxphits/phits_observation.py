@@ -142,6 +142,7 @@ class Observer:
         self.latest = None
         self.sequence = 0
         self.published = 0
+        self.publication_attempted = 0
         self.last_remaining = None
         self.thread = None
 
@@ -206,13 +207,21 @@ class Observer:
             return
         with self.lock:
             record = self.latest
-        if record is None or record["sequence"] == self.published:
+        if record is None or record["sequence"] == self.publication_attempted:
             return
+        self.publication_attempted = record["sequence"]
         try:
             raw = json.dumps(record, allow_nan=False).encode("utf-8")
             require(len(raw) <= MAX_HEADER_BYTES, "resource-limit")
             guard.write_bytes(self.root / RELATIVE_PATH, raw)
             self.published = record["sequence"]
+        except OSError as exc:
+            # A temporary Windows sharing/access conflict must not permanently
+            # retire an otherwise healthy observer. Try only a new sample, at
+            # the worker's bounded cadence; never spin on the owner's poll loop.
+            # Every later attempt still uses the complete output guard.
+            if getattr(exc, "winerror", None) not in {5, 32, 33}:
+                self.closed.set()
         except Exception:
             self.closed.set()
 

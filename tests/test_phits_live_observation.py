@@ -180,6 +180,35 @@ def test_confirmation_reset_and_unchanged_age():
     assert candidate.record(18)["value"] == 3
 
 
+@pytest.mark.parametrize("duration", ["1 m. 0.00 s.", "  6 m. 51.13 s.", "59 m. 59.99 s."])
+def test_complete_batch_with_minute_cpu_duration(duration):
+    raw = batch(7).replace(b"0.123 s.", duration.encode("ascii"))
+    assert parse_batch(raw, 10) == 7
+
+
+@pytest.mark.parametrize("duration", ["-1 m. 1 s.", "1 m. -1 s.", "1 m. 60 s.",
+                                     "1 m. nan s.", "1 m.", "1 m. 2 s. extra"])
+def test_malformed_minute_cpu_duration_rejected(duration):
+    with pytest.raises(ObservationError):
+        parse_batch(batch().replace(b"0.123 s.", duration.encode("ascii")), 10)
+
+
+def test_observer_updates_after_batches_exceed_one_minute(tmp_path):
+    observer, _ = observer_fixture(tmp_path)
+    observer.sample()
+    assert observer.sample()["batch"]["value"]["remaining"] == 9
+    for remaining, error in ((8, .08), (7, .06)):
+        (observer.staging / "batch.out").write_bytes(
+            batch(remaining).replace(b"0.123 s.", b"  6 m. 51.13 s."))
+        observer.dose_path.write_bytes(tally(histories=(10-remaining)*10))
+        observer.error_path.write_bytes(tally("error", [error]*8, histories=(10-remaining)*10))
+        pending = observer.sample()
+        assert pending["batch"]["value"]["remaining"] == remaining + 1
+        accepted = observer.sample()
+        assert accepted["batch"]["value"]["remaining"] == remaining
+        assert accepted["error"]["value"]["relative_error_percent"] == error * 100
+
+
 def observer_fixture(tmp_path):
     root = tmp_path.resolve()
     staging = root / "staging"
@@ -236,6 +265,73 @@ def test_publication_failure_close_and_no_output_mutations(tmp_path):
     observer.publish(Broken())
     assert observer.closed.is_set()
     assert before == {p.name:p.read_bytes() for p in observer.staging.iterdir()}
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_publication_recovers_from_sharing_failure_on_new_sample(tmp_path, winerror):
+    observer, _ = observer_fixture(tmp_path)
+    observer.sample()
+    observer.latest = {**observer.sample(), "sequence": 1}
+    writes = []
+
+    class InitiallyBlocked:
+        def write_bytes(self, path, raw):
+            writes.append(json.loads(raw))
+            if len(writes) == 1:
+                exc = PermissionError("synthetic Windows sharing conflict")
+                exc.winerror = winerror
+                raise exc
+
+    guard = InitiallyBlocked()
+    observer.publish(guard)
+    assert not observer.closed.is_set() and observer.published == 0
+    for _ in range(20):
+        observer.publish(guard)
+    assert len(writes) == 1  # No retries at the owner's 50-ms cadence.
+    observer.latest = {**observer.sample(), "sequence": 2}
+    observer.publish(guard)
+    assert observer.published == 2 and not observer.closed.is_set()
+    assert writes[1]["error"]["value"] == {"relative_error_percent": 10.0}
+    observer.closed.set()
+    observer.latest = {**observer.sample(), "sequence": 3}
+    observer.publish(guard)
+    assert len(writes) == 2  # Retired workers never resume publication.
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows file sharing semantics")
+def test_windows_sidecar_reader_cannot_permanently_stop_observation(tmp_path):
+    observer, _ = observer_fixture(tmp_path)
+    observer.sample()
+    observer.latest = {**observer.sample(), "sequence": 1}
+    target = tmp_path / RELATIVE_PATH
+    with WorkspaceOutputGuard(tmp_path) as guard:
+        observer.publish(guard)
+        first = target.read_bytes()
+        # An ordinary Windows reader denies delete/replacement until closed.
+        # Use authored files only, exercising the actual atomic writer.
+        with target.open("rb"):
+            observer.latest = {**observer.sample(), "sequence": 2}
+            observer.publish(guard)
+            assert not observer.closed.is_set()
+            assert observer.published == 1 and target.read_bytes() == first
+        observer.latest = {**observer.sample(), "sequence": 3}
+        observer.publish(guard)
+        assert observer.published == 3
+        assert json.loads(target.read_bytes())["sequence"] == 3
+
+
+def test_unsafe_publication_still_disables_observer(tmp_path):
+    from dicomxphits.safe_output import UnsafeWorkspacePathError
+    observer, _ = observer_fixture(tmp_path)
+    observer.sample()
+    observer.latest = {**observer.sample(), "sequence": 1}
+
+    class Unsafe:
+        def write_bytes(self, *args):
+            raise UnsafeWorkspacePathError("synthetic unsafe destination")
+
+    observer.publish(Unsafe())
+    assert observer.closed.is_set() and observer.published == 0
 
 
 def test_presentation_generation_corruption_stale_and_terminal(tmp_path):

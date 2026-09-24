@@ -383,9 +383,11 @@ def test_axis_mapping_and_approved_statistics_are_exact() -> None:
     }
 
 
-def test_retained_large_sources_use_metadata_without_rehashing(
+@pytest.mark.parametrize("poll_sha256", [False, True])
+def test_retained_sources_detect_changed_bytes_with_identical_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    poll_sha256: bool,
 ) -> None:
     source = tmp_path / "large-tally.out"
     source.write_bytes(b"validated tally content")
@@ -393,20 +395,55 @@ def test_retained_large_sources_use_metadata_without_rehashing(
         source,
         label="combined Sumtally dose output",
         expected_sha256=module.file_sha256(source),
-        poll_sha256=False,
+        poll_sha256=poll_sha256,
     )
+    # Deterministic collision: do not depend on filesystem timestamp resolution
+    # or sleep until a real metadata change happens.
+    original_stat = Path.stat
+    frozen_stat = source.stat()
     monkeypatch.setattr(
-        module,
-        "file_sha256",
-        lambda *_args, **_kwargs: pytest.fail(
-            "retained large sources must not be rehashed"
-        ),
+        Path, "stat",
+        lambda path, *args, **kwargs: frozen_stat if path == source
+        else original_stat(path, *args, **kwargs),
     )
+    monkeypatch.setattr(module, "_file_change_token", lambda path: snapshot["change_token"])
 
     module._verify_retained_file_snapshot(snapshot)
 
     source.write_bytes(b"changed tally content!!")
     with pytest.raises(StructureRelativeErrorUnavailable, match="source changed"):
+        module._verify_retained_file_snapshot(snapshot)
+
+
+def test_retained_source_metadata_change_rejects_before_hashing(tmp_path, monkeypatch):
+    source = tmp_path / "tally.out"
+    source.write_bytes(b"original")
+    snapshot = module._retained_file_snapshot(
+        source, label="tally", expected_sha256=module.file_sha256(source),
+        poll_sha256=False,
+    )
+    source.write_bytes(b"different length")
+    monkeypatch.setattr(module, "file_sha256", lambda path: pytest.fail("unnecessary hash"))
+    with pytest.raises(StructureRelativeErrorUnavailable, match="source changed"):
+        module._verify_retained_file_snapshot(snapshot)
+
+
+def test_retained_source_rechecks_metadata_after_hashing(tmp_path, monkeypatch):
+    source = tmp_path / "tally.out"
+    source.write_bytes(b"original")
+    snapshot = module._retained_file_snapshot(
+        source, label="tally", expected_sha256=module.file_sha256(source),
+        poll_sha256=False,
+    )
+    original_hash = module.file_sha256
+
+    def changed_during_hash(path):
+        digest = original_hash(path)
+        path.write_bytes(b"changed after reading")
+        return digest
+
+    monkeypatch.setattr(module, "file_sha256", changed_during_hash)
+    with pytest.raises(StructureRelativeErrorUnavailable, match="changed during validation"):
         module._verify_retained_file_snapshot(snapshot)
 
 

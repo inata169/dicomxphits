@@ -1037,22 +1037,25 @@ def _verify_retained_file_snapshot(record: dict[str, Any]) -> None:
         raise StructureRelativeErrorUnavailable(
             "a retained Structure relative-error source changed"
         )
-    if record.get("poll_sha256") is True:
-        if file_sha256(path) != record.get("sha256"):
-            raise StructureRelativeErrorUnavailable(
-                "a retained Structure relative-error evidence record changed"
-            )
-        after = path.stat()
-        if (
-            _file_change_token(path) != record.get("change_token")
-            or any(
-                int(getattr(after, name)) != value
-                for name, value in expected_stat.items()
-            )
-        ):
-            raise StructureRelativeErrorUnavailable(
-                "a retained Structure relative-error evidence record changed"
-            )
+    # Same-size rewrites can preserve every metadata field, including Windows
+    # ChangeTime. The legacy poll_sha256 hint must never bypass content checks.
+    # GUI revalidation already runs in one background worker; stream the hash
+    # without reparsing tallies, CT pixels or Structure membership.
+    if file_sha256(path) != record.get("sha256"):
+        raise StructureRelativeErrorUnavailable(
+            "a retained Structure relative-error source changed"
+        )
+    after = path.stat()
+    if (
+        _file_change_token(path) != record.get("change_token")
+        or any(
+            int(getattr(after, name)) != value
+            for name, value in expected_stat.items()
+        )
+    ):
+        raise StructureRelativeErrorUnavailable(
+            "a retained Structure relative-error source changed during validation"
+        )
 
 
 def _retained_directory_snapshot(
