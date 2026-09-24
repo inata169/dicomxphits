@@ -46,6 +46,42 @@ def write_file(path: Path, text: str = "x") -> Path:
     return path
 
 
+@pytest.mark.parametrize("retry", [False, True])
+@pytest.mark.parametrize("damage", [None, "output", "binding", "history"])
+def test_retry_capable_phits_can_recover_before_first_sumtally(tmp_path, retry, damage):
+    from test_segment_retry import workspace_fixture, runner_for
+    from dicomxphits.run_segments import run_segments, summary_path
+    from dicomxphits.segment_retry import plan_incomplete
+
+    root, manifest, paths = workspace_fixture(tmp_path)
+    result = run_segments(workspace_root=root, paths=paths,
+        runner=runner_for(root, fail={"seg_002"} if retry else ()))
+    if retry:
+        assert inspect_existing_workspace(root).state == RECOVERY_INVALID
+        plan = plan_incomplete(root, paths)
+        result = run_segments(workspace_root=root, paths=paths, run_incomplete=True,
+            expected_summary_sha256=plan["source_sha256"], runner=runner_for(root))
+    assert not (root / "analysis/sumtally_generation_summary.json").exists()
+    if damage == "output":
+        (root / manifest["segments"][0]["expected_output_path"]).write_text("changed")
+    elif damage == "binding":
+        (root / "analysis/phits_generation_summary.json").write_text("{}")
+    elif damage == "history":
+        if retry:
+            (root / result["parent_attempt"]["path"]).write_text("{}")
+        else:
+            result["segments"][0]["output_evidence"] = []
+            summary_path(root).write_text(json.dumps(result))
+    inspection = inspect_existing_workspace(root)
+    if damage:
+        assert inspection.state == RECOVERY_INVALID
+        assert not inspection.can_create_rtdose
+    else:
+        assert inspection.state == RECOVERY_READY
+        assert inspection.highest_verified_stage == "PHITS completed"
+        assert inspection.stage_sequence == FULL_DOWNSTREAM_SEQUENCE
+
+
 def synthetic_course_dose_evidence(
     *,
     rtplan_sha256: str = "a" * 64,

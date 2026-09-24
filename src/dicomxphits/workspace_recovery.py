@@ -1059,8 +1059,15 @@ def inspect_existing_workspace(workspace_root: Path) -> WorkspaceRecoveryInspect
             manifest,
             segment_summary,
         )
-        _validate_phits_digest_evidence(root, manifest=manifest, outputs=outputs)
-    except WorkspaceRecoveryError as exc:
+        # Retry-capable records already bind and hash every completed artifact
+        # above, including retained results and their parent attempt. Requiring
+        # a Sumtally summary here makes the first downstream run impossible.
+        # Older records still require their historical downstream digest proof.
+        if segment_summary.get("schema_version") not in {
+            SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5,
+        }:
+            _validate_phits_digest_evidence(root, manifest=manifest, outputs=outputs)
+    except (ValueError, OSError) as exc:
         return WorkspaceRecoveryInspection(
             root,
             RECOVERY_INVALID,

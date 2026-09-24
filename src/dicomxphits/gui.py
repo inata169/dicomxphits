@@ -4166,6 +4166,8 @@ def _build_gui() -> int:
             "run_rtdose",
         }:
             refresh_rtdose_workflow_state()
+        if spec.key == "run_segments" and existing_case_mode.get():
+            inspect_selected_existing_workspace()
         set_busy(None)
         if spec.key == "prepare_rtdose":
             append("RTDOSE is prepared. Next: click Run RTDOSE.", "info")
