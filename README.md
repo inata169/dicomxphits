@@ -5,12 +5,13 @@ fixed-field 3D-CRT PHITS inputs from DICOM RT Plans and for controlling the
 explicit PHITS, Sumtally, RTDOSE, coordinate-correction, and external GPR
 handoff stages.
 
-> **Status: Experimental — v1.1.0**
+> **Status: Experimental — v1.1.1 release candidate**
 >
-> v1.1.0 is available for education and research evaluation.
+> This source prepares v1.1.1 for education and research evaluation;
+> v1.1.1 has not been tagged or published.
 > It has passed automated tests and bounded synthetic GUI checks,
 > but stable operation across real external-tool workflows has not
-> been established. The final v1.1.0 PHITS/controller end-to-end
+> been established. The v1.1.1 PHITS/controller end-to-end
 > workflow remains unverified.
 >
 > Unexpected failures may occur. Preserve existing inputs and results,
@@ -32,9 +33,13 @@ tool distributions, and real-tool outputs must remain outside this repository.
 This README is the public entry point, not the complete technical specification.
 Choose the path that matches your purpose:
 
-- **First-time Windows research users** — start with
-  [Windows GUI Quick Start](#windows-gui-quick-start), then follow the
-  [GUI User Guide](docs/gui-user-guide.md).
+- **First-time Windows research users** — start with the
+  [日本語GUI操作説明書](docs/instruction/_manual/gui-manual.ja.md) or
+  [English GUI operating manual](docs/instruction/_manual/gui-manual.en.md)
+  for setup, normal operation, STOP, retry and recovery. The
+  [Windows GUI Quick Start](#windows-gui-quick-start) below covers installation
+  and launch; the [technical GUI User Guide](docs/gui-user-guide.md) provides
+  additional contracts and troubleshooting details.
 - **Researchers reviewing scope and evidence** — read
   [What This Repository Demonstrates](#what-this-repository-demonstrates),
   [Built-In Public Research Model](#built-in-public-research-model), and the
@@ -55,14 +60,13 @@ All paths retain the same education-and-research-only boundary stated above.
 
 ## Status
 
-Version 1.1.0 is published for experimental evaluation and includes standalone
-public adapters for strict 3D-CRT workspace preparation, PHITS segment execution,
-Sumtally generation and execution, RTDOSE conversion and coordinate correction,
-and an optional external GPR-comparing handoff. See the
-[published v1.1.0 release notes](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0)
-for the changes since v1.0.3 and the current validation limits. The package and
-GUI About dialog identify this source version as 1.1.0. Publication does not
-establish stable operation across real external-tool workflows.
+Version 1.1.1 is an experimental patch release candidate based on the merged
+v1.1.0 follow-up fixes and Japanese/English GUI manuals. It repairs downstream
+recovery after PHITS retry, live observation refresh and retained Structure
+result freshness. Package metadata and GUI About report 1.1.1. See the
+[v1.1.1 release notes](docs/release-notes-v1.1.1.md) for the changes and the
+separate automated, manual and real-tool evidence boundaries. No new workflow
+capability or physical validation is claimed.
 
 The current public release is
 [`v1.1.0`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0). It is
@@ -674,8 +678,8 @@ section; see the CLI reference for the fail-closed boundaries.
 - [CLI and technical reference](docs/cli-reference.md)
 - [Development handoff — 2026-08-13](docs/development-handoff-2026-08-13.md)
 - [Public feasibility demonstration and research boundaries](docs/public-feasibility-demonstration.md)
-- [GUI User Guide for v1.0.x](docs/gui-user-guide.md)
-- GUI operating manuals (v1.1.0 functionality plus PR #83/#84 repairs): [日本語](docs/instruction/_manual/gui-manual.ja.md) / [English](docs/instruction/_manual/gui-manual.en.md)
+- [Technical GUI User Guide](docs/gui-user-guide.md)
+- GUI operating manuals (v1.1.1 candidate, including PR #83/#84 repairs): [日本語](docs/instruction/_manual/gui-manual.ja.md) / [English](docs/instruction/_manual/gui-manual.en.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)
 - [Windows offline installation validation — 2026-08-07](docs/windows-offline-installation-validation-2026-08-07.md)
 - [Development handoff — 2026-08-07](docs/development-handoff-2026-08-07.md)

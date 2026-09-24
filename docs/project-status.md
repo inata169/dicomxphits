@@ -37,7 +37,22 @@ Windows offline ZIP, see the
 For the current experimental release and its validation limits, see the
 [v1.1.0 release notes](release-notes-v1.1.0.md).
 
-## Current baseline
+## Current source candidate — v1.1.1
+
+Reviewed starting main: `7bc132bc54d83cf575aefa46d00328933918a88d`
+(2026-09-25), including merged PR #83, #84 and #85. The source candidate
+reports 1.1.1; publication remains subject to human review and explicit
+authorization. No v1.1.1 tag, GitHub Release or offline asset is created.
+
+The patch combines retry/downstream recovery, observation refresh, retained
+Structure freshness, bilingual GUI manuals and version/documentation alignment.
+See [v1.1.1 release notes](release-notes-v1.1.1.md) for the evidence by category
+and remaining real PHITS/controller, Sumtally/RTDOSE and physical-validation
+limits. Historical real-tool demonstrations remain valid only within their
+recorded bounds, not as candidate acceptance. No physics, DICOM, runtime
+workflow or normative public-specification change is part of this preparation.
+
+## Current published baseline — v1.1.0
 
 - Public release: [`v1.1.0`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0)
 - Previous public release: `v1.0.3`
@@ -216,7 +231,7 @@ public-tree audit passes 138 tracked files.
 
 The following chronology is retained as historical evidence. Its references to
 then-current specification counts and active changes are superseded by the
-v1.1.0 current baseline above; prior release closeouts remain historical.
+v1.1.0 published baseline above; prior release closeouts remain historical.
 
 The completion state for pull request #8 was validated locally on Windows
 with:
@@ -422,6 +437,10 @@ paragraph records the earlier boundary rather than the current OpenSpec state.
 
 ## Human-decision queue
 
+The v1.1.1 preparation is authorized for documentation, version alignment and
+synthetic validation. Review and publication decisions remain with the human;
+real external-tool execution requires separately approved exact conditions.
+
 The human approved v1.1.0 source-only publication at the release commit above.
 Publication is complete. The Experimental documentation clarification does not
 authorize new calculations, physical validation or a public offline asset.
@@ -460,6 +479,7 @@ At the start of a future development session:
    dereferences to that exact commit, and that historical tag `v1.0.2` still
    dereferences to `efb0dace568fbcb12019f3d320a468dcfb446e34`.
 4. Read this document, the
+   [v1.1.1 candidate release notes](release-notes-v1.1.1.md), the
    [v1.1.0 release notes](release-notes-v1.1.0.md), the historical
    [v1.0.3 release notes](release-notes-v1.0.3.md), the
    [v1.0.2 release closeout](development-handoff-2026-08-15-v1.0.2.md), the

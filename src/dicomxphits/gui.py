@@ -109,10 +109,10 @@ PERSISTED_GUI_FIELDS = (
     "machine_config_path",
     *RUNTIME_SETTING_DEFAULTS,
 )
-GUI_HELP_TEXT = """\
+GUI_HELP_TEXT = f"""\
 usage: dicomxphits-gui [-h]
 
-Launch the dicomxphits v1.0.x guided GUI for validated 3D-CRT fixed-field
+Launch the dicomxphits {__version__} guided GUI for validated 3D-CRT fixed-field
 workflows only. The first stage uses the accepted Windows CT2PHITS frontend.
 IMRT, dynamic MLC delivery, and VMAT are not supported as validated public
 workflows.

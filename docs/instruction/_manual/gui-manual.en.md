@@ -2,7 +2,7 @@
 
 Date: 2026-09-24. [日本語](gui-manual.ja.md) / [Document index](README.md)
 
-Applies to v1.1.0 functionality plus retry recovery in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Both repairs are merged into main but are absent from the published v1.1.0 tag. Instructions describing repaired behavior assume a version containing both PRs.
+Applies to the v1.1.1 release candidate: v1.1.0 functionality plus retry recovery in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Both repairs are merged into main but are absent from the published v1.1.0 tag. The candidate contains both PRs; v1.1.1 has not yet been tagged or published. Install the candidate before starting a new GUI session; Help → About should report 1.1.1. An already running GUI retains its imported code.
 
 This is experimental education and research software for fixed-field 3D-CRT using authorized non-patient phantom data. Clinical use, patient QA, IMRT, dynamic MLC and VMAT are outside its scope. This manual does not establish stable operation with real external tools or dose agreement with a clinical machine.
 

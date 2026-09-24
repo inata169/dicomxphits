@@ -2,7 +2,7 @@
 
 作成日：2026-09-24。[English](gui-manual.en.md) / [資料一覧](README.md)
 
-対象：v1.1.0の機能と、[PR #83](https://github.com/inata169/dicomxphits/pull/83)の再開処理修正、[PR #84](https://github.com/inata169/dicomxphits/pull/84)の観測更新・Structure変更検出修正を含むコード。両修正はmainへマージ済みですが、公開済みv1.1.0タグには含まれません。以下の修正後の説明は両PRを含む版を前提とします。
+対象：v1.1.1リリース候補。v1.1.0の機能と、[PR #83](https://github.com/inata169/dicomxphits/pull/83)の再開処理修正、[PR #84](https://github.com/inata169/dicomxphits/pull/84)の観測更新・Structure変更検出修正を含むコード。両修正はmainへマージ済みですが、公開済みv1.1.0タグには含まれません。この候補には両PRが含まれます。v1.1.1タグ・Releaseはまだ公開していません。候補をインストールしてから新しくGUIを起動し、Help → Aboutが1.1.1を示すことを確認します。起動済みGUIのコードは更新されません。
 
 このソフトウェアは教育・研究用の実験的な固定照射野3D-CRTワークフローです。許可を得た非患者ファントムデータを使用します。臨床利用、患者QA、IMRT、動的MLC、VMATは対象外です。実外部ツールを通した安定動作や臨床装置との線量一致を保証する説明書ではありません。
 

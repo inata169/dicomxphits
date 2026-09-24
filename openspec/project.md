@@ -7,6 +7,14 @@ fixed-field 3D-CRT workflow from DICOM inputs through explicit PHITS-related
 handoff stages. It is not clinical commissioning, patient QA, or vendor
 certification software.
 
+## Current Source Candidate
+
+- The source candidate is `v1.1.1`, preparing the merged PR #83/#84 repairs
+  and PR #85 operating manuals as an experimental patch release.
+- v1.1.1 publication requires a separate human decision. No new capability,
+  normative specification or physical validation is introduced. See
+  [candidate release notes](../docs/release-notes-v1.1.1.md).
+
 ## Current Public Release
 
 - The current public release is `v1.1.0`, tagged at commit
