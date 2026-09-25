@@ -1924,7 +1924,7 @@ def test_pep660_editable_install_does_not_mutate_source_tree(tmp_path):
             "-I",
             "-c",
             "import dicomxphits,importlib.metadata;"
-            "assert importlib.metadata.version('dicomxphits') == '1.1.0'",
+            "assert importlib.metadata.version('dicomxphits') == '1.1.1'",
         ],
         check=False,
         capture_output=True,
