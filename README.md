@@ -36,7 +36,10 @@ Choose the path that matches your purpose:
 - **First-time Windows research users** — start with the
   [日本語GUI操作説明書](docs/instruction/_manual/gui-manual.ja.md) or
   [English GUI operating manual](docs/instruction/_manual/gui-manual.en.md)
-  for setup, normal operation, STOP, retry and recovery. The
+  for setup, normal operation, STOP, retry and recovery, with synthetic
+  screenshots whose personal path regions are blurred. See the
+  [screenshot index](docs/instruction/_manual/screenshots/README.md) for
+  examples and clearly labeled historical pre-fix screens. The
   [Windows GUI Quick Start](#windows-gui-quick-start) below covers installation
   and launch; the [technical GUI User Guide](docs/gui-user-guide.md) provides
   additional contracts and troubleshooting details.
