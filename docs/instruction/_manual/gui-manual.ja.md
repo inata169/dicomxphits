@@ -22,7 +22,7 @@
 
 ![ケース設定の例（合成データ）](screenshots/01-case-setup.jpg)
 
-画像は合成データによる検証用GUIです。タイトルの`SYNTHETIC MANUAL CHECK`は通常の起動例ではありません。個人PCの合成パスを含む操作画像は[公開対象外](screenshots/README.md)とし、手順を本文で説明しています。説明書の作成時に、別途実行中だった10 threadsのGUIは操作・撮影していません。
+画像は独立した合成GUIの記録であり、実PHITSの成功証拠ではありません。`SYNTHETIC MANUAL CHECK`は通常の起動タイトルではありません。07〜19番は個人情報を含むパス部分だけを強くぼかした公開用画像です。操作ボタン・状態表示・数値は変更していません。原本はローカルに保持し、[画像一覧と加工範囲](screenshots/README.md)に区別を記載しています。別枠の10 threads実計算を撮影した画像ではありません。
 
 ## 2. 起動前の準備と終了
 
@@ -110,6 +110,8 @@ py -3.12 -m venv .venv
 
 実行中は入力、実行ファイル、結果、summaryを変更しません。生成入力の`$OMP = N`はPHITSの構文なので、コメントと考えて削除しないでください。止める場合は6章を使います。
 
+![PHITS実行中の合成例](screenshots/07-synthetic-running-redacted.png)
+
 ### 4.4 Sumtally：結果を集計する
 
 1. `4 Sumtally`で`Generate Sumtally`を押します。
@@ -162,6 +164,10 @@ Live Isocenter `r.err`は、現在のセグメントのアイソセンタを含�
 
 最初のセグメント起動が先に確定すると、準備キャンセルは受理されません。その場合、停止したければ別途`Stop after current segment`を操作します。
 
+![PHITS起動前の準備中（合成例）](screenshots/15-preparation-before-launch-redacted.png)
+
+![準備キャンセル完了（合成例）](screenshots/16-preparation-cancelled-redacted.png)
+
 ### PHITS計算中
 
 1. `Stop after current segment`を1回押します。
@@ -169,7 +175,11 @@ Live Isocenter `r.err`は、現在のセグメントのアイソセンタを含�
 3. 受理時点で起動が確定していたセグメントの計算と検証を待ちます。停止までの時間は保証されません。
 4. 未完了分が残れば`User stopped`と完了数・残数を確認します。この状態になってからGUIを閉じられます。
 
-[STOP受理後の待機（合成データ） — local-only / 公開対象外](screenshots/README.md)
+![STOP受理後の待機（合成例）](screenshots/08-stop-pending-redacted.png)
+
+![実行中のGUI終了を拒否する画面（合成例）](screenshots/09-close-blocked-while-running-redacted.png)
+
+![セグメント境界で停止した状態（合成例）](screenshots/10-user-stopped-redacted.png)
 
 STOPは即時終了、バッチ途中停止、強制終了ではありません。受理した要求は取り消せません。クリック時に画面に出ていたセグメントと、受理時点のセグメントが異なる場合があります。最後のセグメントが正常終了して全数が揃えば、STOPと重なっても通常の完了になります。計算・検証が失敗した場合は`User stopped`ではなく失敗・未完了です。
 
@@ -185,11 +195,22 @@ STOPは即時終了、バッチ途中停止、強制終了ではありません�
 4. 実行予定分が完了し、全有効セグメントの検証が通るまで待ちます。
 5. 新規ケースの通常モードを維持している場合は4.4節へ進みます。`Open existing case…`を使った場合は8章の復旧操作を使います。
 
-[保持分・再実行分のプレビュー（合成データ） — local-only / 公開対象外](screenshots/README.md)
+![未完了ケースを開き直した状態（合成例）](screenshots/11-reopened-incomplete-case-redacted.png)
+
+![保持分・再実行分の確認（合成例）](screenshots/12-retry-preview-redacted.png)
 
 成功済みの検証可能な結果は保持します。未完了セグメントは最初から再計算し、途中の統計を継ぎ足しません。前回のSTOP要求は次の試行に持ち越されません。
 
-PR #83を含む版では、既存ケースの再実行成功後に復旧状態を更新し、証拠が有効なら`Verified — locked`、`Recovery needed`、`Recovery ready`などの表示へ進みます。必要なCT2PHITS引き継ぎが未選択なら、8章の選択が必要です。修正前の[再実行完了画像 — local-only / 公開対象外](screenshots/README.md)には古い拒否表示が残っています。この画像は修正後の表示例には使わないでください。
+PR #83を含む版では、既存ケースの再実行成功後に復旧状態を更新し、証拠が有効なら`Verified — locked`、`Recovery needed`、`Recovery ready`などの表示へ進みます。必要なCT2PHITS引き継ぎが未選択なら、8章の選択が必要です。修正前の[再実行完了画像](screenshots/13-retry-completed-redacted.png)には古い拒否表示が残っています。この画像は修正後の表示例には使わないでください。
+
+<details>
+<summary>修正前の不具合の記録（現行の正常動作例ではありません）</summary>
+
+![修正前の記録：再実行完了後に古い拒否表示が残る](screenshots/13-retry-completed-redacted.png)
+
+![修正前の記録：下流復旧が拒否された画面](screenshots/14-recovery-evidence-blocked-redacted.png)
+
+</details>
 
 ### GUI消失・電源断・強制終了後
 
@@ -214,7 +235,11 @@ GUIが消えたことはPHITS終了の証拠ではありません。対象ケー
 | RTDOSE Prepareまで | RTDOSE Run |
 | 最終RTDOSEまで | 既存の最終出力を確認。不要な再実行はしません。 |
 
-[下流復旧の確認画面（合成データ・RTDOSE Runのみの例） — local-only / 公開対象外](screenshots/README.md)
+![RTDOSE復旧可能な状態（合成例）](screenshots/17-rtdose-recovery-ready-redacted.png)
+
+![RTDOSE Runのみを実行する確認（合成例）](screenshots/18-rtdose-recovery-confirmation-redacted.png)
+
+![RTDOSE完了（合成例）](screenshots/19-rtdose-completed-redacted.png)
 
 この操作はWorkspace PrepareやPHITSを再実行しません。競合する下流結果は承認後に`recovery_history/`へ保存されます。途中で失敗したらその工程で停止します。原因を直した後に再検査し、改めて必要工程を確認します。
 

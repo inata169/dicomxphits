@@ -30,8 +30,8 @@ These are dated supporting records, including pre-fix screenshots and work that 
 | 再実行後の状態表示・継続不能の原因 / Retry state and blocked continuation | [原因調査](retry-state-investigation.ja.md) | [Investigation](retry-state-investigation.en.md) |
 | 再実行後の継続不能の修正 / Retry continuation repair | [修正記録](retry-fix.ja.md) | [Repair record](retry-fix.en.md) |
 
-画面はすべてタイトルに`SYNTHETIC MANUAL CHECK`のある独立した検証用GUIから撮影しました。公開するのはパス欄が空の基本6画面です。個人PCの合成パスを含む13枚はローカル保存とし、[公開範囲](screenshots/README.md)を記載しています。
-All screenshots show an isolated `SYNTHETIC MANUAL CHECK` GUI. Publication includes six basic screens with empty path fields; thirteen images with personal-computer synthetic paths remain local. See the [screenshot scope](screenshots/README.md).
+画面はすべてタイトルに`SYNTHETIC MANUAL CHECK`のある独立した検証用GUIから撮影しました。基本6画面に加え、個人PCの合成パス部分だけを強くぼかした13枚を本文に掲載します。未加工の原本はローカル保存とし、[公開範囲](screenshots/README.md)を記載しています。
+All screenshots show an isolated `SYNTHETIC MANUAL CHECK` GUI. Publication includes six basic screens with empty path fields and thirteen copies with personal path regions strongly blurred. Unedited originals remain local. See the [screenshot scope](screenshots/README.md).
 
 [検証用スクリプト / Synthetic session script](support/synthetic_gui_session.py)は開発環境専用です。
 通常のGUI起動には使用しません。合成DICOM・模擬結果・設定ファイルはリポジトリ外に保持し、このフォルダには含めていません。

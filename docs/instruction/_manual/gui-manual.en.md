@@ -22,7 +22,7 @@ Use the five stages on the left and the bottom `Activity log`. The top `Ready` s
 
 ![Case setup using synthetic data](screenshots/01-case-setup.jpg)
 
-Screenshots show synthetic verification sessions; `SYNTHETIC MANUAL CHECK` is not a normal launch title. Images containing personal-computer synthetic paths are [excluded from publication](screenshots/README.md); the written procedures are self-contained. A separate GUI running ten threads was neither operated nor captured during preparation of this manual.
+Screenshots record an isolated synthetic GUI, not successful real PHITS execution. `SYNTHETIC MANUAL CHECK` is not a normal launch title. Images 07–19 are publication copies with strong blur applied only to personal path regions; buttons, status text and numerical values are unchanged. Originals remain local; see the [image index and editing scope](screenshots/README.md). These are not captures of the separate ten-thread real calculation.
 
 ## 2. Prerequisites, launch and exit
 
@@ -110,6 +110,8 @@ PHITS transport does not start here. The workflow validates the RT Plan, MU, coo
 
 Do not modify inputs, the executable, results or summaries during execution. `$OMP = N` in generated inputs is PHITS syntax, not a comment to remove. Use Chapter 6 if you need to stop.
 
+![Synthetic PHITS segment running](screenshots/07-synthetic-running-redacted.png)
+
 ### 4.4 Sumtally: combine results
 
 1. On `4 Sumtally`, click `Generate Sumtally`.
@@ -162,6 +164,10 @@ Live Isocenter `r.err` is provisional statistical relative error for the single 
 
 If the first segment launch commits before cancellation is accepted, preparation cancellation is rejected. Request `Stop after current segment` separately if you still want to stop.
 
+![Synthetic preparation before PHITS launch](screenshots/15-preparation-before-launch-redacted.png)
+
+![Synthetic preparation cancelled](screenshots/16-preparation-cancelled-redacted.png)
+
 ### While PHITS is calculating
 
 1. Click `Stop after current segment` once.
@@ -169,7 +175,11 @@ If the first segment launch commits before cancellation is accepted, preparation
 3. Wait for calculation and validation of the segment committed at acceptance. No stopping-time guarantee is provided.
 4. If unfinished segments remain, confirm `User stopped` and the completed/remaining counts. You may then close the GUI.
 
-[Accepted STOP waiting for the current synthetic segment — local-only / 公開対象外](screenshots/README.md)
+![Accepted STOP waiting for the current synthetic segment](screenshots/08-stop-pending-redacted.png)
+
+![GUI closure blocked during a synthetic stage](screenshots/09-close-blocked-while-running-redacted.png)
+
+![Stopped at a synthetic segment boundary](screenshots/10-user-stopped-redacted.png)
 
 STOP is not immediate termination, a mid-batch stop or a forced kill. An accepted request cannot be withdrawn. The segment committed at acceptance can differ from the segment displayed when you clicked. If the final segment completes and all results validate, normal completion takes precedence. Execution or validation failures produce failed/incomplete status, not a successful user stop.
 
@@ -185,11 +195,22 @@ If the button is disabled, the GUI may not have established ownership of a stop-
 4. Wait for scheduled segments to finish and all active results to validate.
 5. If you remained in normal new-case mode, proceed to section 4.4. If you used `Open existing case…`, use Chapter 8's recovery action.
 
-[Retained and scheduled segment preview using synthetic data — local-only / 公開対象外](screenshots/README.md)
+![Reopened incomplete synthetic case](screenshots/11-reopened-incomplete-case-redacted.png)
+
+![Retained and scheduled synthetic segments](screenshots/12-retry-preview-redacted.png)
 
 Verified successful results are retained. Incomplete segments restart from the beginning; partial statistics are not accumulated. Previous STOP requests do not carry into a new attempt.
 
-Versions containing PR #83 refresh existing-case recovery after retry success. Valid evidence leads to states such as `Verified — locked`, `Recovery needed` and `Recovery ready`. If the required CT2PHITS handoff is missing, select it as described in Chapter 8. The historical [retry-completed screenshot — local-only / 公開対象外](screenshots/README.md) shows stale rejection labels before the repair; do not use it as an example of the repaired display.
+Versions containing PR #83 refresh existing-case recovery after retry success. Valid evidence leads to states such as `Verified — locked`, `Recovery needed` and `Recovery ready`. If the required CT2PHITS handoff is missing, select it as described in Chapter 8. The historical [retry-completed screenshot](screenshots/13-retry-completed-redacted.png) shows stale rejection labels before the repair; do not use it as an example of the repaired display.
+
+<details>
+<summary>Historical defect record (not an example of current successful behavior)</summary>
+
+![Historical pre-fix record: stale rejection labels after retry success](screenshots/13-retry-completed-redacted.png)
+
+![Historical pre-fix record: downstream recovery rejected](screenshots/14-recovery-evidence-blocked-redacted.png)
+
+</details>
 
 ### After GUI loss, power loss or forced termination
 
@@ -214,7 +235,11 @@ Retry requires consistent original workspace location, executable, inputs, prepa
 | RTDOSE Prepare | RTDOSE Run |
 | Final RTDOSE | Inspect the current final output; no unnecessary rerun. |
 
-[Recovery confirmation using synthetic data; RTDOSE Run only — local-only / 公開対象外](screenshots/README.md)
+![Synthetic RTDOSE recovery ready](screenshots/17-rtdose-recovery-ready-redacted.png)
+
+![Synthetic recovery confirmation for RTDOSE Run only](screenshots/18-rtdose-recovery-confirmation-redacted.png)
+
+![Synthetic RTDOSE completed](screenshots/19-rtdose-completed-redacted.png)
 
 This action does not rerun Workspace Prepare or PHITS. After confirmation, conflicting downstream artifacts are preserved in `recovery_history/`. Failure stops the sequence at the failing stage. After resolving the cause, reinspect and review the required stages again.
 
