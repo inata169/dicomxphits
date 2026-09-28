@@ -1,12 +1,13 @@
 # dicomxphits v1.1.1 Release Notes
 
-Status: experimental release candidate, prepared from main at
-`7bc132bc54d83cf575aefa46d00328933918a88d` on 2026-09-25.
-The current merged candidate is `abfdb3c2d3f6eeb80b0cc43abe5478f039e54d26`
-(PR #86 and #87 merged). PR #87 changed documentation and processed manual
-images, not runtime code or normative specifications.
-No v1.1.1 tag or GitHub Release has been created. Publication requires explicit
-human authorization after review.
+Status: published on 2026-09-28 as an experimental source release for
+education and research evaluation.
+Release: [v1.1.1](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1).
+Release commit: `f10e66601fdbbaf29c5ff06ba6b8da22d1cac6e2` (PR #88 merged).
+The runtime validation baseline is `abfdb3c2d3f6eeb80b0cc43abe5478f039e54d26`;
+PR #88 adds only the validation record. The preparation and candidate checks
+below are retained as dated evidence. Release-commit Windows and Ubuntu CI
+passed. Distribution is source-only, with no custom offline asset.
 
 ## Purpose and main changes
 
@@ -160,10 +161,11 @@ temporary directory. The same focused suite passed with approved execution
 permissions; no code, assertions or guards were changed to resolve that
 environmental failure. No real external tools were used.
 
-The source is ready for review as an experimental patch candidate. Publication
-requires human acceptance of the documented limits and a separate tag/Release
-instruction. Only the bounded real-PHITS normal-completion acceptance described above is
-claimed; complete real-tool workflow acceptance remains unverified.
+PR #88 passed Codex review with no major issues and public CI, then was merged.
+The human subsequently authorized v1.1.1 tag creation and Release publication;
+publication is complete. Only the bounded real-PHITS normal-completion
+acceptance described above is claimed; complete real-tool workflow acceptance
+remains unverified.
 
 ## GUI manual review
 
@@ -180,15 +182,14 @@ review, not a new interactive or real-tool acceptance run.
 The published v1.1.0 tag and source archives remain unchanged at
 `12ea1b2ff65fac2fde276624ea692327d5fa710d`. They do not include PR #83/#84/#85.
 The [historical v1.1.0 release record](release-notes-v1.1.0.md) remains intact.
-v1.1.1 collects the subsequent merged fixes and manuals; a candidate version
-string does not mean it has already been released.
+v1.1.1 publishes the subsequent merged fixes, manuals and validation record.
 
 Use Python 3.12 and the documented Windows external-tool environment. Install
-the candidate into its intended environment before starting a new GUI session;
+v1.1.1 into its intended environment before starting a new GUI session;
 Help -> About must show 1.1.1. An already running GUI keeps its imported code.
 Existing workspaces remain subject to their provenance and freshness checks.
 Do not rewrite calculation inputs or records to force compatibility.
 
 No new Windows offline bundle is prepared or accepted. The existing
 [offline-distribution policy](windows-offline-installation.md) remains in force.
-Review, merge, tagging and GitHub Release publication remain human decisions.
+Future review, merge, tagging and publication remain human decisions.

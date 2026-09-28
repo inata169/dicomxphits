@@ -39,7 +39,7 @@ CT2PHITS boundary in the
 
 ## Prepare Workspace Adapter
 
-The workspace adapter prepares the v1.0.x starting workspace:
+The workspace adapter prepares the v1.1.x starting workspace:
 
 ```powershell
 dicomxphits-prepare-3dcrt-workspace `

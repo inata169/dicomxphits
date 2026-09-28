@@ -15,8 +15,8 @@ Start with the Japanese or English operating manual below.
 - [Structure相対誤差の変更検出の原因調査 / Structure-result change-detection investigation](structure-rerr-investigation.md)
 - [観測表示・Structure変更検出の修正（PR #84マージ済み） / Observation and Structure freshness repair (PR #84 merged)](observation-refresh-fix.md)
 
-対象はv1.1.0の機能とPR #83・#84の修正を含む版です。両PRはmainへマージ済みですが、公開済みv1.1.0タグには含まれません。実ツールによる検証範囲・制約は本文末尾に記載しています。
-The manuals cover v1.1.0 functionality plus the repairs in PR #83 and #84. Both PRs are merged into main but absent from the published v1.1.0 tag. See the closing verification-scope notes for limitations.
+対象はv1.1.x（公開済みv1.1.1で確認）です。v1.1.1にはPR #83・#84の修正が含まれます。実ツールによる検証範囲・制約は本文末尾に記載しています。
+The manuals cover v1.1.x, checked against published v1.1.1, which includes the repairs in PR #83 and #84. See the closing verification-scope notes for limitations.
 
 ## 調査・検証資料 / Research and verification records
 

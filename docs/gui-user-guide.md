@@ -1,9 +1,9 @@
-# dicomxphits GUI User Guide (v1.0.x)
+# dicomxphits GUI User Guide (v1.1.x)
 
 For clinical medical physicists and fourth-year university students studying medical physics
 
 > **Important**
-> dicomxphits v1.0.x is a fixed-field 3D-CRT workflow for education and research. It is not for clinical commissioning, patient-specific QA, or treatment decisions. The GUI may be used only with appropriately authorized **non-patient phantom data**. IMRT, dynamic MLC delivery, and VMAT are outside its supported scope.
+> dicomxphits v1.1.x is a fixed-field 3D-CRT workflow for education and research. It is not for clinical commissioning, patient-specific QA, or treatment decisions. The GUI may be used only with appropriately authorized **non-patient phantom data**. IMRT, dynamic MLC delivery, and VMAT are outside its supported scope.
 
 ## 1. What the GUI does
 
@@ -31,7 +31,7 @@ patient-coordinate output**. The same path remains recorded in
 
 ## 2. Supported scope
 
-| Item | v1.0.x scope |
+| Item | v1.1.x scope |
 | --- | --- |
 | Intended use | Education and research only |
 | Operating system | Windows host |
