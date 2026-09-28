@@ -2,6 +2,9 @@
 
 Status: experimental release candidate, prepared from main at
 `7bc132bc54d83cf575aefa46d00328933918a88d` on 2026-09-25.
+The current merged candidate is `abfdb3c2d3f6eeb80b0cc43abe5478f039e54d26`
+(PR #86 and #87 merged). PR #87 changed documentation and processed manual
+images, not runtime code or normative specifications.
 No v1.1.1 tag or GitHub Release has been created. Publication requires explicit
 human authorization after review.
 
@@ -46,7 +49,7 @@ error nor zero observed remaining batches establishes completion or convergence.
 | Automated tests | PR #85 recorded 1474 passed, 15 skipped; PR #83/#84 include retry/recovery, observation and Structure regression tests. Candidate checks are recorded below. | Skips are not passes; fake runners do not establish real-tool success. |
 | Synthetic GUI tests | The bilingual manual records authored GUI sessions for layout, preparation cancellation, STOP, retry and downstream recovery; hidden-Tk regression tests cover the repaired handoff. | These sessions did not run real PHITS. |
 | Manually confirmed GUI behavior | Historical human reports cover bounded Windows GUI/workflow use; manual preparation inspected synthetic screens. See the [launcher record](windows-gui-launcher-validation-2026-08-06.md) and [manual verification](instruction/_manual/gui-verification.en.md). | No new human acceptance of this exact candidate is claimed. |
-| Real PHITS execution | Historical bounded non-patient end-to-end demonstrations are documented in [Public Feasibility Demonstration](public-feasibility-demonstration.md). The PR #84 investigation also read existing output with permission. | The repaired GUI has not undergone a new real PHITS/controller end-to-end run, sustained live observation, or real retry/STOP/recovery acceptance. The cause of the original observation shutdown was not proven. |
+| Real PHITS execution | Historical bounded non-patient end-to-end demonstrations are documented in [Public Feasibility Demonstration](public-feasibility-demonstration.md). The PR #84 investigation also read existing output with permission. | The bounded candidate GUI-to-PHITS normal-completion check below passed. Sustained live observation and real retry/STOP/recovery acceptance remain unverified. The cause of the original observation shutdown was not proven. |
 | Real Sumtally / RTDOSE | The historical bounded demonstrations included aggregation and coordinate-corrected RTDOSE. | Those results do not establish the repaired retry-to-downstream chain on this candidate; no new real Sumtally or phits2dicom execution was performed. |
 | Physical dose validation | Historical bounded phantom/TPS gamma comparisons retain their documented conditions and interpretation limits. | No new physical dose validation, clinical acceptance threshold or machine commissioning is claimed. |
 
@@ -58,6 +61,65 @@ maxcas 4,000,000 has not been confirmed as a per-batch measurement; it is not a
 validated total-time estimate.
 
 ### Candidate checks
+
+Final merged candidate `abfdb3c2d3f6eeb80b0cc43abe5478f039e54d26`
+was checked on Windows / Python 3.12.10 on 2026-09-28 in an independent
+worktree. Automated checks used no real DICOM or external tools; the separately
+authorized interactive real-PHITS check is identified below:
+
+- Focused version, historical evidence, retry recovery, live observation and
+  Structure tests: **78 passed**.
+- Full public suite, run once: **1474 passed, 15 skipped** (144.74 s).
+- Interactive Windows GUI check through Computer Use: About displayed 1.1.1;
+  workspace preparation and sequential execution of two fixed-field segments
+  completed using PHITS 3.350, `maxcas=1000`, `maxbch=10`, eight OpenMP threads
+  and the built-in public model. Each segment completed 10,000 histories.
+  Previously validated frozen non-patient CT2PHITS assets were reused after
+  manifest/hash checks; CT2PHITS was not rerun. A new separate output workspace
+  was used, without overwriting existing results.
+- Real PHITS execution on 2026-09-28, 02:48:24.709681–02:50:10.291087 UTC:
+  controller elapsed time **105.578 s**; segment durations **50.359 s** and
+  **54.453 s**. Both returned code 0. All six required outputs per segment
+  passed recorded-hash verification; geometry diagnostics were clean with zero
+  lost-particle, geometry-recovering and unrecovered-error counts. Finished
+  preflight/run identity and success-summary validation passed.
+- GUI progress advanced from segment 1/2 to 2/2 and ended with
+  `Completed — validated 2/2`, retained 0 / newly completed 2, elapsed 00:01:46,
+  consistent with the execution evidence. No STOP or retry was requested.
+- Numeric isocenter relative-error display remains **unverified**: the final
+  tally pair did not provide a valid positive-dose/positive-error sample at
+  that cell. Unavailable/updating states were observed; this is not evidence
+  of zero uncertainty, dose accuracy or convergence. Long-duration operation,
+  real STOP/retry/recovery and downstream acceptance remain unverified.
+- `python -m compileall src`: passed.
+- `python tools/verify_public_tree.py`: passed (410 tracked files).
+- `git diff --check`: passed after this documentation update. Pre-commit diff and status
+  showed only this release-note update in the validation worktree.
+- PR #86 and #87 pull-request CI each completed successfully; these CI runs
+  tested their respective pre-merge heads. The exact merged candidate is
+  covered by the local checks above.
+
+A pre-candidate external calculation was reviewed read-only, but it does not
+establish real PHITS execution of this candidate. Its local inputs, outputs,
+settings and numerical results are excluded from this release record. The separately authorized candidate run above establishes only bounded normal
+GUI-to-PHITS completion, not the complete external-tool workflow.
+Individual automated-check start and finish clock times were not captured; the dates and
+pytest duration above are the available timing record.
+
+Commands for this merged-candidate check, using the existing Python 3.12
+development environment with the independent worktree's `src` on `PYTHONPATH`:
+
+```text
+python -m compileall src
+python -m pytest -q -p no:cacheprovider tests/test_version_metadata.py tests/test_release_acceptance_evidence.py tests/test_gui_retry_recovery.py tests/test_phits_live_observation.py tests/test_structure_relative_error.py
+python -m pytest -q -p no:cacheprovider
+python tools/verify_public_tree.py
+git diff --check
+git diff --stat
+git status --short
+```
+
+Earlier release-preparation checks are retained below for provenance.
 
 Windows / Python 3.12 candidate validation (2026-09-25):
 
@@ -100,8 +162,8 @@ environmental failure. No real external tools were used.
 
 The source is ready for review as an experimental patch candidate. Publication
 requires human acceptance of the documented limits and a separate tag/Release
-instruction; current-candidate remote CI and real-tool acceptance are not
-claimed by these local results.
+instruction. Only the bounded real-PHITS normal-completion acceptance described above is
+claimed; complete real-tool workflow acceptance remains unverified.
 
 ## GUI manual review
 
