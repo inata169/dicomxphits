@@ -2,7 +2,7 @@
 
 Date: 2026-09-24. [日本語](gui-manual.ja.md) / [Document index](README.md)
 
-Applies to the v1.1.1 release candidate: v1.1.0 functionality plus retry recovery in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Both repairs are merged into main but are absent from the published v1.1.0 tag. The candidate contains both PRs; v1.1.1 has not yet been tagged or published. Install the candidate before starting a new GUI session; Help → About should report 1.1.1. An already running GUI retains its imported code.
+Applies to v1.1.x, checked against published v1.1.1. This release includes the retry recovery repair in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Install v1.1.1 before starting a new GUI session; Help → About should report 1.1.1. An already running GUI retains its imported code.
 
 This is experimental education and research software for fixed-field 3D-CRT using authorized non-patient phantom data. Clinical use, patient QA, IMRT, dynamic MLC and VMAT are outside its scope. This manual does not establish stable operation with real external tools or dose agreement with a clinical machine.
 
@@ -301,7 +301,7 @@ Before discarding an unwanted case, verify execution has ended, ownership is rel
 
 Structure r.err uses structure voxels with `D > 0.5 × Dmax`, where Dmax is the maximum of the complete validated combined 3D dose grid. The threshold is fixed. Zero-r.err voxels are excluded and counted, not interpreted as zero-percent uncertainty. Fewer than two eligible voxels makes evaluation unavailable. Read mean, median, P95 and counts together. This is not clinical dose error or a convergence criterion and does not authorize STOP or RTDOSE execution.
 
-Freshness repair: PR #84 rechecks source-content hashes to detect rapid same-size rewrites that previously could leave an old Structure result displayed. The v1.1.0 tag does not include it. If related files change after evaluation, do not use the prior display; request fresh evidence validation/evaluation. See the [investigation](structure-rerr-investigation.md) and [repair/validation record](observation-refresh-fix.md).
+Freshness repair: PR #84 rechecks source-content hashes to detect rapid same-size rewrites that previously could leave an old Structure result displayed. It is included in v1.1.1; the historical v1.1.0 tag does not include it. If related files change after evaluation, do not use the prior display; request fresh evidence validation/evaluation. See the [investigation](structure-rerr-investigation.md) and [repair/validation record](observation-refresh-fix.md).
 
 ## 12. Records and support
 
@@ -321,3 +321,5 @@ For support, prepare the version/commit, stages and action sequence, status text
 Completion checklist: verified PHITS success for all segments; successful Sumtally generation/execution; RTDOSE Prepared and successful Run; final `.fixed.dcm` located; records retained.
 
 Verification scope: this manual uses source/specification review, synthetic GUI screenshots and fake-runner STOP/retry/recovery tests. Real PHITS stopping time and recovery, power loss, real-folder deletion and English-Windows dialogs were not tested. Evidence and limitations are in the [GUI verification record](gui-verification.en.md) and [repair record](retry-fix.en.md). Older documentation contains a known discrepancy concerning installation-wide hashing; retry guidance here follows current code and the [current specification](../../../openspec/specs/phits-preflight-control/spec.md).
+
+The separate v1.1.1 low-statistics two-field real-PHITS normal-completion check passed. Numeric isocenter error display, sustained operation and real STOP/retry/downstream acceptance remain unverified. See the [release validation record](../../release-notes-v1.1.1.md).

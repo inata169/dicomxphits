@@ -5,18 +5,16 @@ fixed-field 3D-CRT PHITS inputs from DICOM RT Plans and for controlling the
 explicit PHITS, Sumtally, RTDOSE, coordinate-correction, and external GPR
 handoff stages.
 
-> **Status: Experimental — v1.1.1 release candidate**
+> **Status: Experimental — v1.1.1 published**
 >
-> This source prepares v1.1.1 for education and research evaluation;
-> v1.1.1 has not been tagged or published.
-> It has passed automated tests and bounded synthetic GUI checks,
-> but stable operation across real external-tool workflows has not
-> been established. The v1.1.1 PHITS/controller end-to-end
-> workflow remains unverified.
+> The v1.1.1 source release is available for education and research evaluation.
+> Automated tests and a bounded two-field, low-statistics real PHITS GUI run
+> passed. Stable operation across the complete external-tool workflow,
+> sustained observation and real STOP/retry/recovery remain unverified.
 >
-> Unexpected failures may occur. Preserve existing inputs and results,
-> and evaluate this version in a separate non-patient test workspace.
-> This software is not validated for clinical use.
+> Preserve existing inputs and results, and evaluate this version in a
+> separate non-patient test workspace. This software is not validated for
+> clinical use.
 
 Within its documented non-patient phantom scope, this repository is a working
 public implementation of that complete chain rather than only a proposal that
@@ -63,7 +61,7 @@ All paths retain the same education-and-research-only boundary stated above.
 
 ## Status
 
-Version 1.1.1 is an experimental patch release candidate based on the merged
+Version 1.1.1 is an experimental patch release based on the merged
 v1.1.0 follow-up fixes and Japanese/English GUI manuals. It repairs downstream
 recovery after PHITS retry, live observation refresh and retained Structure
 result freshness. Package metadata and GUI About report 1.1.1. See the
@@ -72,7 +70,7 @@ separate automated, manual and real-tool evidence boundaries. No new workflow
 capability or physical validation is claimed.
 
 The current public release is
-[`v1.1.0`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0). It is
+[`v1.1.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1). It is
 published without a custom Windows offline ZIP. The v1.0.2 custom offline ZIP
 was withdrawn and removed after a later endpoint-protection compatibility
 failure and should not be used. The v1.0.2 tag, GitHub Release, source archives,
@@ -150,7 +148,7 @@ After the GUI opens:
 
 ## Windows Offline Installation
 
-The v1.1.0 GitHub Release provides source archives only, with no public Windows
+The v1.1.1 GitHub Release provides source archives only, with no public Windows
 offline ZIP. The earlier v1.0.3 release also had no public offline ZIP. A
 locally built v1.0.3 bundle passed bounded human installation and GUI-startup
 checks, but behavior-based endpoint protection blocked the verified
@@ -256,9 +254,9 @@ clinical acceptance thresholds or QA decisions. See
 [Public Feasibility Demonstration](docs/public-feasibility-demonstration.md)
 for the evidence and reproducibility boundaries.
 
-## v1.0.x Workflow
+## v1.1.x Workflow
 
-The v1.0.x workflow is intentionally narrow:
+The v1.1.x workflow is intentionally narrow:
 
 - strict 3D-CRT RT Plan input
 - strict MU gate before downstream stages
@@ -271,9 +269,9 @@ Each stage must write command metadata, return code when executed, stdout and
 stderr capture paths or content, major input and output paths, and a summary JSON
 path.
 
-## v1.0.x Supported Scope
+## v1.1.x Supported Scope
 
-For v1.0.x, dicomxphits supports fixed-field 3D-CRT up to the centered
+For v1.1.x, dicomxphits supports fixed-field 3D-CRT up to the centered
 `20 × 20 cm²` effective-aperture boundary for education and research. After
 DICOM Control Point inheritance is resolved, the jaw and MLC common effective
 aperture at every Control Point must remain inside the closed collimator-local
@@ -318,7 +316,7 @@ these identifying DICOM values differ.
 Elekta's public
 [Infinity brochure](https://www.elekta.com/products/radiation-therapy/infinity/assets/Infinity-Brochure.pdf)
 describes Agility leaves across a full `40 × 40 cm²` device field. That is a
-cited hardware specification only. It is outside the dicomxphits v1.0.x
+cited hardware specification only. It is outside the dicomxphits v1.1.x
 software scope and is not supported behavior.
 
 Technical references to Elekta, Agility, Monaco, IAEA, PHITS, or other product
@@ -682,7 +680,7 @@ section; see the CLI reference for the fail-closed boundaries.
 - [Development handoff — 2026-08-13](docs/development-handoff-2026-08-13.md)
 - [Public feasibility demonstration and research boundaries](docs/public-feasibility-demonstration.md)
 - [Technical GUI User Guide](docs/gui-user-guide.md)
-- GUI operating manuals (v1.1.1 candidate, including PR #83/#84 repairs): [日本語](docs/instruction/_manual/gui-manual.ja.md) / [English](docs/instruction/_manual/gui-manual.en.md)
+- GUI operating manuals (v1.1.x; verified against v1.1.1, including PR #83/#84 repairs): [日本語](docs/instruction/_manual/gui-manual.ja.md) / [English](docs/instruction/_manual/gui-manual.en.md)
 - [Windows GUI launcher validation — 2026-08-06](docs/windows-gui-launcher-validation-2026-08-06.md)
 - [Windows offline installation validation — 2026-08-07](docs/windows-offline-installation-validation-2026-08-07.md)
 - [Development handoff — 2026-08-07](docs/development-handoff-2026-08-07.md)

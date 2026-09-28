@@ -7,28 +7,24 @@ fixed-field 3D-CRT workflow from DICOM inputs through explicit PHITS-related
 handoff stages. It is not clinical commissioning, patient QA, or vendor
 certification software.
 
-## Current Source Candidate
-
-- The source candidate is `v1.1.1`, preparing the merged PR #83/#84 repairs
-  and PR #85 operating manuals as an experimental patch release.
-- v1.1.1 publication requires a separate human decision. No new capability,
-  normative specification or physical validation is introduced. See
-  [candidate release notes](../docs/release-notes-v1.1.1.md).
-
 ## Current Public Release
 
-- The current public release is `v1.1.0`, tagged at commit
-  `12ea1b2ff65fac2fde276624ea692327d5fa710d` (2026-09-18).
-- v1.1.0 is experimental education-and-research software. Automated tests and
-  bounded synthetic GUI checks passed, but stable real external-tool operation
-  and final-version PHITS/controller end-to-end execution remain unverified.
-- No custom Windows offline asset is published for v1.1.0. The v1.0.2 custom
+- The current public release is `v1.1.1`, tagged at commit
+  `f10e66601fdbbaf29c5ff06ba6b8da22d1cac6e2` (2026-09-28).
+- The release includes PR #83/#84 repairs, bilingual illustrated GUI manuals
+  and the PR #88 validation record. See the
+  [release notes](../docs/release-notes-v1.1.1.md).
+- v1.1.1 is experimental education-and-research software. Automated tests and
+  a bounded two-field low-statistics real-PHITS GUI normal-completion check
+  passed. Numeric isocenter relative-error display, sustained observation,
+  real STOP/retry/recovery and downstream acceptance remain unverified.
+- No custom Windows offline asset is published for v1.1.1. The v1.0.2 custom
   offline asset was withdrawn and removed; its historical identity remains
   documented in `docs/release-notes-v1.0.2.md`.
-- Release publication does not expand the normative public scope below. The
-  accepted contracts remain under `openspec/specs/`, and no active OpenSpec
-  change remains at the v1.1.0 publication checkpoint. Historical v1.0.3
-  acceptance evidence is not v1.1.0 external-tool validation.
+- Publication does not expand the normative public scope below. Accepted
+  contracts remain under `openspec/specs/`. Historical v1.0.3 acceptance
+  evidence is not v1.1.1 external-tool validation. This documentation alignment
+  adds no capability, normative specification or physical-validation claim.
 
 ## Technology
 

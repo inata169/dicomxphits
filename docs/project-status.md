@@ -35,46 +35,40 @@ For the v1.0.3 publication boundary and the decision to publish without a
 Windows offline ZIP, see the
 [`v1.0.3 release notes`](release-notes-v1.0.3.md).
 For the current experimental release and its validation limits, see the
-[v1.1.0 release notes](release-notes-v1.1.0.md).
+[v1.1.1 release notes](release-notes-v1.1.1.md).
 
-## Current source candidate — v1.1.1
+## Current published baseline — v1.1.1
 
-Reviewed starting main: `7bc132bc54d83cf575aefa46d00328933918a88d`
-(2026-09-25), including merged PR #83, #84 and #85. The source candidate
-reports 1.1.1; publication remains subject to human review and explicit
-authorization. No v1.1.1 tag, GitHub Release or offline asset is created.
+- Public release: [`v1.1.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1)
+- Previous public release: `v1.1.0`
+- Published: 2026-09-28, experimental education/research source release
+- Release tag and commit: `v1.1.1` at
+  `f10e66601fdbbaf29c5ff06ba6b8da22d1cac6e2`
+- Release preparation: PR #86/#87; final validation record: PR #88
+- Automated validation: 1474 passed, 15 skipped; compilation and public-tree
+  audit passed. PR #88 Codex review found no major issues; PR and release-commit
+  Windows/Ubuntu CI passed.
+- Real GUI validation: two low-statistics fixed-field PHITS segments completed
+  naturally with return code 0, verified outputs and matching GUI 2/2 completion.
+  PHITS 3.350, maxcas=1000, maxbch=10, eight threads; elapsed 105.578 seconds.
+- Remaining limits: numeric isocenter relative-error display, sustained
+  observation, real STOP/retry/recovery and downstream acceptance are unverified.
+  This does not establish dose accuracy or clinical validity.
+- Public workflow scope: documented fixed-field 3D-CRT; public custom asset: none.
 
-The patch combines retry/downstream recovery, observation refresh, retained
-Structure freshness, bilingual GUI manuals and version/documentation alignment.
-See [v1.1.1 release notes](release-notes-v1.1.1.md) for the evidence by category
-and remaining real PHITS/controller, Sumtally/RTDOSE and physical-validation
-limits. Historical real-tool demonstrations remain valid only within their
-recorded bounds, not as candidate acceptance. No physics, DICOM, runtime
-workflow or normative public-specification change is part of this preparation.
-
-## Current published baseline — v1.1.0
-
-- Public release: [`v1.1.0`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.0)
-- Previous public release: `v1.0.3`
-- Release state: v1.1.0 published on 2026-09-18 for experimental evaluation,
-  with source archives only and no custom offline asset
-- Public workflow scope: documented fixed-field 3D-CRT
-- Release tag and commit: `v1.1.0` at
-  `12ea1b2ff65fac2fde276624ea692327d5fa710d` (2026-09-18)
-- Release-preparation pull request: [#81](https://github.com/inata169/dicomxphits/pull/81)
-- Validation: final preparation suite 1448 passed, 14 skipped; bounded synthetic
-  GUI checks passed; Codex re-review found no major issues; final-head and
-  release-commit Ubuntu/Windows CI passed
-- Stability: real external-tool stability, final-version PHITS/controller E2E
-  execution and eight-thread performance remain unverified. Preserve inputs
-  and results and evaluate in a separate non-patient test workspace.
-- Published custom asset: none
+The v1.1.x user documentation is checked against v1.1.1. The patch includes
+retry/downstream recovery, observation refresh, retained Structure freshness
+and bilingual illustrated GUI manuals. See the
+[v1.1.1 release notes](release-notes-v1.1.1.md) for evidence and limitations.
+No physics, DICOM or normative public-specification change was made by the
+release preparation. Historical demonstrations retain only their stated bounds.
 
 ## Historical release records
 
 The v1.0.2 and v1.0.3 records below remain historical evidence; they do not
-establish v1.1.0 stability or external-tool acceptance. The current release
-baseline above was reviewed on 2026-09-18.
+establish v1.1.1 stability or external-tool acceptance. The current release
+baseline above was confirmed on 2026-09-28. The previous v1.1.0 release is
+recorded in its [historical release notes](release-notes-v1.1.0.md).
 
 - Withdrawn historical v1.0.2 custom asset:
   `dicomxphits-offline-win64-1.0.2.zip` (removed from GitHub on 2026-08-19)
@@ -231,7 +225,7 @@ public-tree audit passes 138 tracked files.
 
 The following chronology is retained as historical evidence. Its references to
 then-current specification counts and active changes are superseded by the
-v1.1.0 published baseline above; prior release closeouts remain historical.
+v1.1.1 published baseline above; prior release closeouts remain historical.
 
 The completion state for pull request #8 was validated locally on Windows
 with:
@@ -437,13 +431,11 @@ paragraph records the earlier boundary rather than the current OpenSpec state.
 
 ## Human-decision queue
 
-The v1.1.1 preparation is authorized for documentation, version alignment and
-synthetic validation. Review and publication decisions remain with the human;
-real external-tool execution requires separately approved exact conditions.
-
-The human approved v1.1.0 source-only publication at the release commit above.
-Publication is complete. The Experimental documentation clarification does not
-authorize new calculations, physical validation or a public offline asset.
+The human authorized the bounded two-field real-PHITS GUI check, PR #88
+review/merge and v1.1.1 source-only publication. These steps are complete.
+Publication does not authorize further calculations, physical validation or
+a public offline asset; new real-tool executions require separately approved
+exact conditions.
 The following v1.0.3 decisions are retained as historical context.
 
 The human approved v1.0.3 release preparation after reporting the bounded GUI
@@ -474,12 +466,11 @@ At the start of a future development session:
 1. Read `AGENTS.md` and `AI_AGENT_RULES.md` in full.
 2. Confirm the repository root, branch, clean status, remote, recent history,
    and tags before making changes.
-3. Confirm that `main` contains v1.1.0 release commit
-   `12ea1b2ff65fac2fde276624ea692327d5fa710d`, that annotated tag `v1.1.0`
-   dereferences to that exact commit, and that historical tag `v1.0.2` still
-   dereferences to `efb0dace568fbcb12019f3d320a468dcfb446e34`.
+3. Confirm that `main` contains v1.1.1 release commit
+   `f10e66601fdbbaf29c5ff06ba6b8da22d1cac6e2`, that tag `v1.1.1` resolves
+   to that exact commit, and that prior release tags remain unchanged.
 4. Read this document, the
-   [v1.1.1 candidate release notes](release-notes-v1.1.1.md), the
+   [v1.1.1 release notes](release-notes-v1.1.1.md), the
    [v1.1.0 release notes](release-notes-v1.1.0.md), the historical
    [v1.0.3 release notes](release-notes-v1.0.3.md), the
    [v1.0.2 release closeout](development-handoff-2026-08-15-v1.0.2.md), the
