@@ -249,7 +249,10 @@ def test_report_rejects_dicom_input_folder(tmp_path: Path) -> None:
 
 
 def test_language_menu_preserves_session_and_completion(tmp_path: Path, monkeypatch) -> None:
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Tk display is unavailable")
     root.withdraw()
     try:
         app = gui.App(root)
@@ -326,7 +329,10 @@ def test_language_validation_and_raw_diagnostics(tmp_path: Path, monkeypatch) ->
         gui.case_from_fields({**_fields(tmp_path), "dose": ""}, "en")
     assert translate("入力を確認してください（詳細原文）：{reason}", "en",
                      reason="source {literal}").endswith("source {literal}")
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Tk display is unavailable")
     root.withdraw()
     errors = []
     monkeypatch.setattr(gui.messagebox, "showerror", lambda *args: errors.append(args))
