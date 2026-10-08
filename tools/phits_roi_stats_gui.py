@@ -194,6 +194,15 @@ def case_from_fields(values: dict[str, str], language: str = "ja") -> dict:
     return case
 
 
+def draft_guidance(case: dict, queued: list[dict]) -> str:
+    """Describe whether the current form is included in queued snapshots."""
+    if not queued:
+        return "入力済み。まず「ケースを追加」を押してください。追加後に「集計する」が有効になります。"
+    if case in queued:
+        return "ケースを追加済みです。「集計する」を押してください。"
+    return "現在の入力は未追加です。「ケースを追加」を押してください。「集計する」は追加済みケースのみ対象です。"
+
+
 def table_row(result: dict) -> tuple[str, ...]:
     def value(key: str) -> str:
         item = result.get(key)
@@ -470,7 +479,7 @@ class App(ttk.Frame):
                                  else self._tr("解析元のファイル指定を確認してください"))
         else:
             ready = True
-            self.input_state.set(self._tr("入力済み。ケースを追加できます。"))
+            self.input_state.set(self._tr(draft_guidance(case, self.cases)))
         self.add_button.configure(state="normal" if ready and not self.busy else "disabled")
         self.run_button.configure(state="normal" if self.cases and not self.busy else "disabled")
         self.remove_button.configure(state="normal" if self.cases and not self.busy else "disabled")
