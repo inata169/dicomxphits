@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from dicomxphits.phits_observation_format import Mesh
+from dicomxphits.rtdose_geometry import tally_mesh_geometry_sha256
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "phits_roi_stats.py"
@@ -232,6 +233,42 @@ def test_invalid_case_cannot_publish_inside_its_source(tmp_path, capsys):
     assert '"status": "invalid"' in captured.out
     assert "output directory overlaps source" in captured.err
     assert list(output.iterdir()) == []
+
+
+def test_direct_pair_evidence_rejects_replaced_error(tmp_path):
+    mesh = Mesh("Synthetic combined dose", "dose.out", (2, 2, 1),
+                ((-.2, .2), (-.2, .2), (-.2, .2)))
+    case = fixture(tmp_path, mesh, np.ones(mesh.counts), np.ones(mesh.counts) * .1)
+    case["radius_cm"] = .19
+    source = Path(case["source"])
+    dose_raw = (source / case["dose"]).read_bytes()
+    error_path = source / case["error"]
+    error_raw = error_path.read_bytes()
+    _mesh, _values, _errors, metadata = roi.parse_pair(dose_raw, error_raw)
+    generation = json.loads((source / case["generation"]).read_text())
+    geometry = generation["tally_geometry_binding"]["mesh_geometry"]
+    execution_path = source / case["execution"]
+    execution = json.loads(execution_path.read_text())
+    execution["combined_relative_error_evidence"] = {
+        "schema_version": "dicomxphits_sumtally_relative_error_pair_v1",
+        "semantics": "phits_3_35_sumtally_isumtally_2_relative_error_v1",
+        "validated": True, "dose_sha256": roi.digest(dose_raw),
+        "error_sha256": roi.digest(error_raw),
+        "sum_input_sha256": generation["sum_input_sha256"],
+        "mesh_geometry_sha256": tally_mesh_geometry_sha256(geometry),
+        "cell_count": mesh.cells,
+        "pair_metadata_sha256": roi.canonical_manifest_digest(metadata),
+    }
+    execution_path.write_text(json.dumps(execution))
+    assert roi.analyse(case)["status"] == "ok"
+    error_path.write_bytes(tally(mesh, "error", np.ones(mesh.counts) * .2))
+    with pytest.raises(roi.AnalysisError, match="combined error evidence mismatch"):
+        roi.analyse(case)
+    error_path.write_bytes(error_raw)
+    execution["combined_relative_error_evidence"]["pair_metadata_sha256"] = "0" * 64
+    execution_path.write_text(json.dumps(execution))
+    with pytest.raises(roi.AnalysisError, match="combined error evidence mismatch"):
+        roi.analyse(case)
 
 
 def test_axis_order_single_cell_and_empty_region(tmp_path):

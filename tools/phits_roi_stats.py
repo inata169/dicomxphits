@@ -170,7 +170,7 @@ def phits_six_digits(a: float, b: float) -> bool:
 
 
 def validate_evidence(manifest: dict, generation: dict, execution: dict,
-                      dose_sha: str, metadata: dict, mesh: Mesh) -> None:
+                      dose_sha: str, error_sha: str, metadata: dict, mesh: Mesh) -> None:
     need(manifest.get("schema_version") == "segment_manifest_v2" and
          manifest.get("workflow_mode") == "full_plan", "unsupported manifest")
     need(generation.get("schema_version") == "dicomxphits_public_sumtally_generation_v1" and
@@ -241,6 +241,30 @@ def validate_evidence(manifest: dict, generation: dict, execution: dict,
              and close_printed(float(axis.get("maximum_cm", math.nan)), hi)
              and close_printed(float(axis.get("spacing_cm", math.nan)), (hi-lo)/count),
              "bound mesh mismatch")
+    pair = execution.get("combined_relative_error_evidence")
+    if pair is not None:
+        need(isinstance(pair, dict), "invalid combined error evidence")
+        normalized = {"schema_version": "dicomxphits_public_tally_geometry_v1",
+                      "coordinate_system": FRAME, "bounds_semantics": "bin_edges", "axes": {}}
+        for name in "xyz":
+            axis = axes[name]
+            minimum, maximum = float(axis["minimum_cm"]), float(axis["maximum_cm"])
+            minimum = 0.0 if minimum == 0.0 else minimum
+            maximum = 0.0 if maximum == 0.0 else maximum
+            count = int(axis["bin_count"])
+            normalized["axes"][name] = {
+                "minimum_cm": minimum, "maximum_cm": maximum, "bin_count": count,
+                "spacing_cm": (maximum-minimum)/count,
+            }
+        need(pair.get("schema_version") == "dicomxphits_sumtally_relative_error_pair_v1" and
+             pair.get("semantics") == "phits_3_35_sumtally_isumtally_2_relative_error_v1" and
+             pair.get("validated") is True and pair.get("dose_sha256") == dose_sha and
+             pair.get("error_sha256") == error_sha and
+             pair.get("sum_input_sha256") == execution.get("sum_input_sha256") and
+             pair.get("mesh_geometry_sha256") == canonical_manifest_digest(normalized) and
+             pair.get("cell_count") == mesh.cells and
+             pair.get("pair_metadata_sha256") == canonical_manifest_digest(metadata),
+             "combined error evidence mismatch")
 
 
 def parse_pair(dose_raw: bytes, error_raw: bytes) -> tuple[Mesh, np.ndarray, np.ndarray, dict]:
@@ -390,7 +414,8 @@ def analyse(case: dict) -> dict:
     need(dose_name == mesh.file and
          PurePosixPath(selected["error"]).name == dose_name.removesuffix(".out") + "_err.out",
          "selected combined pair names mismatch")
-    validate_evidence(manifest, generation, execution, digest(raw["dose"]), metadata, mesh)
+    validate_evidence(manifest, generation, execution, digest(raw["dose"]),
+                      digest(raw["error"]), metadata, mesh)
     kind = case.get("region_type", "sphere")
     need(kind in {"sphere", "structure", "rtstruct"}, "invalid region type")
     if kind == "sphere":
