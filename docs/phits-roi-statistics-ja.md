@@ -16,6 +16,9 @@ DICOM変換は実行しません。研究・教育用の独立ツールで、dic
 .venv/Scripts/python.exe tools/phits_roi_stats_gui.py
 ```
 
+Windowsでは、リポジトリ直下の`run_phits_roi_stats_gui.bat`をダブルクリックしても
+起動できます。BATは自身の場所を基準に`.venv`のPythonを使用します。
+
 画面はdicomxphits本体と同じ濃紺・水色系です。小さい画面では右端の
 スクロールバーで下の結果・保存欄へ移動できます。結果表の右側の列は
 表の下の横スクロールバーで確認してください。

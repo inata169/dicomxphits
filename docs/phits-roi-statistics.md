@@ -102,7 +102,9 @@ these display strings are preserved and could contain identifying text.
 
 ## Independent desktop GUI
 
-Run `.venv/Scripts/python.exe tools/phits_roi_stats_gui.py`. Choose a ZIP or
+Run `.venv/Scripts/python.exe tools/phits_roi_stats_gui.py`, or double-click
+`run_phits_roi_stats_gui.bat` at the repository root on Windows. The batch file
+uses the checkout's `.venv` regardless of the starting directory. Choose a ZIP or
 folder. A unique standard dicomxphits layout fills editable suggested
 members for combined dose/error/evidence; missing or ambiguous fields remain
 blank. Each member has a picker. For a directory source it opens a file dialog
