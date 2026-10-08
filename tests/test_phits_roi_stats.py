@@ -140,6 +140,17 @@ def test_decimal_radius_shell_includes_boundary_sampling_points():
     assert geometry["sampling_volume_cm3"] == pytest.approx(.123)
 
 
+def test_decimal_radius_shell_includes_native_cell_centres():
+    mesh = Mesh("synthetic", "dose.out", (13, 1, 1),
+                ((-.65, .65), (-.65, .65), (-.65, .65)))
+    mask, geometry = roi.sphere(mesh, {"radius_cm": .6})
+    assert mask[:, 0, 0].all()
+    values = np.arange(13, dtype=float).reshape(mesh.counts)
+    result = roi.summarize(mask, values, np.full(mesh.counts, .1), mesh, geometry)
+    assert result["grid_points"] == 13
+    assert result["voxel_dose_sum_cgy"] == pytest.approx(7800)
+
+
 @pytest.mark.parametrize("zip_mode,retained", [(False, False), (True, True)])
 def test_pair_statistics_and_immutable_inputs(tmp_path, zip_mode, retained):
     mesh = Mesh("Synthetic combined dose", "dose.out", (2, 2, 1),

@@ -7,6 +7,7 @@ external PHITS tool is needed. This script gives no workflow or clinical authori
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left, bisect_right
 import csv
 from fractions import Fraction
 import hashlib
@@ -292,6 +293,32 @@ def edges(mesh: Mesh) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return tuple(np.linspace(lo, hi, n + 1) for (lo, hi), n in zip(mesh.bounds, mesh.counts))
 
 
+def sphere_native_mask(mesh: Mesh, centre: list[float], radius: float) -> np.ndarray:
+    """Select native centres using the exact decimal values printed in the mesh."""
+    radius_fraction = Fraction(str(radius))
+    axes = []
+    for (lo, hi), count, origin in zip(mesh.bounds, mesh.counts, centre):
+        lower = Fraction(str(lo))
+        step = (Fraction(str(hi)) - lower) / count
+        offset = Fraction(str(origin))
+        axes.append([lower + Fraction(2*i + 1, 2)*step - offset for i in range(count)])
+    scale = math.lcm(radius_fraction.denominator,
+                     *(value.denominator for axis in axes for value in axis))
+    x_offsets, y_offsets, z_offsets = ([int(value*scale) for value in axis] for axis in axes)
+    radius_sq = int(radius_fraction*scale)**2
+    mask = np.zeros(mesh.counts, dtype=np.bool_)
+    for ix, x in enumerate(x_offsets):
+        for iy, y in enumerate(y_offsets):
+            remaining = radius_sq - x*x - y*y
+            if remaining < 0:
+                continue
+            bound = math.isqrt(remaining)
+            start = bisect_left(z_offsets, -bound)
+            stop = bisect_right(z_offsets, bound)
+            mask[ix, iy, start:stop] = True
+    return mask
+
+
 def sphere(mesh: Mesh, case: dict) -> tuple[np.ndarray, dict]:
     centre = case.get("center_cm", [0, 0, 0])
     need(isinstance(centre, list) and len(centre) == 3, "invalid sphere centre")
@@ -306,9 +333,7 @@ def sphere(mesh: Mesh, case: dict) -> tuple[np.ndarray, dict]:
     grid_edges = edges(mesh)
     need(all(c - radius >= e[0] and c + radius <= e[-1] for c, e in zip(centre, grid_edges)),
          "sphere extends outside mesh")
-    centres = [(e[:-1] + e[1:]) / 2 for e in grid_edges]
-    x, y, z = np.meshgrid(*(v-c for v, c in zip(centres, centre)), indexing="ij")
-    mask = x*x + y*y + z*z <= radius*radius
+    mask = sphere_native_mask(mesh, centre, radius)
     # Decimal input values define the sampling lattice. Compare squared integer
     # offsets exactly so points on a decimal-radius shell are not rounded away.
     ratio = Fraction(str(radius)) / Fraction(str(spacing))
