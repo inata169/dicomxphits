@@ -67,6 +67,8 @@ PAIRS = [
      "Inputs ready. Select Add case first; Analyse becomes available after the case is added."),
     ("ケースを追加済みです。「集計する」を押してください。",
      "Case added. Select Analyse."),
+    ("現在の入力は未追加です。「ケースを追加」を押してください。「集計する」は追加済みケースのみ対象です。",
+     "Current inputs are not queued. Select Add case; Analyse includes only queued cases."),
     ("{count}件のROIを表示しました。使用するROIを選択してください。", "{count} ROI choices listed; select one explicitly."),
     ("ケース一覧が変わりました。集計後に結果行を選ぶと詳細を表示します。", "Cases changed. After analysis, select a result row for details."),
     ("{count}件のケースが待機中", "{count} case selections queued"),

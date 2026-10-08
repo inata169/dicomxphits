@@ -105,6 +105,16 @@ def test_canonical_suggestions_and_ambiguous_saved_runs() -> None:
         basics + [f"other/analysis/sumtally_generation_summary.json"])
 
 
+def test_guidance_distinguishes_current_form_from_queued_cases(tmp_path: Path) -> None:
+    first = gui.case_from_fields(_fields(tmp_path))
+    second = {**first, "case_label": "second"}
+    assert "まず「ケースを追加」" in gui.draft_guidance(first, [])
+    assert "「集計する」を押してください" in gui.draft_guidance(first, [first])
+    assert "現在の入力は未追加" in gui.draft_guidance(second, [first])
+    assert "追加済みケースのみ対象" in gui.draft_guidance(second, [first])
+    assert "「集計する」を押してください" in gui.draft_guidance(second, [first, second])
+
+
 def test_gui_suggestions_are_editable_and_source_change_clears_stale_values(
     tmp_path: Path,
 ) -> None:
@@ -135,6 +145,13 @@ def test_gui_suggestions_are_editable_and_source_change_clears_stale_values(
         assert "まず「ケースを追加」" in app.input_state.get()
         app._add()
         assert str(app.run_button["state"]) == "normal"
+        assert "「集計する」を押してください" in app.input_state.get()
+        app.fields["case_label"].set("second")
+        assert str(app.run_button["state"]) == "normal"
+        assert "現在の入力は未追加" in app.input_state.get()
+        assert len(app.cases) == 1
+        app._add()
+        assert len(app.cases) == 2
         assert "「集計する」を押してください" in app.input_state.get()
         app.fields["dose"].set("case/other.out")
         assert app.fields["dose"].get() == "case/other.out"
