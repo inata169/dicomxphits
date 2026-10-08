@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import struct
 from zipfile import ZipFile
 
 import numpy as np
@@ -345,6 +346,27 @@ def test_duplicate_zip_member_and_batch(tmp_path, capsys):
     case["source"] = str(archive_path)
     with pytest.raises(roi.AnalysisError, match="duplicated"):
         roi.analyse(case)
+
+
+@pytest.mark.parametrize("limit_kind", ["entries", "directory_bytes"])
+def test_zip_metadata_limit_rejected_before_open(tmp_path, monkeypatch, limit_kind):
+    mesh = Mesh("Synthetic combined dose", "dose.out", (2, 2, 1),
+                ((-.2, .2), (-.2, .2), (-.2, .2)))
+    case = fixture(tmp_path, mesh, np.ones(mesh.counts), np.ones(mesh.counts)*.1,
+                   zip_mode=True)
+    path = Path(case["source"])
+    raw = bytearray(path.read_bytes())
+    end = raw.rfind(b"PK\x05\x06")
+    assert end >= 0
+    if limit_kind == "entries":
+        struct.pack_into("<H", raw, end + 8, roi.MAX_ZIP_ENTRIES + 1)
+        struct.pack_into("<H", raw, end + 10, roi.MAX_ZIP_ENTRIES + 1)
+    else:
+        struct.pack_into("<I", raw, end + 12, roi.MAX_ZIP_DIRECTORY + 1)
+    path.write_bytes(raw)
+    monkeypatch.setattr(roi, "ZipFile", lambda *_: pytest.fail("ZipFile opened before metadata check"))
+    with pytest.raises(roi.AnalysisError, match="ZIP directory limit"):
+        roi.Source(str(path)).read(case["dose"], roi.MAX_TALLY_BYTES)
 
 
 def test_normalization_role_and_numeric_rejections(tmp_path):

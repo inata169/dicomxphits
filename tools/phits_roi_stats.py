@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from bisect import bisect_left, bisect_right
+from contextlib import contextmanager
 import csv
 from fractions import Fraction
 import hashlib
@@ -18,11 +19,12 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import struct
 import sys
 import tempfile
 import time
 import unicodedata
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 
@@ -38,6 +40,8 @@ FRAME = "phits_iec_fixed_cm_isocenter_anchored"
 MAX_JSON = 4 * 1024 * 1024
 MAX_MASK = 256 * 1024 * 1024
 MAX_CASES = 100
+MAX_ZIP_DIRECTORY = 8 * 1024 * 1024
+MAX_ZIP_ENTRIES = 50_000
 NUMBER_KEYS = (
     "radius_cm", "analytic_volume_cm3", "sample_spacing_cm", "sample_points",
     "sampling_volume_cm3", "grid_points", "grid_volume_cm3",
@@ -105,6 +109,58 @@ def stable_file(path: Path, limit: int) -> bytes:
     return raw
 
 
+def check_zip_directory(stream) -> None:
+    """Bound central-directory allocation and entries before ZipFile parses them."""
+    stream.seek(0, os.SEEK_END)
+    size = stream.tell()
+    tail_size = min(size, 22 + 65535)
+    stream.seek(size - tail_size)
+    tail = stream.read(tail_size)
+    end = tail.rfind(b"PK\x05\x06")
+    need(end >= 0 and end + 22 <= len(tail), "invalid ZIP end record")
+    (_, disk, directory_disk, disk_entries, entries, directory_size,
+     _, comment_size) = struct.unpack_from("<IHHHHIIH", tail, end)
+    need(end + 22 + comment_size == len(tail), "invalid ZIP end record")
+    end_offset = size - tail_size + end
+    directory_end = end_offset
+    stream.seek(max(0, end_offset - 20))
+    locator = stream.read(20) if end_offset >= 20 else b""
+    if locator[:4] == b"PK\x06\x07":
+        _, locator_disk, _, disks = struct.unpack("<IIQI", locator)
+        need(locator_disk == 0 and disks == 1 and end_offset >= 76,
+             "unsupported ZIP disks")
+        directory_end = end_offset - 20 - 56
+        stream.seek(directory_end)
+        record = stream.read(56)
+        need(len(record) == 56 and record[:4] == b"PK\x06\x06", "invalid ZIP64 end record")
+        (_, record_size, _, _, disk, directory_disk, disk_entries, entries,
+         directory_size, _) = struct.unpack("<IQHHIIQQQQ", record)
+        need(record_size == 44, "unsupported ZIP64 end record")
+    else:
+        need(entries != 0xffff and directory_size != 0xffffffff,
+             "missing ZIP64 end record")
+    need(disk == directory_disk == 0 and disk_entries == entries,
+         "unsupported ZIP disks")
+    need(entries <= MAX_ZIP_ENTRIES and directory_size <= MAX_ZIP_DIRECTORY,
+         "ZIP directory limit")
+    directory_start = directory_end - directory_size
+    need(directory_start >= 0, "invalid ZIP directory")
+    stream.seek(directory_start)
+    directory = stream.read(directory_size)
+    need(len(directory) == directory_size, "invalid ZIP directory")
+    position = count = 0
+    while position < directory_size:
+        need(position + 46 <= directory_size and
+             directory[position:position + 4] == b"PK\x01\x02", "invalid ZIP directory")
+        name_size, extra_size, entry_comment_size = struct.unpack_from("<HHH", directory,
+                                                                        position + 28)
+        position += 46 + name_size + extra_size + entry_comment_size
+        count += 1
+        need(position <= directory_size and count <= MAX_ZIP_ENTRIES,
+             "ZIP directory limit")
+    need(count == entries, "ZIP entry count mismatch")
+
+
 class Source:
     def __init__(self, location: str):
         self.path = Path(location).absolute()
@@ -120,6 +176,17 @@ class Source:
             need(self.path.suffix.lower() == ".zip", "source must be directory or ZIP")
             self.archive = True
 
+    @contextmanager
+    def open_zip(self):
+        need(self.archive, "source is not a ZIP")
+        with self.path.open("rb") as stream:
+            check_zip_directory(stream)
+            try:
+                with ZipFile(stream) as archive:
+                    yield archive
+            except BadZipFile as exc:
+                raise AnalysisError("invalid ZIP archive") from exc
+
     def read(self, member: str, limit: int) -> bytes:
         member = relative_name(member)
         if not self.archive:
@@ -128,7 +195,7 @@ class Source:
             need(path.is_relative_to(root), "selector escapes source")
             return stable_file(path, limit)
         before = self.path.stat()
-        with ZipFile(self.path) as archive:
+        with self.open_zip() as archive:
             matches = [x for x in archive.infolist() if x.filename == member]
             need(len(matches) == 1, "selected ZIP member missing or duplicated")
             entry = matches[0]
@@ -363,7 +430,9 @@ def structure(mesh: Mesh, case: dict) -> tuple[np.ndarray, dict, str]:
     path = Path(case["mask"]).absolute()
     raw = stable_file(path, MAX_MASK)
     try:
-        with ZipFile(io.BytesIO(raw)) as archive:
+        mask_stream = io.BytesIO(raw)
+        check_zip_directory(mask_stream)
+        with ZipFile(mask_stream) as archive:
             members = archive.infolist()
             need(len(members) == 6 and sum(x.file_size for x in members) <= MAX_MASK
                  and all(x.file_size <= MAX_MASK and not x.is_dir() for x in members),

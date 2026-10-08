@@ -11,7 +11,7 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile
 
 import pydicom
 
@@ -77,7 +77,7 @@ def source_members(location: str) -> list[str]:
     """List safe names only; selected members are still checked by Source.read."""
     source = roi.Source(location)
     if source.archive:
-        with ZipFile(source.path) as archive:
+        with source.open_zip() as archive:
             infos = archive.infolist()
             roi.need(len(infos) <= 50_000, "too many ZIP members")
             names = [item.filename for item in infos if not item.is_dir()]
