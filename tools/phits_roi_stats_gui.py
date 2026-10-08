@@ -470,7 +470,9 @@ class App(ttk.Frame):
                                  else self._tr("解析元のファイル指定を確認してください"))
         else:
             ready = True
-            self.input_state.set(self._tr("入力済み。ケースを追加できます。"))
+            self.input_state.set(self._tr("ケースを追加済みです。「集計する」を押してください。")
+                                 if self.cases else self._tr(
+                                     "入力済み。まず「ケースを追加」を押してください。追加後に「集計する」が有効になります。"))
         self.add_button.configure(state="normal" if ready and not self.busy else "disabled")
         self.run_button.configure(state="normal" if self.cases and not self.busy else "disabled")
         self.remove_button.configure(state="normal" if self.cases and not self.busy else "disabled")

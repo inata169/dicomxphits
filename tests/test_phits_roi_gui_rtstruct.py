@@ -131,6 +131,11 @@ def test_gui_suggestions_are_editable_and_source_change_clears_stale_values(
         assert app.hints["dose"].get() == "自動候補・変更可"
         assert str(app.combos["dose"]["state"]) == "normal"
         assert str(app.add_button["state"]) == "normal"
+        assert str(app.run_button["state"]) == "disabled"
+        assert "まず「ケースを追加」" in app.input_state.get()
+        app._add()
+        assert str(app.run_button["state"]) == "normal"
+        assert "「集計する」を押してください" in app.input_state.get()
         app.fields["dose"].set("case/other.out")
         assert app.fields["dose"].get() == "case/other.out"
         assert app.hints["dose"].get() == ""

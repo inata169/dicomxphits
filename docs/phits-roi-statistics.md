@@ -114,8 +114,9 @@ is revalidated before analysis. For an error preserved in one saved Sumtally
 run, the GUI suggests its co-located retained dose too. Choose sphere or RT
 Structure; for the latter, select the frozen
 workspace, CT reference, RT Plan, and RT Structure files, list the ROI names,
-and explicitly choose the ROI number. Add each case to the table and run the
-analysis. More than one case can be shown in one table.
+and explicitly choose the ROI number. Select **Add case** first; **Analyse**
+becomes available after a case appears in the table. More than one case can be
+shown in one table.
 
 The standalone window follows the main GUI's navy/cyan palette. Use the right
 scrollbar to reach results and exports on smaller displays and the table's
