@@ -1,5 +1,17 @@
 # Independent PHITS ROI statistics
 
+## Display language
+
+In the standalone GUI, choose **表示言語 / Language → English** or **日本語**.
+Each launch starts in Japanese. Switching updates interface text without
+clearing paths, the selected ROI, queued cases, or results, and without running
+analysis again. Switching during analysis preserves the busy guards; completion
+messages use the language selected at completion.
+
+File names, DICOM ROI names, result values, units, status codes, CSV/JSON keys,
+and original analysis diagnostics remain unchanged. Native file-dialog controls
+follow the operating system language. This setting is not persisted.
+
 `tools/phits_roi_stats.py` reads an explicitly selected, completed PHITS 3.35
 T-Deposit xyz/xy `isumtally=2` combined dose and `_err.out` pair. It uses
 Python 3.12, NumPy, and the bounded format parser in this checkout's `src/`

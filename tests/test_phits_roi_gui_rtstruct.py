@@ -248,6 +248,101 @@ def test_report_rejects_dicom_input_folder(tmp_path: Path) -> None:
         roi.publish([], str(output), "synthetic", [], (str(selected),))
 
 
+def test_language_menu_preserves_session_and_completion(tmp_path: Path, monkeypatch) -> None:
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        app = gui.App(root)
+        values = _fields(tmp_path)
+        for key, value in values.items():
+            app.fields[key].set(value)
+        app.loaded_source = values["source"]
+        app.all_members = [values[key] for key in gui.REQUIRED]
+        app.roi_combo.configure(values=["7 | Chamber {original}"])
+        app.roi_combo.current(0)
+        app.fields["roi_number"].set("7")
+        app.hints["dose"].set("自動候補・変更可")
+        app._add()
+        row = {"case_label": "synthetic", "region_type": "sphere",
+               "region_label": "Chamber {original}", "status": "ok", "grid_points": 2,
+               "mean_dose_cgy": 125.5, "voxel_dose_sum_cgy": 251.0,
+               "sample_points": 81, "sampling_volume_cm3": .081,
+               "analytic_volume_cm3": .06545, "grid_volume_cm3": .054}
+        app.events.put([row])
+        app._poll()
+        item = app.table.get_children()[0]
+        app.table.selection_set(item)
+        app._details(None)
+        before_fields = {key: var.get() for key, var in app.fields.items()}
+        before_cases = json.dumps(app.cases, sort_keys=True)
+        before_results = json.dumps(app.results, sort_keys=True)
+        before_row = app.table.item(item, "values")
+        before_states = [str(w["state"]) for w in (app.add_button, app.run_button,
+                                                  app.remove_button, app.export_button)]
+        monkeypatch.setattr(gui.roi, "analyse", lambda *_a: pytest.fail("language switch ran analysis"))
+        monkeypatch.setattr(gui.roi, "publish", lambda *_a: pytest.fail("language switch published reports"))
+        for menu_index, expected_language, button, heading in (
+            (1, "en", "Analyse", "Mean cGy"), (0, "ja", "集計する", "平均 cGy"),
+        ):
+            app.language_menu.invoke(menu_index)
+            assert app.language.get() == expected_language
+            assert app.run_button.cget("text") == button
+            assert app.table.heading("Mean cGy", "text") == heading
+            assert {key: var.get() for key, var in app.fields.items()} == before_fields
+            assert json.dumps(app.cases, sort_keys=True) == before_cases
+            assert json.dumps(app.results, sort_keys=True) == before_results
+            assert app.table.selection() == (item,)
+            assert app.table.item(item, "values") == before_row
+            assert app.roi_combo.get() == "7 | Chamber {original}"
+            assert [str(w["state"]) for w in (app.add_button, app.run_button,
+                                             app.remove_button, app.export_button)] == before_states
+            assert "81" in app.details.get() and "0.081" in app.details.get()
+        app.busy = True
+        app.status.set("Analysing selected cases...")
+        app._refresh_state()
+        app.language_menu.invoke(1)
+        assert app.busy and app.status.get() == "Analysing selected cases..."
+        assert all(str(w["state"]) == "disabled" for w in (
+            app.add_button, app.run_button, app.remove_button, app.export_button))
+        app.events.put([row])
+        app._poll()
+        assert not app.busy and app.status.get().startswith("1 results;")
+        assert app.hints["dose"].get() == "Suggested; editable"
+        app.language_menu.invoke(0)
+        assert app.status.get().startswith("1件の結果")
+        assert app.hints["dose"].get() == "自動候補・変更可"
+    finally:
+        root.destroy()
+
+
+def test_language_validation_and_raw_diagnostics(tmp_path: Path, monkeypatch) -> None:
+    from phits_roi_gui_language import PAIRS, translate
+    from string import Formatter
+    for ja, en in PAIRS:
+        fields = lambda text: {name for _, name, _, _ in Formatter().parse(text) if name}
+        assert fields(ja) == fields(en)
+    assert gui.case_from_fields(_fields(tmp_path), "en") == gui.case_from_fields(_fields(tmp_path))
+    with pytest.raises(roi.AnalysisError, match="Select Combined dose"):
+        gui.case_from_fields({**_fields(tmp_path), "dose": ""}, "en")
+    assert translate("入力を確認してください（詳細原文）：{reason}", "en",
+                     reason="source {literal}").endswith("source {literal}")
+    root = tk.Tk()
+    root.withdraw()
+    errors = []
+    monkeypatch.setattr(gui.messagebox, "showerror", lambda *args: errors.append(args))
+    try:
+        app = gui.App(root)
+        app.language_menu.invoke(1)
+        assert "Select Source ZIP / folder" in app.input_state.get()
+        broken = tmp_path / "broken.zip"
+        broken.write_bytes(b"synthetic invalid archive")
+        app._load_source(str(broken))
+        assert errors[-1][0] == "Source"
+        assert errors[-1][1].startswith("Check the inputs (original diagnostic):")
+    finally:
+        root.destroy()
+
+
 def _adapter_inputs(tmp_path: Path, *, outside: bool = False):
     workspace = tmp_path / "frozen"
     (workspace / "analysis").mkdir(parents=True)

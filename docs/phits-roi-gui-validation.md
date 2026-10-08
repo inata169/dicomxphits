@@ -56,3 +56,29 @@ their warnings are not represented as fixed or as a passing strict audit.
 Archived-task validation passes for all three ROI changes. Its whole-archive
 run also reports one pre-existing incomplete task in
 `2026-08-07-add-windows-offline-installer`; that historical task was not edited.
+
+## English and Japanese display menu
+
+The approved language-menu addition was tested with synthetic data only.
+Computer Use switched the live Windows GUI from Japanese to English, loaded
+a synthetic ZIP with editable standard-path suggestions, added and analysed
+a sphere case, selected its result row, and switched back to Japanese.
+The selected row, file paths, numeric results, sphere parameters, and report
+stem were retained. Labels, suggestions, headings, status, and result guidance
+changed language. No external calculation tool or real DICOM was run.
+
+The focused GUI suite passed all 13 tests, including new checks for ROI and
+case preservation, busy guards, completion messages in the current language,
+unchanged result payloads, literal diagnostic braces, and translation template
+placeholders. An initial focused run had one transient Tk-display skip; the
+subsequent run passed every GUI test.
+
+After the language change, the full command
+`.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` reported **1496 passed,
+16 skipped, one intentional duplicate-ZIP warning**. The full run includes a
+Tk-display skip already covered by the successful focused run. Compilation
+(`python -m compileall src` and tool `py_compile`), public-tree audit, and
+Git whitespace checks passed. The language proposal passed strict OpenSpec
+validation. Source diagnostics and native OS dialog controls retain their
+original language. Other display scales and OS locales were not exhaustively
+tested. The numerical and public workflow contracts were unchanged.

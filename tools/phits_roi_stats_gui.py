@@ -16,6 +16,7 @@ from zipfile import BadZipFile, ZipFile
 import pydicom
 
 import phits_roi_stats as roi
+from phits_roi_gui_language import DisplayText, translate
 
 
 MEMBERS = {
@@ -159,13 +160,16 @@ def roi_choices(path: str) -> list[tuple[int, str]]:
     return choices
 
 
-def case_from_fields(values: dict[str, str]) -> dict:
+def case_from_fields(values: dict[str, str], language: str = "ja") -> dict:
     """Snapshot only explicit selections; blank optional fields stay absent."""
+    def tr(key, **args):
+        return translate(key, language, **args)
+
     for key in ("source", *REQUIRED):
         label = "解析元 ZIP / フォルダ" if key == "source" else MEMBERS[key][0]
-        roi.need(bool(values.get(key, "").strip()), f"{label}を選択してください")
+        roi.need(bool(values.get(key, "").strip()), tr("{label}を選択してください", label=tr(label)))
     kind = values.get("region_type", "sphere")
-    roi.need(kind in {"sphere", "rtstruct"}, "球またはRTSTRUCTを選択してください")
+    roi.need(kind in {"sphere", "rtstruct"}, tr("球またはRTSTRUCTを選択してください"))
     case = {key: values[key].strip() for key in ("source", *REQUIRED)}
     case["case_label"] = values.get("case_label", "").strip() or "case"
     case["region_type"] = kind
@@ -177,14 +181,14 @@ def case_from_fields(values: dict[str, str]) -> dict:
             case["radius_cm"] = float(values["radius_cm"])
             case["sample_spacing_cm"] = float(values["sample_spacing_cm"])
         except (KeyError, ValueError) as exc:
-            raise roi.AnalysisError("球の中心・半径・間隔を数値で入力してください") from exc
+            raise roi.AnalysisError(tr("球の中心・半径・間隔を数値で入力してください")) from exc
         case["region_label"] = "central sphere"
     else:
         for key in ("preparation", "workspace", "ct_reference", "rtplan", "rtstruct", "roi_number"):
             labels = {"preparation": MEMBERS["preparation"][0],
                       "workspace": "凍結された計算ワークスペース", "ct_reference": "凍結CTの参照DICOM",
                       "rtplan": "RTPLAN DICOM", "rtstruct": "RTSTRUCT DICOM", "roi_number": "ROI番号"}
-            roi.need(bool(values.get(key, "").strip()), f"{labels[key]}を選択してください")
+            roi.need(bool(values.get(key, "").strip()), tr("{label}を選択してください", label=tr(labels[key])))
             case[key] = values[key].strip()
         case["region_label"] = "RT Structure ROI"
     return case
@@ -209,6 +213,8 @@ class App(ttk.Frame):
         configure_style(master.winfo_toplevel())
         super().__init__(master, padding=12)
         self.pack(fill="both", expand=True)
+        self.language = tk.StringVar(self, value="ja")
+        self.display_texts = []
         self.fields = {key: tk.StringVar() for key in (
             "source", "case_label", *MEMBERS, "region_type", "center_x", "center_y", "center_z",
             "radius_cm", "sample_spacing_cm", "workspace", "ct_reference", "rtplan", "rtstruct",
@@ -223,10 +229,12 @@ class App(ttk.Frame):
         self.results: list[dict] = []
         self.all_members: list[str] = []
         self.loaded_source = ""
-        self.hints = {key: tk.StringVar() for key in MEMBERS}
+        self.hints = {key: self._text("") for key in MEMBERS}
         self.busy = False
         self.events: queue.Queue = queue.Queue()
         self._build()
+        self._build_language_menu()
+        self._change_language()
         for variable in self.fields.values():
             variable.trace_add("write", lambda *_args: self._refresh_state())
         for key in MEMBERS:
@@ -235,64 +243,89 @@ class App(ttk.Frame):
         self._refresh_state()
         self.after(100, self._poll)
 
+    def _tr(self, key: str, **values) -> str:
+        return translate(key, self.language.get(), **values)
+
+    def _text(self, key: str) -> DisplayText:
+        value = DisplayText(self, self.language, key)
+        self.display_texts.append(value)
+        return value
+
+    def _build_language_menu(self) -> None:
+        self.menu = tk.Menu(self.winfo_toplevel(), tearoff=False)
+        self.language_menu = tk.Menu(self.menu, tearoff=False)
+        for label, value in (("日本語", "ja"), ("English", "en")):
+            self.language_menu.add_radiobutton(label=label, variable=self.language,
+                                              value=value, command=self._change_language)
+        self.menu.add_cascade(label="表示言語 / Language", menu=self.language_menu)
+        self.winfo_toplevel().configure(menu=self.menu)
+
+    def _change_language(self) -> None:
+        # Only presentation is updated: never write fields or rebuild the table.
+        for value in self.display_texts:
+            value.refresh()
+        for column in self.table["columns"]:
+            self.table.heading(column, text=self._tr(column))
+        self._refresh_state()
+
     def _build(self) -> None:
-        ttk.Label(self, text="dicomxphits  /  ROI Statistics", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self, text="計算済みの線量と相対誤差を、球またはRTSTRUCTの領域で確認します。",
+        ttk.Label(self, textvariable=self._text("dicomxphits  /  ROI Statistics"), style="Title.TLabel").pack(anchor="w")
+        ttk.Label(self, textvariable=self._text("計算済みの線量と相対誤差を、球またはRTSTRUCTの領域で確認します。"),
                   style="Muted.TLabel").pack(anchor="w", pady=(2, 14))
-        top = ttk.LabelFrame(self, text="解析元 ZIP / フォルダ（読み取り専用）", padding=8)
+        top = ttk.LabelFrame(self, labelwidget=ttk.Label(self, textvariable=self._text("解析元 ZIP / フォルダ（読み取り専用）"), foreground="#2EA8FF"), padding=8)
         top.pack(fill="x")
         ttk.Entry(top, textvariable=self.fields["source"]).pack(side="left", fill="x", expand=True)
-        ttk.Button(top, text="ZIPを選択", command=lambda: self._source(False)).pack(side="left", padx=3)
-        ttk.Button(top, text="フォルダを選択", command=lambda: self._source(True)).pack(side="left")
-        ttk.Button(top, text="入力した場所を読み込む", command=lambda: self._load_source(
+        ttk.Button(top, textvariable=self._text("ZIPを選択"), command=lambda: self._source(False)).pack(side="left", padx=3)
+        ttk.Button(top, textvariable=self._text("フォルダを選択"), command=lambda: self._source(True)).pack(side="left")
+        ttk.Button(top, textvariable=self._text("入力した場所を読み込む"), command=lambda: self._load_source(
             self.fields["source"].get())).pack(side="left", padx=3)
-        selectors = ttk.LabelFrame(self, text="解析元の中のファイル（相対パス。候補から選ぶか、選択ボタンで変更）", padding=8)
+        selectors = ttk.LabelFrame(self, labelwidget=ttk.Label(self, textvariable=self._text("解析元の中のファイル（相対パス。候補から選ぶか、選択ボタンで変更）"), foreground="#2EA8FF"), padding=8)
         selectors.pack(fill="x", pady=5)
         self.combos = {}
         for index, (key, (title, _)) in enumerate(MEMBERS.items()):
-            ttk.Label(selectors, text=title).grid(row=index, column=0, sticky="w", pady=2)
+            ttk.Label(selectors, textvariable=self._text(title)).grid(row=index, column=0, sticky="w", pady=2)
             combo = ttk.Combobox(selectors, textvariable=self.fields[key], state="normal", values=[])
             combo.grid(row=index, column=1, sticky="ew", padx=6, pady=2)
             self.combos[key] = combo
-            ttk.Button(selectors, text="選択…", command=lambda k=key: self._member(k)).grid(
+            ttk.Button(selectors, textvariable=self._text("選択…"), command=lambda k=key: self._member(k)).grid(
                 row=index, column=2, sticky="w", pady=2)
             ttk.Label(selectors, textvariable=self.hints[key]).grid(row=index, column=3, sticky="w", padx=4)
         selectors.columnconfigure(1, weight=1)
-        ttk.Label(selectors, text="準備サマリーは解析元のJSONです。RTSTRUCT本体は下の『RTSTRUCT DICOM』から選択します。",
+        ttk.Label(selectors, textvariable=self._text("準備サマリーは解析元のJSONです。RTSTRUCT本体は下の『RTSTRUCT DICOM』から選択します。"),
                   wraplength=1050).grid(row=len(MEMBERS), column=0, columnspan=4, sticky="w", pady=(6, 0))
-        region = ttk.LabelFrame(self, text="領域（球またはRTSTRUCT）", padding=8)
+        region = ttk.LabelFrame(self, labelwidget=ttk.Label(self, textvariable=self._text("領域（球またはRTSTRUCT）"), foreground="#2EA8FF"), padding=8)
         region.pack(fill="x", pady=5)
-        ttk.Label(region, text="ケース名").grid(row=0, column=0, sticky="w")
+        ttk.Label(region, textvariable=self._text("ケース名")).grid(row=0, column=0, sticky="w")
         ttk.Entry(region, textvariable=self.fields["case_label"], width=20).grid(row=0, column=1, sticky="w")
-        ttk.Radiobutton(region, text="球", variable=self.fields["region_type"], value="sphere").grid(row=0, column=2)
-        ttk.Radiobutton(region, text="RTSTRUCT", variable=self.fields["region_type"], value="rtstruct").grid(row=0, column=3)
+        ttk.Radiobutton(region, textvariable=self._text("球"), variable=self.fields["region_type"], value="sphere").grid(row=0, column=2)
+        ttk.Radiobutton(region, textvariable=self._text("RTSTRUCT"), variable=self.fields["region_type"], value="rtstruct").grid(row=0, column=3)
         for index, key in enumerate(("center_x", "center_y", "center_z", "radius_cm", "sample_spacing_cm")):
-            ttk.Label(region, text=key.replace("_", " ")).grid(row=1, column=index*2, sticky="w")
+            ttk.Label(region, textvariable=self._text(key.replace("_", " "))).grid(row=1, column=index*2, sticky="w")
             ttk.Entry(region, textvariable=self.fields[key], width=8).grid(row=1, column=index*2+1, padx=2)
         for index, (key, title, directory) in enumerate((
             ("workspace", "凍結された計算ワークスペース", True), ("ct_reference", "凍結CTの参照DICOM", False),
             ("rtplan", "RTPLAN DICOM", False), ("rtstruct", "RTSTRUCT DICOM（領域輪郭）", False))):
-            ttk.Label(region, text=title).grid(row=index+2, column=0, columnspan=2, sticky="w")
+            ttk.Label(region, textvariable=self._text(title)).grid(row=index+2, column=0, columnspan=2, sticky="w")
             ttk.Entry(region, textvariable=self.fields[key]).grid(row=index+2, column=2, columnspan=6, sticky="ew")
-            ttk.Button(region, text="ファイルを選択" if not directory else "フォルダを選択",
+            ttk.Button(region, textvariable=self._text("ファイルを選択" if not directory else "フォルダを選択"),
                        command=lambda k=key, d=directory: self._external(k, d)).grid(row=index+2, column=8)
-        ttk.Label(region, text="ROI番号 / 名前（明示選択）").grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Label(region, textvariable=self._text("ROI番号 / 名前（明示選択）")).grid(row=6, column=0, columnspan=2, sticky="w")
         self.roi_combo = ttk.Combobox(region, state="readonly", values=[])
         self.roi_combo.grid(row=6, column=2, columnspan=6, sticky="ew")
         self.roi_combo.bind("<<ComboboxSelected>>", lambda _e: self.fields["roi_number"].set(self.roi_combo.get().split(" | ", 1)[0]))
-        ttk.Button(region, text="ROIを一覧", command=self._list_rois).grid(row=6, column=8)
+        ttk.Button(region, textvariable=self._text("ROIを一覧"), command=self._list_rois).grid(row=6, column=8)
         for column in range(2, 8):
             region.columnconfigure(column, weight=1)
         actions = ttk.Frame(self)
         actions.pack(fill="x", pady=5)
-        self.add_button = ttk.Button(actions, text="ケースを追加", command=self._add)
+        self.add_button = ttk.Button(actions, textvariable=self._text("ケースを追加"), command=self._add)
         self.add_button.pack(side="left")
-        self.remove_button = ttk.Button(actions, text="選択行を削除", command=self._remove)
+        self.remove_button = ttk.Button(actions, textvariable=self._text("選択行を削除"), command=self._remove)
         self.remove_button.pack(side="left", padx=4)
-        self.run_button = ttk.Button(actions, text="集計する", command=self._run, style="Primary.TButton")
+        self.run_button = ttk.Button(actions, textvariable=self._text("集計する"), command=self._run, style="Primary.TButton")
         self.run_button.pack(side="left", padx=4)
         self.run_button.configure(state="disabled")
-        self.status = tk.StringVar(value="解析元を選び、合算線量と証拠ファイルを指定してください。")
+        self.status = self._text("解析元を選び、合算線量と証拠ファイルを指定してください。")
         ttk.Label(actions, textvariable=self.status).pack(side="left", padx=10)
         self.input_state = tk.StringVar()
         ttk.Label(self, textvariable=self.input_state, wraplength=1100).pack(fill="x")
@@ -302,22 +335,22 @@ class App(ttk.Frame):
         frame.pack(fill="both", expand=True)
         self.table = ttk.Treeview(frame, columns=columns, show="headings", height=6, selectmode="browse")
         for title in columns:
-            self.table.heading(title, text=title)
+            self.table.heading(title, text=self._tr(title))
             self.table.column(title, width=125 if title not in {"Label", "Reason"} else 240,
                               stretch=False)
         self.table.pack(side="top", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(frame, orient="horizontal", command=self.table.xview)
         scrollbar.pack(fill="x")
         self.table.configure(xscrollcommand=scrollbar.set)
-        ttk.Label(self, text="Cell sum = sum of selected native cell dose values; mean dose is the region average. "
-                  "Spatial SD and voxel r.err describe different variations.", wraplength=1100).pack(fill="x", pady=4)
-        self.details = tk.StringVar(value="Sphere default: 1 mm sampling gives 81 Points, 0.081 cm³ sample volume; analytic volume ≈0.06545 cm³. Native Grid Points differ.")
+        ttk.Label(self, textvariable=self._text("Cell sum = sum of selected native cell dose values; mean dose is the region average. "
+                  "Spatial SD and voxel r.err describe different variations."), wraplength=1100).pack(fill="x", pady=4)
+        self.details = self._text("Sphere default: 1 mm sampling gives 81 Points, 0.081 cm³ sample volume; analytic volume ≈0.06545 cm³. Native Grid Points differ.")
         ttk.Label(self, textvariable=self.details, wraplength=1100).pack(fill="x")
         export = ttk.Frame(self)
         export.pack(fill="x", pady=5)
-        ttk.Label(export, text="Report stem").pack(side="left")
+        ttk.Label(export, textvariable=self._text("Report stem")).pack(side="left")
         ttk.Entry(export, textvariable=self.fields["report_stem"], width=28).pack(side="left", padx=4)
-        self.export_button = ttk.Button(export, text="CSV + JSON を新規保存", command=self._export)
+        self.export_button = ttk.Button(export, textvariable=self._text("CSV + JSON を新規保存"), command=self._export)
         self.export_button.pack(side="left")
         self.table.bind("<<TreeviewSelect>>", self._details)
 
@@ -332,7 +365,7 @@ class App(ttk.Frame):
             members = candidates_from_members(names)
             suggested = canonical_suggestions(names)
         except (OSError, ValueError, BadZipFile) as exc:
-            messagebox.showerror("解析元", str(exc))
+            messagebox.showerror(self._tr("解析元"), self._tr("入力を確認してください（詳細原文）：{reason}", reason=str(exc)))
             return
         self.loaded_source = str(roi.Source(path).path)
         self.all_members = names
@@ -344,35 +377,36 @@ class App(ttk.Frame):
             if key in suggested:
                 self.fields[key].set(suggested[key])
                 self.hints[key].set("自動候補・変更可")
-        self.status.set(f"{len(names)}件を確認。{len(suggested)}欄に標準配置の候補を設定しました。空欄は手で選択してください。")
+        self.status.set("{count}件を確認。{suggested}欄に標準配置の候補を設定しました。空欄は手で選択してください。",
+                        count=len(names), suggested=len(suggested))
         self._refresh_state()
 
     def _member(self, key: str) -> None:
         if not self.loaded_source or self.fields["source"].get() != self.loaded_source:
-            messagebox.showinfo("解析元", "先にZIPまたはフォルダを読み込んでください。")
+            messagebox.showinfo(self._tr("解析元"), self._tr("先にZIPまたはフォルダを読み込んでください。"))
             return
         source = roi.Source(self.loaded_source)
         if not source.archive:
-            selected = filedialog.askopenfilename(initialdir=str(source.path), filetypes=[("すべてのファイル", "*")])
+            selected = filedialog.askopenfilename(initialdir=str(source.path), filetypes=[(self._tr("すべてのファイル"), "*")])
             if not selected:
                 return
             try:
                 roi.ordinary_path(Path(selected))
                 relative = Path(selected).resolve().relative_to(source.path.resolve()).as_posix()
                 relative = roi.relative_name(relative)
-                roi.need(self.all_members.count(relative) == 1, "解析元の中の通常ファイルを選択してください")
+                roi.need(self.all_members.count(relative) == 1, self._tr("解析元の中の通常ファイルを選択してください"))
             except (OSError, ValueError) as exc:
-                messagebox.showerror("ファイル選択", str(exc))
+                messagebox.showerror(self._tr("ファイル選択"), self._tr("入力を確認してください（詳細原文）：{reason}", reason=str(exc)))
                 return
             self.fields[key].set(relative)
             return
         dialog = tk.Toplevel(self)
         dialog.configure(background="#071A2B")
-        dialog.title(f"ZIP内のファイルを選択: {MEMBERS[key][0]}")
+        dialog.title(self._tr("ZIP内のファイルを選択: {label}", label=self._tr(MEMBERS[key][0])))
         dialog.geometry("900x500")
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
-        ttk.Label(dialog, text="ZIP内の相対パス。検索してから選択できます。重複名は集計できません。").pack(
+        ttk.Label(dialog, textvariable=self._text("ZIP内の相対パス。検索してから選択できます。重複名は集計できません。")).pack(
             fill="x", padx=8, pady=4)
         query = tk.StringVar()
         ttk.Entry(dialog, textvariable=query).pack(fill="x", padx=8, pady=4)
@@ -397,7 +431,7 @@ class App(ttk.Frame):
             box.delete(0, "end")
             for name in visible:
                 box.insert("end", name)
-            count.set(f"{len(matches)}件一致（最大5000件表示）。目的の名前がなければ検索してください。")
+            count.set(self._tr("{count}件一致（最大5000件表示）。目的の名前がなければ検索してください。", count=len(matches)))
 
         def accept(*_args) -> None:
             selection = box.curselection()
@@ -410,32 +444,33 @@ class App(ttk.Frame):
         box.bind("<Double-Button-1>", accept)
         buttons = ttk.Frame(dialog)
         buttons.pack(pady=6)
-        ttk.Button(buttons, text="選択", command=accept).pack(side="left", padx=4)
-        ttk.Button(buttons, text="キャンセル", command=dialog.destroy).pack(side="left", padx=4)
+        ttk.Button(buttons, textvariable=self._text("選択"), command=accept).pack(side="left", padx=4)
+        ttk.Button(buttons, textvariable=self._text("キャンセル"), command=dialog.destroy).pack(side="left", padx=4)
 
     def _refresh_state(self) -> None:
         try:
-            case = case_from_fields({key: var.get() for key, var in self.fields.items()})
-            roi.need(case["source"] == self.loaded_source, "解析元の一覧を読み込んでください")
+            case = case_from_fields({key: var.get() for key, var in self.fields.items()}, self.language.get())
+            roi.need(case["source"] == self.loaded_source, self._tr("解析元の一覧を読み込んでください"))
             roi.Source(case["source"])
             for key in REQUIRED:
-                roi.need(self.all_members.count(case[key]) == 1, f"select {key} from source")
+                roi.need(self.all_members.count(case[key]) == 1, self._tr("解析元から{label}を選択してください", label=self._tr(MEMBERS[key][0])))
             if case.get("retained_dose"):
                 roi.need(self.all_members.count(case["retained_dose"]) == 1,
-                         "select retained dose from source")
+                         self._tr("解析元から{label}を選択してください", label=self._tr(MEMBERS["retained_dose"][0])))
             if case["region_type"] == "rtstruct":
-                roi.need(Path(case["workspace"]).is_dir(), "select frozen workspace")
+                roi.need(Path(case["workspace"]).is_dir(), self._tr("{label}を選択してください", label=self._tr("凍結された計算ワークスペース")))
                 for key in ("ct_reference", "rtplan", "rtstruct"):
-                    roi.need(Path(case[key]).is_file(), f"select {key}")
+                    roi.need(Path(case[key]).is_file(), self._tr("{label}を選択してください", label=self._tr({"ct_reference": "凍結CTの参照DICOM", "rtplan": "RTPLAN DICOM", "rtstruct": "RTSTRUCT DICOM"}[key])))
                 roi.need(self.all_members.count(case["preparation"]) == 1,
-                         "select preparation summary from source")
+                         self._tr("解析元から{label}を選択してください", label=self._tr(MEMBERS["preparation"][0])))
         except (OSError, KeyError, ValueError) as exc:
             ready = False
-            self.input_state.set(str(exc) if isinstance(exc, roi.AnalysisError)
-                                 else "解析元のファイル指定を確認してください")
+            self.input_state.set(self._tr("入力を確認してください（詳細原文）：{reason}", reason=str(exc))
+                                 if isinstance(exc, roi.AnalysisError)
+                                 else self._tr("解析元のファイル指定を確認してください"))
         else:
             ready = True
-            self.input_state.set("入力済み。ケースを追加できます。")
+            self.input_state.set(self._tr("入力済み。ケースを追加できます。"))
         self.add_button.configure(state="normal" if ready and not self.busy else "disabled")
         self.run_button.configure(state="normal" if self.cases and not self.busy else "disabled")
         self.remove_button.configure(state="normal" if self.cases and not self.busy else "disabled")
@@ -455,24 +490,24 @@ class App(ttk.Frame):
         try:
             choices = roi_choices(self.fields["rtstruct"].get())
         except Exception as exc:
-            messagebox.showerror("RT Structure", str(exc))
+            messagebox.showerror(self._tr("RT Structure"), self._tr("入力を確認してください（詳細原文）：{reason}", reason=str(exc)))
             return
         self.roi_combo.configure(values=[f"{number} | {name}" for number, name in choices])
-        self.status.set(f"{len(choices)} ROI choices listed; select one explicitly.")
+        self.status.set("{count} ROI choices listed; select one explicitly.", count=len(choices))
 
     def _add(self) -> None:
         try:
-            case = case_from_fields({key: var.get() for key, var in self.fields.items()})
+            case = case_from_fields({key: var.get() for key, var in self.fields.items()}, self.language.get())
             roi.Source(case["source"])
-            roi.need(len(self.cases) < roi.MAX_CASES, "case limit")
+            roi.need(len(self.cases) < roi.MAX_CASES, self._tr("case limit"))
         except (OSError, ValueError) as exc:
-            messagebox.showerror("Selection", str(exc))
+            messagebox.showerror(self._tr("Selection"), self._tr("入力を確認してください（詳細原文）：{reason}", reason=str(exc)))
             return
         self.cases.append(case)
         self.results = []
         self.details.set("ケース一覧が変わりました。集計後に結果行を選ぶと詳細を表示します。")
         self.table.insert("", "end", values=(case["case_label"], case["region_type"], case["region_label"], "queued"))
-        self.status.set(f"{len(self.cases)} case selections queued")
+        self.status.set("{count} case selections queued", count=len(self.cases))
         self._refresh_state()
 
     def _remove(self) -> None:
@@ -486,14 +521,14 @@ class App(ttk.Frame):
         self.cases.pop(index)
         self.results = []
         self.details.set("ケース一覧が変わりました。集計後に結果行を選ぶと詳細を表示します。")
-        self.status.set(f"{len(self.cases)} case selections queued")
+        self.status.set("{count} case selections queued", count=len(self.cases))
         self._refresh_state()
 
     def _run(self) -> None:
         if self.busy:
             return
         if not self.cases:
-            messagebox.showinfo("Analysis", "Add at least one explicit case")
+            messagebox.showinfo(self._tr("Analysis"), self._tr("Add at least one explicit case"))
             return
         snapshot = [dict(case) for case in self.cases]
         self.busy = True
@@ -526,7 +561,7 @@ class App(ttk.Frame):
             self.table.insert("", "end", values=table_row(row))
         self.busy = False
         self._refresh_state()
-        self.status.set(f"{len(rows)} results; invalid Structure inputs never fall back to a sphere")
+        self.status.set("{count} results; invalid Structure inputs never fall back to a sphere", count=len(rows))
         self.after(100, self._poll)
 
     def _details(self, _event) -> None:
@@ -538,20 +573,21 @@ class App(ttk.Frame):
             number = row.get(key)
             return f"{number:.6g}" if isinstance(number, (int, float)) else "—"
         if row.get("region_type") == "sphere":
-            self.details.set(f"Sampling Points {value('sample_points')}; sample volume {value('sampling_volume_cm3')} cm³; "
-                             f"analytic sphere volume {value('analytic_volume_cm3')} cm³; "
-                             f"native Grid Points {value('grid_points')}; grid volume {value('grid_volume_cm3')} cm³.")
+            self.details.set("Sampling Points {points}; sample volume {sample} cm³; analytic sphere volume {analytic} cm³; native Grid Points {grid}; grid volume {volume} cm³.",
+                             points=value("sample_points"), sample=value("sampling_volume_cm3"),
+                             analytic=value("analytic_volume_cm3"), grid=value("grid_points"),
+                             volume=value("grid_volume_cm3"))
         else:
-            self.details.set(f"Native Grid Points {value('grid_points')}; grid volume {value('grid_volume_cm3')} cm³. "
-                             "ROIName is a label; CT/plan/mesh evidence determines cell membership.")
+            self.details.set("Native Grid Points {grid}; grid volume {volume} cm³. ROIName is a label; CT/plan/mesh evidence determines cell membership.",
+                             grid=value("grid_points"), volume=value("grid_volume_cm3"))
 
     def _export(self) -> None:
         if self.busy:
             return
         if not self.results:
-            messagebox.showinfo("Report", "Analyse cases before export")
+            messagebox.showinfo(self._tr("Report"), self._tr("Analyse cases before export"))
             return
-        folder = filedialog.askdirectory(title="Choose an existing folder outside case sources and repository")
+        folder = filedialog.askdirectory(title=self._tr("Choose an existing folder outside case sources and repository"))
         if not folder:
             return
         try:
@@ -560,9 +596,9 @@ class App(ttk.Frame):
                           ("workspace", "ct_reference", "rtplan", "rtstruct") if case.get(key))
             names = roi.publish(self.results, folder, self.fields["report_stem"].get(), sources, extra)
         except (OSError, ValueError) as exc:
-            messagebox.showerror("Report", str(exc))
+            messagebox.showerror(self._tr("Report"), self._tr("入力を確認してください（詳細原文）：{reason}", reason=str(exc)))
             return
-        self.status.set("Published new reports: " + ", ".join(names))
+        self.status.set("Published new reports: {names}", names=", ".join(names))
 
 
 def main() -> None:
