@@ -132,6 +132,14 @@ def test_approved_geometry_examples():
         roi.sphere(aligned, {"radius_cm": .25, "center_cm": [.9, 0, 0]})
 
 
+def test_decimal_radius_shell_includes_boundary_sampling_points():
+    mesh = Mesh("synthetic", "dose.out", (11, 11, 11),
+                ((-1.1, 1.1), (-1.1, 1.1), (-1.1, 1.1)))
+    geometry = roi.sphere(mesh, {"radius_cm": .3, "sample_spacing_cm": .1})[1]
+    assert geometry["sample_points"] == 123
+    assert geometry["sampling_volume_cm3"] == pytest.approx(.123)
+
+
 @pytest.mark.parametrize("zip_mode,retained", [(False, False), (True, True)])
 def test_pair_statistics_and_immutable_inputs(tmp_path, zip_mode, retained):
     mesh = Mesh("Synthetic combined dose", "dose.out", (2, 2, 1),

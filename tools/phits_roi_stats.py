@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from fractions import Fraction
 import hashlib
 import io
 import json
@@ -308,11 +309,21 @@ def sphere(mesh: Mesh, case: dict) -> tuple[np.ndarray, dict]:
     centres = [(e[:-1] + e[1:]) / 2 for e in grid_edges]
     x, y, z = np.meshgrid(*(v-c for v, c in zip(centres, centre)), indexing="ij")
     mask = x*x + y*y + z*z <= radius*radius
-    reach = math.floor(radius / spacing)
+    # Decimal input values define the sampling lattice. Compare squared integer
+    # offsets exactly so points on a decimal-radius shell are not rounded away.
+    ratio = Fraction(str(radius)) / Fraction(str(spacing))
+    reach = ratio.numerator // ratio.denominator
     need((2*reach+1)**3 <= 10_000_000, "sampling point limit")
-    offsets = np.arange(-reach, reach + 1, dtype=np.float64) * spacing
-    sx, sy, sz = np.meshgrid(offsets, offsets, offsets, indexing="ij")
-    points = int(np.count_nonzero(sx*sx + sy*sy + sz*sz <= radius*radius))
+    numerator_sq = ratio.numerator**2
+    denominator_sq = ratio.denominator**2
+    points = 0
+    for ix in range(reach + 1):
+        for iy in range(reach + 1):
+            remaining = numerator_sq - (ix*ix + iy*iy)*denominator_sq
+            if remaining < 0:
+                continue
+            iz_max = math.isqrt(remaining // denominator_sq)
+            points += (1 if ix == 0 else 2) * (1 if iy == 0 else 2) * (1 + 2*iz_max)
     return mask, {"center_cm": centre, "radius_cm": radius,
                   "analytic_volume_cm3": 4*math.pi*radius**3/3,
                   "sample_spacing_cm": spacing, "sample_points": points,
