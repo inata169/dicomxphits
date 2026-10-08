@@ -151,6 +151,14 @@ def test_decimal_radius_shell_includes_native_cell_centres():
     assert result["voxel_dose_sum_cgy"] == pytest.approx(7800)
 
 
+def test_decimal_sphere_touching_mesh_boundary_is_contained():
+    mesh = Mesh("synthetic", "dose.out", (1, 1, 1),
+                ((.2, .4), (-.2, .2), (-.2, .2)))
+    mask, geometry = roi.sphere(mesh, {"center_cm": [.3, 0, 0], "radius_cm": .1})
+    assert bool(mask[0, 0, 0])
+    assert geometry["sample_points"] == 7
+
+
 @pytest.mark.parametrize("zip_mode,retained", [(False, False), (True, True)])
 def test_pair_statistics_and_immutable_inputs(tmp_path, zip_mode, retained):
     mesh = Mesh("Synthetic combined dose", "dose.out", (2, 2, 1),

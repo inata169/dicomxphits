@@ -330,9 +330,12 @@ def sphere(mesh: Mesh, case: dict) -> tuple[np.ndarray, dict]:
     radius = finite_positive(case["radius_cm"], "radius") if has_radius else (
         3 * finite_positive(case["volume_cm3"], "volume") / (4 * math.pi)) ** (1 / 3)
     spacing = finite_positive(case.get("sample_spacing_cm", 0.1), "sampling spacing")
-    grid_edges = edges(mesh)
-    need(all(c - radius >= e[0] and c + radius <= e[-1] for c, e in zip(centre, grid_edges)),
-         "sphere extends outside mesh")
+    decimal_radius = Fraction(str(radius))
+    for c, (lo, hi) in zip(centre, mesh.bounds):
+        decimal_centre = Fraction(str(c))
+        need(decimal_centre - decimal_radius >= Fraction(str(lo)) and
+             decimal_centre + decimal_radius <= Fraction(str(hi)),
+             "sphere extends outside mesh")
     mask = sphere_native_mask(mesh, centre, radius)
     # Decimal input values define the sampling lattice. Compare squared integer
     # offsets exactly so points on a decimal-radius shell are not rounded away.
