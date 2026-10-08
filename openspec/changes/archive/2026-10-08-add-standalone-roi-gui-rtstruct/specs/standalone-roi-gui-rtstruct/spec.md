@@ -1,0 +1,113 @@
+## Purpose
+
+Provide a standalone desktop interface for completed PHITS region statistics
+and bind explicitly selected RT Structure contours to the native PHITS mesh
+using validated frozen CT, RT Plan, and preparation evidence.
+
+## ADDED Requirements
+
+### Requirement: Explicit independent desktop selection
+
+The system SHALL offer a separate desktop GUI for the independent completed
+PHITS ROI analysis. It SHALL allow explicit selection of a directory or ZIP,
+the official combined dose, its paired combined error, any required retained
+dose, and the generation, execution, and manifest evidence. It MUST NOT
+silently choose among multiple candidates, alter source cases, execute an
+external calculation, or grant GUI/workflow completion authority.
+
+#### Scenario: A completed case is selected
+
+- **WHEN** the user explicitly selects one supported completed snapshot and
+  its required pair and evidence
+- **THEN** the GUI can show its analysis independently of the public GUI and
+  without changing the case
+
+#### Scenario: Candidate inputs are ambiguous
+
+- **WHEN** multiple candidate ZIP members or run directories are present
+- **THEN** the GUI requires explicit selection and offers no automatic result
+
+### Requirement: Distinct sphere and RT Structure inputs
+
+The GUI SHALL retain an editable sphere with default centre `(0, 0, 0)` cm
+and radius `0.25 cm`, showing analytic volume, 1 mm sampling Points and
+volume, and native Grid Points and volume separately. For an RT Structure,
+it SHALL require explicitly selected RT Structure, RT Plan, and matching CT
+series/reference inputs and one unique selected ROINumber. ROIName SHALL be
+display-only. It MUST NOT identify an ROI by name alone or relabel a sphere
+as an imported Structure.
+
+#### Scenario: The default sphere is shown
+
+- **WHEN** the user keeps the default sphere and 1 mm sampling
+- **THEN** the GUI identifies 81 sampling Points and 0.081 cm3 sampling
+  volume separately from the analytic sphere volume and native grid count
+
+#### Scenario: Chamber is present by name
+
+- **WHEN** a selected RT Structure contains an ROI named Chamber
+- **THEN** the user must still select its unique ROINumber and supply the
+  matching RT Plan and CT geometry before Structure analysis is available
+
+### Requirement: Evidence-bound DICOM-to-PHITS membership
+
+The adapter SHALL validate the selected RT Structure contour and frame,
+RT Plan isocenter, CT-series geometry/evidence, and accepted PHITS mesh
+binding before deriving membership.
+
+#### Scenario: Apply the complete validation contract
+
+- **WHEN** this capability is used
+- **THEN** It SHALL map the selected Structure to a transient Boolean mask on the exact native `(x, y, z)` PHITS grid. It MUST fail closed on missing or conflicting identity, unsupported contour or orientation, out-of-grid or boundary ambiguity, and MUST NOT interpolate, resample, invent a contour, or change the accepted DICOM/PHITS coordinate and physical-tolerance contracts.
+
+#### Scenario: One matching Structure is geometrically bound
+
+- **WHEN** all selected identities and coordinate evidence agree and its
+  contour maps unambiguously to native PHITS cell centres
+- **THEN** only those native cells contribute to its independent statistics
+
+#### Scenario: RT Structure alone is supplied
+
+- **WHEN** the CT or RT Plan binding required to locate the contour is absent
+- **THEN** Structure statistics remain unavailable with a specific reason
+  rather than a guessed Chamber result or sphere substitution
+
+### Requirement: Correct scalar meaning and safe reporting
+
+The GUI SHALL display the validated one-fraction mean dose and spatial
+variation separately from voxel r.err. It SHALL label the existing
+`voxel_dose_sum_cgy` value as a grid-dependent sum of selected cell doses,
+not a point dose, Structure mean, energy integral, or course dose. Optional
+CSV/JSON publication SHALL be explicit, new-only, outside source cases and
+the public repository, and SHALL omit automatic DICOM identifiers, absolute
+source paths, and raw grids.
+
+#### Scenario: One or two cells are selected
+
+- **WHEN** the selected region contains one cell or two cells with doses
+  `d1` and `d2`
+- **THEN** the one-cell sum equals its mean, while the two-cell sum is
+  `d1 + d2` and its mean is `(d1 + d2)/2`, with no claim that the sum is a
+  physical region dose
+
+#### Scenario: Structure geometry fails
+
+- **WHEN** selected DICOM geometry cannot be validated
+- **THEN** the GUI shows an unavailable Structure result and publishes no
+  misleading numeric replacement
+
+### Requirement: Synthetic validation and bounded real-data checks
+
+Automated tests SHALL use only project-authored synthetic PHITS and DICOM
+fixtures. They SHALL cover input selection, coordinate binding, one/many/no
+cell populations, boundary and frame failures, GUI state, and new-only
+reports. Any local real-data check SHALL use explicitly selected read-only
+inputs outside the repository, and its results MUST NOT be committed. The
+result MUST NOT claim clinical validation or extend the public GUI's
+post-completion Structure r.err authority.
+
+#### Scenario: Compatibility is checked locally
+
+- **WHEN** a synthetic fixture or an explicitly selected local case passes
+- **THEN** the report states the validated input and statistical scope
+  without claiming clinical or general DICOM/PHITS compatibility
