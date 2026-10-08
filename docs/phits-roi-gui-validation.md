@@ -46,9 +46,13 @@ The public-tree audit and Git whitespace checks also passed. The focused Tk
 suite passed all 11 tests; an earlier combined focused run had a transient
 Tk-display skip and was followed by this successful run.
 
-OpenSpec CLI 1.14.1 was installed. All three active ROI changes pass strict
+OpenSpec CLI 1.14.1 was installed. All three ROI changes passed strict
+validation before archive; both promoted ROI specifications also pass strict
 validation after requirement prose was organized into scenarios without
 changing the contract. Whole-tree strict validation also reports existing
 warnings in unrelated specifications (long requirement bodies and one
 placeholder purpose). Those accepted specifications are outside this diff;
 their warnings are not represented as fixed or as a passing strict audit.
+Archived-task validation passes for all three ROI changes. Its whole-archive
+run also reports one pre-existing incomplete task in
+`2026-08-07-add-windows-offline-installer`; that historical task was not edited.

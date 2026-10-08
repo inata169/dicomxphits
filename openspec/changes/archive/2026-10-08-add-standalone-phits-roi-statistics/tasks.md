@@ -47,13 +47,13 @@
 
 ## 5. Completion (after approval)
 
-- [ ] Produce a reviewable pull request within the authorized external-write
+- [x] Produce a reviewable pull request within the authorized external-write
   scope; never merge or publish a release automatically.
 - [x] Record acceptance results and any explicitly deferred real-data checks.
-- [ ] Promote accepted deltas to `openspec/specs/standalone-phits-roi-statistics/`.
-- [ ] Archive this completed change under its completion date and validate
+- [x] Promote accepted deltas to `openspec/specs/standalone-phits-roi-statistics/`.
+- [x] Archive this completed change under its completion date and validate
   the resulting specification tree.
-- [ ] Report changed files, checks, unverified items, and stopping outcome.
+- [x] Report changed files, checks, unverified items, and stopping outcome.
 
 The change remains active while approval, implementation, or required checks
 are outstanding. Planning-stage checks do not mark implementation tasks done.
@@ -120,3 +120,19 @@ Runtime implementation, the future script's focused tests, real-output
 analysis, and actual v1.1.1-output compatibility remain unverified. No accepted
 specification was changed. The proposal remains active and unarchived pending
 human approval; no commit or pull request has been created at this stage.
+
+## Final validation and publication (2026-10-08)
+
+- PR #90 is open as a draft; external publication was authorized by the user.
+- Full pytest: 1495 passed, 15 skipped, one intentional duplicate-member warning.
+- Focused GUI tests: 11 passed. Compilation, public-tree audit, and Git
+  whitespace checks passed. Native Computer Use validation is recorded in
+  `docs/phits-roi-gui-validation.md`.
+- OpenSpec CLI 1.14.1 validates all three ROI changes in strict mode. Existing
+  unrelated specs have strict warnings; their contracts were not modified.
+- Real Structure values and actual saved newer-format output remain unverified
+  where the required inputs were unavailable; no real results were tracked.
+- Accepted deltas were promoted with the OpenSpec CLI and archived on
+  2026-10-08. Both resulting ROI specifications pass strict CLI validation.
+  Earlier planning and intermediate records above describe their historical
+  state and are superseded by this final record.

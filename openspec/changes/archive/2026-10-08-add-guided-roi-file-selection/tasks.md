@@ -17,7 +17,7 @@
 
 - [x] Run focused synthetic selection and GUI tests.
 - [x] Run full public checks and inspect the final diff.
-- [ ] Promote accepted deltas and archive when all required decisions are met.
+- [x] Promote accepted deltas and archive when all required decisions are met.
 
 ## Validation record (2026-10-08)
 
@@ -33,5 +33,21 @@
   canonical suggestions supplied each required sphere input; the independent
   validator accepted each selected combination. No local results or
   identifiers were saved in this repository.
-- The primary user authorized PR publication on 2026-10-08. Final validation,
-  publication, and the completion archive are now in progress.
+- The primary user authorized PR publication on 2026-10-08. PR #90 is open;
+  accepted requirements have been promoted and this change is archived.
+
+## Final validation and publication (2026-10-08)
+
+- PR #90 is open as a draft; external publication was authorized by the user.
+- Full pytest: 1495 passed, 15 skipped, one intentional duplicate-member warning.
+- Focused GUI tests: 11 passed. Compilation, public-tree audit, and Git
+  whitespace checks passed. Native Computer Use validation is recorded in
+  `docs/phits-roi-gui-validation.md`.
+- OpenSpec CLI 1.14.1 validates all three ROI changes in strict mode. Existing
+  unrelated specs have strict warnings; their contracts were not modified.
+- Real Structure values and actual saved newer-format output remain unverified
+  where the required inputs were unavailable; no real results were tracked.
+- Accepted deltas were promoted with the OpenSpec CLI and archived on
+  2026-10-08. Both resulting ROI specifications pass strict CLI validation.
+  Earlier planning and intermediate records above describe their historical
+  state and are superseded by this final record.

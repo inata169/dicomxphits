@@ -30,13 +30,13 @@
 
 ## 4. Completion (after approval)
 
-- [ ] Promote accepted requirements, archive the completed OpenSpec change,
+- [x] Promote accepted requirements, archive the completed OpenSpec change,
   and validate the resulting tree.
-- [ ] Prepare a reviewable PR within the authorized external-write scope.
+- [x] Prepare a reviewable PR within the authorized external-write scope.
 
 The primary user approved implementation of this proposal on 2026-10-08.
-The primary user authorized PR publication on 2026-10-08. Final validation,
-publication, and the completion archive are now in progress.
+The primary user authorized PR publication on 2026-10-08. PR #90 is open;
+accepted requirements have been promoted and this change is archived.
 
 ## Implementation validation record (2026-10-08)
 
@@ -74,3 +74,19 @@ publication, and the completion archive are now in progress.
 - `git diff --check`, `git diff --cached --check`, diff statistics, and
   `git status --short`: passed/read. Existing staged implementation and
   pre-existing untracked files were preserved.
+
+## Final validation and publication (2026-10-08)
+
+- PR #90 is open as a draft; external publication was authorized by the user.
+- Full pytest: 1495 passed, 15 skipped, one intentional duplicate-member warning.
+- Focused GUI tests: 11 passed. Compilation, public-tree audit, and Git
+  whitespace checks passed. Native Computer Use validation is recorded in
+  `docs/phits-roi-gui-validation.md`.
+- OpenSpec CLI 1.14.1 validates all three ROI changes in strict mode. Existing
+  unrelated specs have strict warnings; their contracts were not modified.
+- Real Structure values and actual saved newer-format output remain unverified
+  where the required inputs were unavailable; no real results were tracked.
+- Accepted deltas were promoted with the OpenSpec CLI and archived on
+  2026-10-08. Both resulting ROI specifications pass strict CLI validation.
+  Earlier planning and intermediate records above describe their historical
+  state and are superseded by this final record.
