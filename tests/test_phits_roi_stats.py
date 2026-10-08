@@ -215,6 +215,25 @@ def test_new_only_reports_and_csv_neutralization(tmp_path):
         roi.publish([row], str(output), "report", [])
 
 
+def test_invalid_case_cannot_publish_inside_its_source(tmp_path, capsys):
+    mesh = Mesh("Synthetic combined dose", "dose.out", (2, 2, 1),
+                ((-.2, .2), (-.2, .2), (-.1, .1)))
+    case = fixture(tmp_path, mesh, np.ones(mesh.counts), np.ones(mesh.counts) * .1)
+    source = Path(case["source"])
+    output = source / "reports"
+    output.mkdir()
+    (source / case["error"]).write_bytes(b"invalid synthetic error")
+    args = [item for key in ("source", "dose", "error", "generation", "execution", "manifest")
+            for item in ("--" + key.replace("_", "-"), str(case[key]))]
+    args += ["--radius-cm", str(case["radius_cm"]),
+             "--output-dir", str(output), "--report-stem", "guard-test"]
+    assert roi.main(args) == 1
+    captured = capsys.readouterr()
+    assert '"status": "invalid"' in captured.out
+    assert "output directory overlaps source" in captured.err
+    assert list(output.iterdir()) == []
+
+
 def test_axis_order_single_cell_and_empty_region(tmp_path):
     mesh = Mesh("Synthetic combined dose", "dose.out", (2, 2, 2),
                 ((-.4, .4), (-.4, .4), (-.4, .4)))

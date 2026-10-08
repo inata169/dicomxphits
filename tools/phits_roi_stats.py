@@ -516,8 +516,8 @@ def main(argv: list[str] | None = None) -> int:
     sources = []
     for case in cases:
         try:
-            row = analyse(case)
             sources.append(Source(case["source"]))
+            row = analyse(case)
         except (AnalysisError, KeyError, TypeError, ValueError, OSError) as exc:
             row = {key: None for key in NUMBER_KEYS}
             row.update({"center_cm": None, "native_spacing_cm": None,
