@@ -163,8 +163,26 @@ incompatible, stop for a separately reviewed coordinate-contract change.
 Similarly, a new restriction requires an evidence-backed proposal update.
 
 Real CT2PHITS execution or real non-patient inputs require a separate explicit
-request with designated external paths. No installation/data discovery, real
-execution, or official distribution copying is part of planning.
+request with designated external paths. The original planning phase did not
+inspect an installation or execute a tool, and no official distribution file
+may be copied into the repository.
+
+### 2026-10-09 synthetic tool finding and pending decision
+
+An explicitly authorized run of the installed CT2PHITS batch on generated
+non-patient CT established inclusive bounds, floor-truncation of incomplete
+coarse groups, selected-slice DICOM shift, and loss of material data for
+unequal X/Y factors in this installed version. See `validation.md`.
+
+The current handoff uses the full source-series origin in its IEC translation.
+For a Z crop beginning after slice one, that discards the tool's selected-slice
+translation. A proposed, not yet approved, correction is to derive the
+translation from the frozen selected first slice, cross-check it against the
+generated raw DICOM shift, and retain the full-series origin and count as
+separate source evidence. The geometry of unselected source snapshots and
+the HFS-to-IEC axis/sign transform would remain unchanged. Any conversion
+restriction for non-divisible source dimensions or unequal X/Y factors also
+requires an explicit human decision before the gate can be removed.
 
 ## Acceptance and validation
 

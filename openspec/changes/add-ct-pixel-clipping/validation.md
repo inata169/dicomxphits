@@ -184,3 +184,40 @@ Validation after this extension:
   pytest temporary-directory access error. A later full-suite run was
   interrupted after a small input-validation correction; the final run above
   completed successfully under approved execution permissions.
+
+## Authorized synthetic CT2PHITS contract check, 2026-10-09
+
+The user explicitly approved running the installed CT2PHITS tool with only
+newly generated non-patient synthetic CT. The experiment used 32 columns,
+24 rows, six slices, 2 mm in-plane spacing, 3 mm slice spacing, and a nonzero
+synthetic DICOM origin. It invoked the provided CT2PHITS batch adapter only;
+PHITS transport was not run. Inputs and generated files stayed outside the
+repository and were removed after extracting the following bounded findings.
+No distribution file or generated output was added to Git.
+
+- The full volume with `8 8 2` produced 4 x 3 x 3 voxels. An XY-only crop
+  (columns 9-24, rows 5-20) produced 2 x 2 x 3, with X/Y local bounds
+  shifted by the skipped source columns/rows.
+- A Z-only crop (slices 3-6) produced 4 x 3 x 2. Its raw DICOM Z shift was
+  0.6 cm larger than the full-volume shift, matching the two skipped 3 mm
+  slices. The existing `prepare_ct2phits_assets()` replaced that shift using
+  the full frozen series origin, losing the 0.6 cm crop offset in the prepared
+  IEC Y translation. This is a demonstrated coordinate-handoff defect for
+  non-default Z selection, not an assumed correction.
+- An off-centre 17 x 17 x 5 selection with `8 8 2` produced 2 x 2 x 2:
+  incomplete high-end groups were discarded. The same selection with
+  `4 4 1` produced 4 x 4 x 5. Arbitrary numeric bounds therefore do not
+  guarantee that every selected source voxel is retained when dimensions are
+  not divisible by their factors.
+- With equal X/Y factors, three synthetic Y bands mapped to three distinct
+  voxel materials. With factors `4 8 1`, the third band was absent from the
+  output even though the tool reported success. The installed source's
+  `SETcoarse` uses the X factor while truncating the Y source count; this
+  agrees with the observed loss. Unequal X/Y factors are unsafe in this
+  installed version.
+
+These observations do not authorize silently changing the public coordinate
+handoff or narrowing selectable ranges. The active conversion gate remains
+until the human decides on the selected-slice coordinate handoff and on how to
+handle non-divisible and unequal-factor selections. Tests with fake runners
+alone cannot establish these external-tool properties.
