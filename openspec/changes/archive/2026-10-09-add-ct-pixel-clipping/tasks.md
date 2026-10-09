@@ -56,11 +56,11 @@
       manual structural review.
 - [x] Record unverified real-tool behavior without treating mocks as external
       validation; real execution needs separate explicit authorization.
-- [ ] After completed approved implementation, promote accepted deltas,
+- [x] After completed approved implementation, promote accepted deltas,
       archive, validate the resulting tree, and provide a reviewable PR.
 
 Implementation checks and the non-default factor evidence gate are recorded
-in `validation.md`. The change remains active and cannot be archived yet.
+in `validation.md`. The change was kept active while those checks remained.
 
 ## Windows follow-up
 

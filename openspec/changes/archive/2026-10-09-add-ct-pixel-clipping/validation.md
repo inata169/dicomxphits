@@ -596,3 +596,21 @@ it does not establish clinical suitability or every possible equal X/Y value.
 The complete public test suite after the Z-factor boundary case passed
 **1562 tests, 15 skipped**, with the existing duplicate-ZIP warning. The
 temporary synthetic run files were removed after the results were recorded.
+
+## Completion and specification promotion, 2026-10-09
+
+The final full public test run passed **1562 tests, 15 skipped** (161.70 s).
+`python -m compileall src`, `python tools/verify_public_tree.py` (457 tracked
+files before promotion), and staged/unstaged Git diff checks passed. A first
+unprivileged pytest attempt encountered the known sandbox temporary-directory
+permission problem and was stopped; the same suite passed with the required
+filesystem permission. The newly added GUI guidance was below the visible
+Computer Use viewport, so its exact rendered text was not visually confirmed;
+factor behavior was covered by GUI and frontend tests.
+
+All four approved requirement deltas were promoted into current specifications.
+The OpenSpec CLI was unavailable; requirement headings, scenarios, preserved
+existing requirements, and archive layout were reviewed manually. The bounded
+PHITS 3.37 check used only synthetic CT and CT2PHITS. PHITS transport, real
+patient data, arbitrary unseen CT series, and clinical suitability remain
+unverified and are not completion claims.
