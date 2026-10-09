@@ -73,10 +73,9 @@ result freshness. Package metadata and GUI About report 1.1.1. See the
 separate automated, manual and real-tool evidence boundaries. No new workflow
 capability or physical validation is claimed.
 
-The current `main` branch also contains two **post-v1.1.1** additions: the
-independent PHITS ROI statistics GUI and manual CT clipping in the guided GUI.
-They are not part of the published `v1.1.1` tag; the unchanged package/About
-version on `main` does not indicate that these additions are in that release.
+The source tree contains two **post-v1.1.1** additions: the independent PHITS
+ROI statistics GUI and manual CT clipping in the guided GUI. They are not part
+of the published `v1.1.1` tag.
 
 Version 1.1.2 is being prepared from those additions and the bounded CT
 preview fix. The release candidate has not been published; see the
