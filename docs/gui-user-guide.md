@@ -2,6 +2,11 @@
 
 For clinical medical physicists and fourth-year university students studying medical physics
 
+The linked CT clipping preview described below is in v1.1.2; it is not
+included in the historical v1.1.1 tag. The separate PHITS ROI statistics
+window is also in v1.1.2 and is documented in the
+[standalone guide](phits-roi-statistics.md).
+
 > **Important**
 > dicomxphits v1.1.x is a fixed-field 3D-CRT workflow for education and research. It is not for clinical commissioning, patient-specific QA, or treatment decisions. The GUI may be used only with appropriately authorized **non-patient phantom data**. IMRT, dynamic MLC delivery, and VMAT are outside its supported scope.
 
@@ -176,8 +181,19 @@ Select **1 CT2PHITS**.
 4. If the CT folder contains multiple series, enter the intended UID in **Series UID (optional)** under Tool settings.
 5. Normally, keep the **Timeout (seconds)** default of `300`.
 6. Select **I confirm non-patient phantom data**.
-7. Select **Run CT2PHITS**.
-8. Review the Activity log and sidebar status.
+7. To retain only a manually chosen CT box, open **CT images / Clipping range…**.
+   Inspect the linked Axial, Coronal, and Sagittal views; choose opposite
+   corners in one view or edit the six inclusive source-index fields. Select
+   **Apply** to use the box for this case. The GUI does not recognize a couch
+   or remove unwanted material that remains inside the box.
+8. Set the case-local **Coarse graining** fields if needed. X and Y must be
+   the same positive integer; Z must be from 1 through 4. The default is
+   `8 8 2`. At least one complete coarse voxel must fit on every axis.
+9. Select **Run CT2PHITS**. If incomplete groups at the high end will be
+   discarded, review the warning's retained bounds before continuing.
+10. Review the Activity log and sidebar status. For a crop or non-default
+    factors, the frontend verifies the grid and every material voxel against
+    the frozen CT and conversion table before accepting the handoff.
 
 After success, the GUI automatically hands these items to the next stage:
 
@@ -409,4 +425,5 @@ The educational value of dicomxphits is that it exposes the relationship among D
 - [Workflow stages and gates](workflow_stages.md)
 - [Manual smoke workflow](manual_smoke_workflow.md)
 - [CT2PHITS frontend handoff](ct2phits-frontend-handoff.md)
+- [Independent PHITS ROI statistics and desktop GUI](phits-roi-statistics.md)
 - [GPR-comparing](https://github.com/inata169/GPR-comparing)

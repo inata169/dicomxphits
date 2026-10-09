@@ -9,21 +9,20 @@ certification software.
 
 ## Current Public Release
 
-- The current public release is `v1.1.1`, tagged at commit
-  `f10e66601fdbbaf29c5ff06ba6b8da22d1cac6e2` (2026-09-28).
-- The release includes PR #83/#84 repairs, bilingual illustrated GUI manuals
-  and the PR #88 validation record. See the
-  [release notes](../docs/release-notes-v1.1.1.md).
-- v1.1.1 is experimental education-and-research software. Automated tests and
-  a bounded two-field low-statistics real-PHITS GUI normal-completion check
-  passed. Numeric isocenter relative-error display, sustained observation,
-  real STOP/retry/recovery and downstream acceptance remain unverified.
-- No custom Windows offline asset is published for v1.1.1. The v1.0.2 custom
+- The current public release is `v1.1.2` (2026-10-09). It includes the
+  independent PHITS ROI statistics GUI, manually selected CT clipping, and
+  bounded previews for several-hundred-slice CT series. See the
+  [release notes](../docs/release-notes-v1.1.2.md).
+- v1.1.2 is experimental education-and-research software. Automated tests and
+  Windows/Ubuntu public CI passed. Geometry-only previews reviewed in a
+  separately authorized non-patient case do not establish completed PHITS
+  transport, end-to-end acceptance, dose accuracy or clinical suitability.
+- No custom Windows offline asset is published for v1.1.2. The v1.0.2 custom
   offline asset was withdrawn and removed; its historical identity remains
   documented in `docs/release-notes-v1.0.2.md`.
 - Publication does not expand the normative public scope below. Accepted
-  contracts remain under `openspec/specs/`. Historical v1.0.3 acceptance
-  evidence is not v1.1.1 external-tool validation. This documentation alignment
+  contracts remain under `openspec/specs/`. Historical v1.1.1 real-tool
+  evidence is not v1.1.2 end-to-end validation. This release-status alignment
   adds no capability, normative specification or physical-validation claim.
 
 ## Technology

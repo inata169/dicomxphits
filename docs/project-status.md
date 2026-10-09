@@ -35,9 +35,25 @@ For the v1.0.3 publication boundary and the decision to publish without a
 Windows offline ZIP, see the
 [`v1.0.3 release notes`](release-notes-v1.0.3.md).
 For the current experimental release and its validation limits, see the
-[v1.1.1 release notes](release-notes-v1.1.1.md).
+[v1.1.2 release notes](release-notes-v1.1.2.md).
 
-## Current published baseline — v1.1.1
+## Current published baseline — v1.1.2
+
+- Public release: [`v1.1.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.2)
+- Previous public release: `v1.1.1`
+- Published: 2026-10-09, experimental education/research source release
+- Release integration: PR #95, incorporating the changes proposed in draft
+  PR #93 (documentation) and PR #94 (large CT preview).
+- Automated validation: 1565 passed, 15 skipped on Windows/Python 3.12;
+  compilation and public-tree audit passed. Windows and Ubuntu PR CI passed.
+- Real-tool boundary: a separately authorized non-patient case produced
+  geometry-only previews reviewed by the user while PHITS transport was still
+  running. This does not establish completed end-to-end execution, dose
+  accuracy or clinical suitability.
+- Public workflow scope: documented fixed-field 3D-CRT; custom offline asset:
+  none. Package metadata and GUI About report 1.1.2.
+
+## Previous published baseline — v1.1.1
 
 - Public release: [`v1.1.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1)
 - Previous public release: `v1.1.0`
@@ -56,7 +72,7 @@ For the current experimental release and its validation limits, see the
   This does not establish dose accuracy or clinical validity.
 - Public workflow scope: documented fixed-field 3D-CRT; public custom asset: none.
 
-The v1.1.x user documentation is checked against v1.1.1. The patch includes
+The v1.1.1 user documentation was checked against that release. The patch includes
 retry/downstream recovery, observation refresh, retained Structure freshness
 and bilingual illustrated GUI manuals. See the
 [v1.1.1 release notes](release-notes-v1.1.1.md) for evidence and limitations.
@@ -66,7 +82,7 @@ release preparation. Historical demonstrations retain only their stated bounds.
 ## Historical release records
 
 The v1.0.2 and v1.0.3 records below remain historical evidence; they do not
-establish v1.1.1 stability or external-tool acceptance. The current release
+establish v1.1.2 stability or external-tool acceptance. The prior v1.1.1 release
 baseline above was confirmed on 2026-09-28. The previous v1.1.0 release is
 recorded in its [historical release notes](release-notes-v1.1.0.md).
 

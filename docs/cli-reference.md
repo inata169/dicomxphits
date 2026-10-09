@@ -8,6 +8,37 @@ The real-tool examples below use Windows PowerShell and placeholder paths
 outside the repository. They require separately obtained licensed tools and an
 explicitly confirmed non-patient phantom; they are not Dev Container commands.
 
+## CT2PHITS Manual Clipping and Coarse Graining
+
+Start with the `dicomxphits-run-ct2phits` command in the
+[README](../README.md#ct2phits-frontend-adapter). Omit these optional arguments
+to convert the full validated source volume with the `8 8 2` default:
+
+- `--pixel-clipping NX_MIN NX_MAX NY_MIN NY_MAX` selects inclusive,
+  one-based source columns and rows.
+- `--slice-range FIRST LAST` selects inclusive positions in validated ascending
+  physical-Z slice order, not DICOM InstanceNumber values.
+- `--coarse-graining X Y Z` sets the number of source indices per output voxel.
+  X and Y must be equal positive integers; Z must be from 1 through 4.
+
+Each selected axis must contain at least one complete group. Incomplete groups
+at the high end are discarded and the requested and retained bounds are
+recorded separately. Review the GUI warning before a guided conversion, or
+review the CLI manifest and summary for the retained range. A crop or
+non-default-factor result is accepted only after the output grid, material
+definitions, and every voxel material match the frozen source CT and
+conversion table. The source CT and RT Plan snapshots remain complete and
+unchanged. The selected first slice supplies clipped phantom placement; the
+full-series origin remains source evidence. No automatic couch segmentation
+occurs: any unwanted object inside the box remains. See the
+[GUI operating manual](instruction/_manual/gui-manual.en.md) for linked
+Axial/Coronal/Sagittal selection.
+
+The independent `run_phits_roi_stats_gui.bat` launcher and
+`tools/phits_roi_stats.py` analyse a completed Sumtally case outside the guided
+workflow. Their inputs, results, and report gates are documented in the
+[PHITS ROI statistics guide](phits-roi-statistics.md).
+
 ## Non-Patient Phantom CT Water Replacement
 
 Create a calculation-only derived CT series from an explicit whole-layer ROI
