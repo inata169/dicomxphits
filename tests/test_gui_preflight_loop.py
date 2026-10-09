@@ -40,7 +40,7 @@ def test_hidden_tk_stays_responsive_during_blocked_preflight_read(tmp_path, read
 
 def _exercise_hidden_tk(tmp_path, monkeypatch, read_fails):
     tk = pytest.importorskip("tkinter")
-    from tkinter import messagebox
+    from dicomxphits.gui_dialogs import GuiMessages as messagebox
     import dicomxphits.segment_stop as stop_module
 
     workspace, _, paths = workspace_fixture(tmp_path)

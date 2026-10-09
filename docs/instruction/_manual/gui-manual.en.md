@@ -4,6 +4,8 @@ Date: 2026-09-24. [日本語](gui-manual.ja.md) / [Document index](README.md)
 
 Applies to v1.1.x, checked against published v1.1.1. This release includes the retry recovery repair in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Install v1.1.1 before starting a new GUI session; Help → About should report 1.1.1. An already running GUI retains its imported code.
 
+Development branch note: the CT preview described below is not part of published v1.1.1. The clipping conversion remains disabled until the supported CT2PHITS crop and coordinate contract is verified.
+
 This is experimental education and research software for fixed-field 3D-CRT using authorized non-patient phantom data. Clinical use, patient QA, IMRT, dynamic MLC and VMAT are outside its scope. This manual does not establish stable operation with real external tools or dose agreement with a clinical machine.
 
 ## 1. Quick reference
@@ -83,6 +85,18 @@ Keep calculation data outside the repository and out of Git. Standard CT2PHITS o
 5. After success, check for `Verified frozen handoff`. Frozen RT Plan, CT reference and CT2PHITS DATfiles are handed to downstream stages.
 
 Downstream processing uses the Frozen RT Plan. Editing the original source does not update an already prepared workspace. On failure, use Chapter 10 rather than repeatedly running into the same output directory.
+
+#### CT image preview and clipping draft (development branch)
+
+After selecting the non-patient phantom confirmation, choose `CT images / Clipping range…` to inspect the selected series. The dialog reads CT pixels only for display and does not run CT2PHITS. It shows Axial (Nx/Ny), Coronal (Nx/slice), and Sagittal (Ny/slice) views, with the superior end at the top of the latter two. Sliders change the viewed plane; right-click sets the linked viewing crosshair. The pointer displays original one-based Nx, Ny, and slice indices. The contrast centre and width affect display only.
+
+Use browse mode to inspect the source without editing the box. The `−` and `+` buttons or mouse wheel move one index at a time; `Expand` enlarges one plane and `Show all three views` returns to the linked layout. Turn on `Select two corners (left click)` before left-clicking opposite corners in one image. The mode returns to browse after the second click. Alternatively enter Nx min/max, Ny min/max, and First/Last slice. Either click order works; the remaining axis retains its bounds. A click in a different image starts a new pair. `Reset to full volume` restores all source indices in the draft; `Apply` commits the draft to this case; `Cancel` discards it. Orange framing and `Outside selected volume` identify a viewed plane outside the selected range. A single-slice CT retains Axial and numeric controls while the other views are unavailable. Preview loading is capped at 128 MiB and may report unsupported pixel encoding or decoding failures.
+
+The human selects an axis-aligned box of source voxels with any valid width, height, and depth. The GUI does not automatically identify a couch or other unwanted object; voxels inside the chosen box are requested. Bounds are inclusive source indices, not millimetres. Changing the CT folder or series invalidates the applied selection; changed source files require reopening the preview.
+
+The CT2PHITS page accepts equal positive integer X/Y coarse-graining factors and a Z factor from `1` through `4`; the default is `8 8 2`. Values such as `1 1 2` and `5 5 2` are valid when complete output groups fit. The resulting CT voxel pitch is the source DICOM column and row pixel spacing multiplied by X and Y, and the source slice interval multiplied by Z. Choose factors using the actual source spacing when aiming for roughly 2–3 mm; a factor by itself does not guarantee that pitch. The factors do not change the source preview or requested box. Each selected axis must contain at least one complete coarse voxel. CT2PHITS discards incomplete high-end groups, so the GUI warns before conversion with the lost source counts and actual retained bounds in a child window using the main GUI colors. `Continue conversion` starts the run; `Cancel` or closing the warning leaves it idle. Review whether the retained bounds contain the intended anatomy and PTV.
+
+After conversion, dicomxphits checks the output grid and every voxel material against the frozen CT and conversion table. Unequal X/Y factors are rejected before execution because the installed converter source has a Y-count defect for those inputs. Any output discrepancy or external tool failure stops the handoff. Coarse graining changes HU detail and boundary representation relative to the source CT. No patient attributes are shown in the preview.
 
 ### 4.2 Workspace: prepare inputs
 
@@ -323,3 +337,5 @@ Completion checklist: verified PHITS success for all segments; successful Sumtal
 Verification scope: this manual uses source/specification review, synthetic GUI screenshots and fake-runner STOP/retry/recovery tests. Real PHITS stopping time and recovery, power loss, real-folder deletion and English-Windows dialogs were not tested. Evidence and limitations are in the [GUI verification record](gui-verification.en.md) and [repair record](retry-fix.en.md). Older documentation contains a known discrepancy concerning installation-wide hashing; retry guidance here follows current code and the [current specification](../../../openspec/specs/phits-preflight-control/spec.md).
 
 The separate v1.1.1 low-statistics two-field real-PHITS normal-completion check passed. Numeric isocenter error display, sustained operation and real STOP/retry/downstream acceptance remain unverified. See the [release validation record](../../release-notes-v1.1.1.md).
+
+Application messages and confirmations use the main GUI colors. Windows title bars and file/folder pickers retain the OS appearance. The CT preview keeps its Apply/Cancel/Reset controls and slice sliders visible when resized within its supported minimum size.

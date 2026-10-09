@@ -13,6 +13,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
+from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, coarse_coverage
+from dicomxphits.run_ct2phits import CT2PHITS_COARSE_GRAINING, select_ct_series
 
 from dicomxphits import __version__
 from dicomxphits.gui_tool_profile import (
@@ -161,6 +163,8 @@ class GuiConfig:
     rtphits_root: str = ""
     ct2phits_workspace_root: str = ""
     ct_series_instance_uid: str = ""
+    ct_clipping_bounds: tuple[int, int, int, int, int, int] | None = None
+    ct_coarse_graining: tuple[str, str, str] = ("8", "8", "2")
     ct2phits_timeout_seconds: float = DEFAULT_CT2PHITS_TIMEOUT_SECONDS
     maxcas: int | str = DEFAULT_SEGMENT_MAXCAS
     maxbch: int | str = DEFAULT_SEGMENT_MAXBCH
@@ -480,6 +484,29 @@ def _ct2phits_timeout_value(config: GuiConfig) -> float:
     return value
 
 
+def _ct2phits_coarse_values(config: GuiConfig) -> tuple[int, int, int]:
+    raw = config.ct_coarse_graining
+    if len(raw) != 3:
+        raise GuiValidationError("CT2PHITS coarse graining requires X, Y, and Z values")
+    parsed: list[int] = []
+    for axis, value in zip("XYZ", raw):
+        number = str(value).strip()
+        if isinstance(value, bool) or re.fullmatch(r"[0-9]+", number) is None:
+            raise GuiValidationError(f"CT2PHITS coarse graining {axis} must be a positive integer")
+        try:
+            factor = int(number)
+        except ValueError as exc:
+            raise GuiValidationError(f"CT2PHITS coarse graining {axis} must be a positive integer") from exc
+        if factor <= 0:
+            raise GuiValidationError(f"CT2PHITS coarse graining {axis} must be a positive integer")
+        parsed.append(factor)
+    if parsed[0] != parsed[1]:
+        raise GuiValidationError("CT coarse graining X and Y factors must be equal")
+    if parsed[2] > 4:
+        raise GuiValidationError("CT coarse graining Z factor must be between 1 and 4")
+    return parsed[0], parsed[1], parsed[2]
+
+
 def _runtime_setting_value(config: GuiConfig, field_name: str) -> int:
     raw_value = getattr(config, field_name)
     if isinstance(raw_value, bool):
@@ -531,6 +558,7 @@ def validate_stage(
 
     if spec.key == "run_ct2phits":
         _ct2phits_timeout_value(config)
+        _ct2phits_coarse_values(config)
 
     if spec.key == "prepare_workspace":
         for field_name in RUNTIME_SETTING_DEFAULTS:
@@ -692,6 +720,13 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
         series_uid = str(config.ct_series_instance_uid or "").strip()
         if series_uid:
             command.extend(["--ct-series-instance-uid", series_uid])
+        if config.ct_clipping_bounds is not None:
+            bounds = config.ct_clipping_bounds
+            command.extend(["--pixel-clipping", *(str(x) for x in bounds[:4])])
+            command.extend(["--slice-range", *(str(x) for x in bounds[4:])])
+        coarse = _ct2phits_coarse_values(config)
+        if coarse != CT2PHITS_COARSE_GRAINING:
+            command.extend(["--coarse-graining", *(str(x) for x in coarse)])
         command.append("--confirm-non-patient-phantom")
     elif spec.key == "prepare_workspace":
         geometry_mode = geometry_mode_value(config)
@@ -1687,6 +1722,9 @@ def _base_default_values() -> dict[str, str]:
         "rtphits_root": "",
         "ct2phits_workspace_root": "",
         "ct_series_instance_uid": "",
+        "ct_coarse_x": str(CT2PHITS_COARSE_GRAINING[0]),
+        "ct_coarse_y": str(CT2PHITS_COARSE_GRAINING[1]),
+        "ct_coarse_z": str(CT2PHITS_COARSE_GRAINING[2]),
         "ct2phits_timeout_seconds": f"{DEFAULT_CT2PHITS_TIMEOUT_SECONDS:g}",
         "rtplan_path": "",
         "workspace_root": "",
@@ -2136,7 +2174,8 @@ def _friendly_stage_failure(spec: StageSpec, message: str) -> str:
 
 def _build_gui() -> int:
     import tkinter as tk
-    from tkinter import filedialog, messagebox, scrolledtext, ttk
+    from tkinter import filedialog, scrolledtext, ttk
+    from dicomxphits.gui_dialogs import GuiMessages
 
     colors = {
         "navy": "#071A2B",
@@ -2158,6 +2197,7 @@ def _build_gui() -> int:
     root.geometry("1360x820")
     root.minsize(1120, 720)
     root.configure(background=colors["navy"])
+    messagebox = GuiMessages(root, colors)
     try:
         root.state("zoomed")
     except tk.TclError:
@@ -2339,12 +2379,32 @@ def _build_gui() -> int:
         focuscolor=colors["cyan"],
     )
     style.map("TCheckbutton", background=[("active", colors["surface"])])
+    style.configure(
+        "CTPreview.TLabel", background=colors["navy"],
+        foreground=colors["text"], font=("Segoe UI", 10),
+    )
+    style.configure(
+        "CTPreview.TCheckbutton", background=colors["navy"],
+        foreground=colors["text"], font=("Segoe UI", 10),
+    )
+    style.map("CTPreview.TCheckbutton", background=[("active", colors["navy"])])
+    style.configure(
+        "CTPreview.TLabelframe", background=colors["surface"],
+        bordercolor=colors["line"],
+    )
+    style.configure(
+        "CTPreview.TLabelframe.Label", background=colors["surface"],
+        foreground=colors["cyan"], font=("Segoe UI Semibold", 11),
+    )
 
     defaults = _default_values()
     values = {name: tk.StringVar(value=value) for name, value in defaults.items()}
     browse_directories = _browse_directories()
     overwrite = tk.BooleanVar(value=False)
     confirmed_non_patient_phantom = tk.BooleanVar(value=False)
+    applied_ct_volume = None
+    applied_ct_bounds: ClipBounds | None = None
+    ct_clipping_status = tk.StringVar(value="Clipping: complete source volume")
     manual_handoff = tk.BooleanVar(value=False)
     verified_handoff_available = tk.BooleanVar(value=False)
     existing_case_mode = tk.BooleanVar(value=False)
@@ -2720,6 +2780,18 @@ def _build_gui() -> int:
             rtphits_root=values["rtphits_root"].get(),
             ct2phits_workspace_root=values["ct2phits_workspace_root"].get(),
             ct_series_instance_uid=values["ct_series_instance_uid"].get(),
+            ct_clipping_bounds=(
+                (applied_ct_bounds.nx_min, applied_ct_bounds.nx_max,
+                 applied_ct_bounds.ny_min, applied_ct_bounds.ny_max,
+                 applied_ct_bounds.first, applied_ct_bounds.last)
+                if applied_ct_bounds is not None and applied_ct_volume is not None
+                and not applied_ct_bounds.is_full(applied_ct_volume.shape)
+                else None
+            ),
+            ct_coarse_graining=(
+                values["ct_coarse_x"].get(), values["ct_coarse_y"].get(),
+                values["ct_coarse_z"].get(),
+            ),
             ct2phits_timeout_seconds=timeout,
             maxcas=values["maxcas"].get(),
             maxbch=values["maxbch"].get(),
@@ -3119,6 +3191,7 @@ def _build_gui() -> int:
         )
         if not selected:
             return
+        invalidate_ct_clipping()
         values["workspace_root"].set(selected)
         remember_browse_directory(
             "workspace_root",
@@ -3162,6 +3235,7 @@ def _build_gui() -> int:
 
     def start_new_case_mode() -> None:
         nonlocal recovery_inspection
+        invalidate_ct_clipping()
         recovery_inspection = None
         existing_case_mode.set(False)
         clear_new_case_handoff_state(
@@ -3543,6 +3617,85 @@ def _build_gui() -> int:
         text="I confirm non-patient phantom data",
         variable=confirmed_non_patient_phantom,
     ).grid(row=0, column=0, sticky="w")
+    coarse_row = ttk.Frame(ct2_actions, style="Surface.TFrame")
+    coarse_row.grid(row=1, column=0, sticky="w", pady=(8, 0))
+    ttk.Label(coarse_row, text="Coarse graining", style="Surface.TLabel").grid(
+        row=0, column=0, padx=(0, 12), sticky="w"
+    )
+    for column, (axis, key) in enumerate(
+        (("X", "ct_coarse_x"), ("Y", "ct_coarse_y"), ("Z", "ct_coarse_z")), start=1
+    ):
+        ttk.Label(coarse_row, text=axis, style="Surface.TLabel").grid(
+            row=0, column=column * 2 - 1, padx=(0, 3)
+        )
+        ttk.Entry(coarse_row, textvariable=values[key], width=5).grid(
+            row=0, column=column * 2, padx=(0, 12)
+        )
+    ttk.Label(
+        coarse_row,
+        text="X = Y; Z = 1–4. CT grid pitch also depends on source pixel and slice spacing.",
+        style="SurfaceMuted.TLabel",
+    ).grid(row=1, column=0, columnspan=7, sticky="w", pady=(4, 0))
+
+    def invalidate_ct_clipping(*_args: object) -> None:
+        nonlocal applied_ct_volume, applied_ct_bounds
+        applied_ct_volume = None
+        applied_ct_bounds = None
+        ct_clipping_status.set("Clipping: complete source volume; inspect this CT again for selection")
+
+    values["ct_dicom_root"].trace_add("write", invalidate_ct_clipping)
+    values["ct_series_instance_uid"].trace_add("write", invalidate_ct_clipping)
+
+    def open_ct_preview() -> None:
+        nonlocal applied_ct_volume, applied_ct_bounds
+        if execution_guard.active_stage is not None:
+            messagebox.showerror("CT preview", "Wait until the active stage finishes")
+            return
+        if not confirmed_non_patient_phantom.get():
+            messagebox.showerror("CT preview", "Confirm non-patient phantom data before reading pixels")
+            return
+        source = values["ct_dicom_root"].get().strip()
+        if not source:
+            messagebox.showerror("CT preview", "Select a CT DICOM folder")
+            return
+        if applied_ct_volume is not None and not applied_ct_volume.still_current():
+            invalidate_ct_clipping()
+        from dicomxphits.ct_preview import CtPreviewDialog
+
+        def apply(volume: object, bounds: ClipBounds) -> None:
+            nonlocal applied_ct_volume, applied_ct_bounds
+            if (values["ct_dicom_root"].get().strip() != source
+                or values["ct_series_instance_uid"].get().strip() != selected_uid):
+                raise ClipError("CT selection changed; reopen the preview")
+            applied_ct_volume = volume
+            applied_ct_bounds = bounds
+            ct_clipping_status.set(
+                f"Clipping: Nx {bounds.nx_min}–{bounds.nx_max}, "
+                f"Ny {bounds.ny_min}–{bounds.ny_max}, "
+                f"slices {bounds.first}–{bounds.last}"
+            )
+
+        selected_uid = values["ct_series_instance_uid"].get().strip()
+        CtPreviewDialog(
+            root, Path(source), selected_uid or None, applied_ct_bounds, apply,
+            is_current=lambda: (
+                values["ct_dicom_root"].get().strip() == source
+                and values["ct_series_instance_uid"].get().strip() == selected_uid
+            ),
+        )
+
+    def show_ct_clipping_warning(message: str) -> bool:
+        return messagebox.askyesno(
+            "CT clipping / coarse graining", message,
+            accept="Continue conversion", cancel="Cancel",
+        )
+
+    ttk.Button(ct2_actions, text="CT images / Clipping range…", command=open_ct_preview).grid(
+        row=2, column=0, sticky="w", pady=(5, 0)
+    )
+    ttk.Label(ct2_actions, textvariable=ct_clipping_status).grid(
+        row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
+    )
 
     workspace_page = new_page("workspace")
     existing_case_frame = ttk.Frame(
@@ -4195,6 +4348,48 @@ def _build_gui() -> int:
             finish_stage_error(spec, message, validation=True)
             return
         config = config_from_entries()
+        if stage_key == "run_ct2phits":
+            try:
+                coarse = _ct2phits_coarse_values(config)
+            except GuiValidationError as exc:
+                finish_stage_error(spec, str(exc), validation=True)
+                return
+        if stage_key == "run_ct2phits":
+            if applied_ct_volume is not None and not applied_ct_volume.still_current():
+                invalidate_ct_clipping()
+                finish_stage_error(spec, "CT source changed; reopen the preview", validation=True)
+                return
+            bounds_for_warning = applied_ct_bounds if config.ct_clipping_bounds is not None else None
+            if bounds_for_warning is None and coarse != CT2PHITS_COARSE_GRAINING:
+                if not config.confirmed_non_patient_phantom:
+                    finish_stage_error(
+                        spec, "Confirm non-patient phantom data before inspecting CT geometry",
+                        validation=True,
+                    )
+                    return
+                try:
+                    source = select_ct_series(
+                        Path(config.ct_dicom_root),
+                        series_instance_uid=config.ct_series_instance_uid.strip() or None,
+                    )
+                    bounds_for_warning = ClipBounds(
+                        1, source.columns, 1, source.rows, 1, len(source.files),
+                    )
+                except ValueError as exc:
+                    finish_stage_error(spec, str(exc), validation=True)
+                    return
+            if bounds_for_warning is not None:
+                try:
+                    coverage = coarse_coverage(bounds_for_warning, coarse)
+                except ClipError as exc:
+                    finish_stage_error(spec, str(exc), validation=True)
+                    return
+                if coverage.has_discarded_source:
+                    warning = coverage.warning()
+                    append(warning, "warning")
+                    if not show_ct_clipping_warning(warning):
+                        append("CT2PHITS conversion cancelled after clipping warning.", "info")
+                        return
         if retry_plan is not None:
             if Path(config.workspace_root).expanduser().resolve() != Path(retry_plan["workspace_root"]):
                 messagebox.showerror("Run incomplete segments", "Workspace selection changed; create a new preview.")

@@ -21,7 +21,7 @@ import uuid
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--session-root", type=Path, required=True)
-    parser.add_argument("--mode", choices=("layout", "stop", "cancel", "resume", "recovery"), required=True)
+    parser.add_argument("--mode", choices=("layout", "clipping", "stop", "cancel", "resume", "recovery"), required=True)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[4]
     session = args.session_root.resolve()
@@ -54,7 +54,20 @@ def main() -> None:
     defaults["rtdose_template_dicom"] = ""
     workspace = None
     paths = None
-    if args.mode != "layout":
+    if args.mode == "clipping":
+        import numpy as np
+        import pydicom
+        from test_ct_pixel_clipping import _pixel_series
+        ct = session / "synthetic-ct"
+        _pixel_series(ct, count=6)
+        for path in ct.iterdir():
+            ds = pydicom.dcmread(path)
+            ds.Rows, ds.Columns = 24, 32
+            ds.RescaleSlope, ds.RescaleIntercept = 1, 0
+            ds.PixelData = np.repeat(np.array([-900]*8 + [0]*8 + [1000]*8, dtype="<i2")[:, None], 32, axis=1).tobytes()
+            ds.save_as(path)
+        defaults.update(ct_dicom_root=str(ct))
+    if args.mode not in {"layout", "clipping"}:
         if args.mode == "resume":
             saved = json.loads((session / "session.json").read_text(encoding="utf-8"))
             workspace = session / saved["workspace"]

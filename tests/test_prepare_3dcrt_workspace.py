@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
 import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -47,6 +49,95 @@ def active_segment(**overrides):
 
 def manifest_with(*segments):
     return {"schema_version": "segment_manifest_v2", "case_id": "synthetic", "segments": list(segments)}
+
+
+def test_clipped_ct2phits_handoff_resolves_only_frozen_placement_slice(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "ct2phits"
+    ct_root = snapshot / "CT"
+    ct_root.mkdir(parents=True)
+    datfiles = snapshot / "DATfiles"
+    datfiles.mkdir()
+    reference = ct_root / "CT000001.dcm"
+    selected = ct_root / "CT000003.dcm"
+    reference.write_bytes(b"synthetic CT one")
+    selected.write_bytes(b"synthetic CT three")
+    relative = "CT/CT000003.dcm"
+    manifest = {
+        "status": "completed",
+        "ct_series": {"sha256": {
+            relative: hashlib.sha256(selected.read_bytes()).hexdigest(),
+        }},
+        "ct2phits_input": {
+            "slice_range": [3, 6],
+            "placement_reference_dicom": relative,
+        },
+    }
+    summary = {"status": "completed", "placement_origin_dicom_cm": [1, 2, 3]}
+    (snapshot / "ct2phits_workspace_manifest.json").write_text(json.dumps(manifest))
+    (snapshot / "ct2phits_execution_summary.json").write_text(json.dumps(summary))
+    evidence = workspace_module._clipped_ct2phits_evidence(datfiles, reference)
+    assert evidence is not None and evidence[0] == selected
+    selected.write_bytes(b"changed")
+    with pytest.raises(ValueError, match="placement slice changed"):
+        workspace_module._clipped_ct2phits_evidence(datfiles, reference)
+
+
+def test_public_3dcrt_preparation_reuses_clipped_placement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    segment = rectangular_segment(
+        resolved_mlc_positions_mm={"bank_a": [-20.0] * 80, "bank_b": [20.0] * 80}
+    )
+    install_manifest_export(monkeypatch, manifest_with(segment))
+    fake_prepare = workspace_module.prepare_ct2phits_assets
+    captured: list[Path | None] = []
+
+    def prepare_with_clipped_origin(**kwargs):
+        captured.append(kwargs.get("placement_reference_dicom"))
+        prepared = fake_prepare(**kwargs)
+        return replace(prepared, placement_origin_dicom_cm=(1.0, 2.0, 3.0))
+
+    monkeypatch.setattr(workspace_module, "prepare_ct2phits_assets", prepare_with_clipped_origin)
+    snapshot = tmp_path / "ct2phits"
+    ct_root = snapshot / "CT"
+    ct_root.mkdir(parents=True)
+    datfiles = snapshot / "DATfiles"
+    datfiles.mkdir()
+    reference = ct_root / "CT000001.dcm"
+    selected = ct_root / "CT000003.dcm"
+    reference.write_bytes(b"synthetic full-series reference")
+    selected.write_bytes(b"synthetic selected-slice reference")
+    (snapshot / "ct2phits_workspace_manifest.json").write_text(json.dumps({
+        "status": "completed",
+        "ct_series": {
+            "ct_origin_dicom_cm": [0.0, 0.0, 0.0],
+            "sha256": {"CT/CT000003.dcm": hashlib.sha256(selected.read_bytes()).hexdigest()},
+        },
+        "ct2phits_input": {
+            "slice_range": [3, 6],
+            "placement_reference_dicom": "CT/CT000003.dcm",
+            "expected_voxel_counts": [101, 101, 101],
+        },
+    }))
+    (snapshot / "ct2phits_execution_summary.json").write_text(json.dumps({
+        "status": "completed",
+        "placement_origin_dicom_cm": [1.0, 2.0, 3.0],
+        "raw_datfiles_sha256": {"CTusrparam.dat": "synthetic"},
+    }))
+    rtplan = tmp_path / "synthetic_rtplan.dcm"
+    rtplan.write_text("placeholder", encoding="utf-8")
+    summary = prepare_public_3dcrt_workspace(
+        rtplan_path=rtplan,
+        workspace_root=tmp_path / "workspace",
+        paths=ExternalToolPaths(phits_root_folder="/opt/phits-root", phits_executable_path=""),
+        ct_datfiles_root=datfiles,
+        ct_reference_dicom=reference,
+        confirmed_non_patient_phantom=True,
+    )
+    assert captured == [selected]
+    assert summary["phits_generation"]["ct_voxel_assets"]["placement_origin_dicom_cm"] == [1.0, 2.0, 3.0]
 
 
 def test_rtplan_segments_direct_script_help_reaches_argparse() -> None:

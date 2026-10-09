@@ -5,7 +5,7 @@ import math
 import re
 import shutil
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -57,6 +57,7 @@ class PreparedCt2PhitsSet:
     frame_of_reference_uid: str
     ct_series_instance_uid: str
     ct_slice_count: int
+    placement_origin_dicom_cm: tuple[float, float, float] | None = None
 
 
 def _sha256(path: Path) -> str:
@@ -208,6 +209,64 @@ def _ct_series_origin(
     origin_mm = min(positions, key=lambda position: position[2])
     origin_cm = tuple(value / 10.0 for value in origin_mm)
     return origin_cm, frame_uid, series_uid, len(positions)
+
+
+def _placement_origin(
+    selected_ct_dicom: Path,
+    *,
+    ct_reference_dicom: Path,
+    frame_uid: str,
+    series_uid: str,
+) -> tuple[float, float, float]:
+    selected = selected_ct_dicom.resolve()
+    if selected.parent != ct_reference_dicom.resolve().parent or not selected.is_file():
+        raise Ct2PhitsDatfilesError("selected CT slice is outside the frozen CT series")
+    dataset = pydicom.dcmread(str(selected), stop_before_pixels=True, force=True)
+    _require_axial_hfs_ct(dataset, path=selected)
+    if (str(getattr(dataset, "FrameOfReferenceUID", "") or "") != frame_uid
+        or str(getattr(dataset, "SeriesInstanceUID", "") or "") != series_uid):
+        raise Ct2PhitsDatfilesError("selected CT slice does not match the source series")
+    position_mm = _finite_vector(
+        getattr(dataset, "ImagePositionPatient", None),
+        length=3,
+        label="selected CT ImagePositionPatient",
+    )
+    return tuple(value / 10.0 for value in position_mm)
+
+
+def _verify_raw_dicom_origin(source: Path, expected_cm: Sequence[float]) -> None:
+    values: dict[int, Decimal] = {}
+    for line in source.read_text(encoding="utf-8").splitlines():
+        match = _PARAMETER_PATTERN.match(line)
+        if match is None:
+            continue
+        number = int(match.group("number"))
+        if number in values:
+            raise Ct2PhitsDatfilesError(f"raw CTusrparam.dat duplicates c{number}")
+        try:
+            values[number] = Decimal(match.group("value").strip())
+        except InvalidOperation as exc:
+            raise Ct2PhitsDatfilesError(f"raw CTusrparam.dat has invalid c{number}") from exc
+    if set(values) != {91, 92, 93}:
+        raise Ct2PhitsDatfilesError("raw CTusrparam.dat lacks DICOM origin c91/c92/c93")
+    for number, expected in zip((91, 92, 93), expected_cm):
+        raw = values[number]
+        if not raw.is_finite():
+            raise Ct2PhitsDatfilesError(f"raw CTusrparam.dat has invalid c{number}")
+        # Compare at the tool's printed precision; no physical tolerance is invented.
+        try:
+            quantum = Decimal(1).scaleb(raw.as_tuple().exponent)
+            rounded_expected = Decimal(str(expected)).quantize(
+                quantum, rounding=ROUND_HALF_UP
+            )
+        except InvalidOperation as exc:
+            raise Ct2PhitsDatfilesError(
+                f"raw CTusrparam.dat has unsupported c{number} precision"
+            ) from exc
+        if rounded_expected != raw:
+            raise Ct2PhitsDatfilesError(
+                f"raw CT2PHITS DICOM origin c{number} disagrees with the selected CT slice"
+            )
 
 
 def _rtplan_frame_uids(dataset: Any) -> set[str]:
@@ -389,6 +448,7 @@ def prepare_ct2phits_assets(
     rtplan_path: Path,
     output_root: Path,
     confirmed_non_patient_phantom: bool,
+    placement_reference_dicom: Path | None = None,
 ) -> PreparedCt2PhitsSet:
     raw = validate_raw_ct2phits_datfiles(
         raw_datfiles_root,
@@ -397,11 +457,21 @@ def prepare_ct2phits_assets(
     ct_origin, frame_uid, series_uid, slice_count = _ct_series_origin(
         ct_reference_dicom
     )
+    placement_origin = (
+        _placement_origin(
+            placement_reference_dicom,
+            ct_reference_dicom=ct_reference_dicom,
+            frame_uid=frame_uid,
+            series_uid=series_uid,
+        )
+        if placement_reference_dicom is not None else ct_origin
+    )
+    _verify_raw_dicom_origin(raw.files["CTusrparam.dat"], placement_origin)
     isocenter = _rtplan_isocenter(
         rtplan_path,
         expected_frame_uid=frame_uid,
     )
-    shift = _iec_shift(ct_origin, isocenter)
+    shift = _iec_shift(placement_origin, isocenter)
 
     output = output_root.resolve()
     if output.exists():
@@ -432,6 +502,7 @@ def prepare_ct2phits_assets(
         assets=assets,
         raw_sha256=raw.sha256,
         ct_origin_dicom_cm=ct_origin,
+        placement_origin_dicom_cm=placement_origin,
         rtplan_isocenter_dicom_cm=isocenter,
         ct_shift_iec_cm=shift,
         frame_of_reference_uid=frame_uid,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -70,6 +71,61 @@ RECTANGULAR_CT_GENERATION_MODE = "rectangular_3dcrt_public_ct_voxel_phits_inputs
 DEFAULT_SEGMENT_MAXCAS = 1_000_000
 DEFAULT_SEGMENT_MAXBCH = 10
 DEFAULT_SEGMENT_OMP_THREADS = 8
+
+
+def _clipped_ct2phits_evidence(
+    ct_datfiles_root: Path,
+    ct_reference_dicom: Path,
+) -> tuple[Path, dict[str, Any], dict[str, Any]] | None:
+    """Resolve the frozen placement slice from a completed clipped frontend run."""
+    snapshot_root = ct_datfiles_root.resolve().parent
+    manifest_path = snapshot_root / "ct2phits_workspace_manifest.json"
+    summary_path = snapshot_root / "ct2phits_execution_summary.json"
+    if not manifest_path.exists() and not summary_path.exists():
+        return None
+    if not manifest_path.is_file() or not summary_path.is_file():
+        raise ValueError("CT2PHITS frontend evidence is incomplete")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    input_record = manifest.get("ct2phits_input")
+    if not isinstance(input_record, dict):
+        raise ValueError("CT2PHITS manifest lacks input evidence")
+    relative = input_record.get("placement_reference_dicom")
+    if relative is None:
+        return None
+    if (
+        manifest.get("status") != "completed"
+        or summary.get("status") != "completed"
+        or ct_datfiles_root.resolve() != snapshot_root / "DATfiles"
+        or ct_reference_dicom.resolve() != snapshot_root / "CT" / "CT000001.dcm"
+        or not isinstance(relative, str)
+        or re.fullmatch(r"CT/CT[0-9]{6}\.dcm", relative) is None
+    ):
+        raise ValueError("clipped CT2PHITS placement evidence is inconsistent")
+    slice_range = input_record.get("slice_range")
+    first = slice_range[0] if isinstance(slice_range, list) and len(slice_range) == 2 else None
+    if (not isinstance(first, int) or isinstance(first, bool)
+        or relative != f"CT/CT{first:06d}.dcm"):
+        raise ValueError("clipped CT2PHITS placement slice does not match input")
+    selected = (snapshot_root / relative).resolve()
+    recorded_series = manifest.get("ct_series")
+    recorded_hashes = (
+        recorded_series.get("sha256") if isinstance(recorded_series, dict) else None
+    )
+    if (
+        selected.parent != snapshot_root / "CT"
+        or not selected.is_file()
+        or not isinstance(recorded_hashes, dict)
+        or not isinstance(recorded_hashes.get(relative), str)
+    ):
+        raise ValueError("clipped CT2PHITS placement slice is not frozen")
+    digest = hashlib.sha256()
+    with selected.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != recorded_hashes[relative]:
+        raise ValueError("clipped CT2PHITS placement slice changed")
+    return selected, manifest, summary
 
 
 @dataclass(frozen=True)
@@ -640,6 +696,12 @@ def generate_rectangular_phits_workspace(
                     if ct_preparation is not None
                     else None
                 ),
+                "placement_origin_dicom_cm": (
+                    list(ct_preparation.placement_origin_dicom_cm)
+                    if ct_preparation is not None
+                    and ct_preparation.placement_origin_dicom_cm is not None
+                    else None
+                ),
                 "rtplan_isocenter_dicom_cm": (
                     list(ct_preparation.rtplan_isocenter_dicom_cm)
                     if ct_preparation is not None
@@ -740,6 +802,11 @@ def prepare_public_3dcrt_workspace(
                 transport_geometry_contract=CURRENT_GANTRY_GEOMETRY_CONTRACT,
             )
 
+    clipped_evidence = (
+        _clipped_ct2phits_evidence(ct_datfiles_root, ct_reference_dicom)
+        if ct_datfiles_root is not None and ct_reference_dicom is not None
+        else None
+    )
     with tempfile.TemporaryDirectory(prefix="dicomxphits-ct-assets-") as temp_dir:
         ct_preparation = prepare_ct2phits_assets(
             raw_datfiles_root=ct_datfiles_root,
@@ -747,7 +814,24 @@ def prepare_public_3dcrt_workspace(
             rtplan_path=rtplan_path,
             output_root=Path(temp_dir) / "prepared",
             confirmed_non_patient_phantom=confirmed_non_patient_phantom,
+            placement_reference_dicom=(
+                clipped_evidence[0] if clipped_evidence is not None else None
+            ),
         )
+        if clipped_evidence is not None:
+            _selected, frontend_manifest, frontend_summary = clipped_evidence
+            input_record = frontend_manifest["ct2phits_input"]
+            if (
+                list(ct_preparation.ct_origin_dicom_cm)
+                != frontend_manifest["ct_series"].get("ct_origin_dicom_cm")
+                or list(ct_preparation.placement_origin_dicom_cm or ())
+                != frontend_summary.get("placement_origin_dicom_cm")
+                or dict(ct_preparation.raw_sha256)
+                != frontend_summary.get("raw_datfiles_sha256")
+                or list(ct_preparation.assets.voxel_counts)
+                != input_record.get("expected_voxel_counts")
+            ):
+                raise ValueError("clipped CT2PHITS evidence changed before 3D-CRT preparation")
         calculation_rtdose_preflight = validate_rtdose_serialization_preflight(
             calculation_config,
             rtplan_isocenter_dicom_mm=tuple(

@@ -185,6 +185,7 @@ def test_raw_datfiles_are_prepared_from_ct_and_rtplan_without_mutating_source(
     )
 
     assert prepared.ct_origin_dicom_cm == (-25.55, -25.55, -17.5)
+    assert prepared.placement_origin_dicom_cm == prepared.ct_origin_dicom_cm
     assert prepared.rtplan_isocenter_dicom_cm == (1.0, 2.0, 3.0)
     assert prepared.ct_shift_iec_cm == (26.55, -20.5, -27.55)
     assert prepared.ct_slice_count == 2
@@ -211,6 +212,27 @@ def test_raw_datfiles_are_prepared_from_ct_and_rtplan_without_mutating_source(
         raw / "CTvoxel.dat"
     ).read_bytes()
     assert {name: _sha256(raw / name) for name in RAW_CT2PHITS_NAMES} == before
+
+
+def test_full_series_raw_origin_mismatch_fails_before_preparation(tmp_path: Path) -> None:
+    frame_uid = _uid()
+    raw = _write_raw_datfiles(tmp_path / "DATfiles")
+    parameters = raw / "CTusrparam.dat"
+    parameters.write_text(
+        parameters.read_text().replace("set: c93[-17.50]", "set: c93[-10.00]"),
+        encoding="utf-8",
+    )
+    reference = _write_ct_series(
+        tmp_path / "CT", frame_uid=frame_uid, series_uid=_uid(),
+    )
+    rtplan = _write_rtplan(tmp_path / "RTPLAN.dcm", frame_uid=frame_uid)
+    with pytest.raises(Ct2PhitsDatfilesError, match="DICOM origin c93"):
+        prepare_ct2phits_assets(
+            raw_datfiles_root=raw, ct_reference_dicom=reference,
+            rtplan_path=rtplan, output_root=tmp_path / "prepared",
+            confirmed_non_patient_phantom=True,
+        )
+    assert not (tmp_path / "prepared").exists()
 
 
 def test_missing_raw_asset_fails_before_output_creation(tmp_path: Path) -> None:
