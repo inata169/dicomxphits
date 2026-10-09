@@ -209,6 +209,36 @@ def test_invalid_clipping_is_rejected_before_workspace_creation(tmp_path: Path) 
     assert not case["workspace"].exists()
 
 
+@pytest.mark.parametrize("factors", [(4, 4, 1), (8, 8, 1), (1, 1, 1)])
+def test_nondefault_coarse_graining_is_rejected_before_workspace_creation(
+    tmp_path: Path, factors: tuple[int, int, int],
+) -> None:
+    case = _case(tmp_path)
+    with pytest.raises(Ct2PhitsFrontendError, match="non-default CT coarse graining"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            coarse_graining=factors,
+        )
+    assert not case["workspace"].exists()
+
+
+@pytest.mark.parametrize("factors", [(8, 0, 2), (8, "1.5", 2), (8, 2), (8, True, 2)])
+def test_invalid_coarse_graining_is_rejected_before_workspace_creation(
+    tmp_path: Path, factors: tuple[object, ...],
+) -> None:
+    case = _case(tmp_path)
+    with pytest.raises(Ct2PhitsFrontendError, match="coarse graining"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            coarse_graining=factors,
+        )
+    assert not case["workspace"].exists()
+
+
 def test_windows_frontend_generates_input_inventory_summary_and_handoff(
     tmp_path: Path,
 ) -> None:

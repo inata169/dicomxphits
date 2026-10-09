@@ -7,6 +7,8 @@
 - [x] Draft synchronized three-plane selection, six bounds, requirements,
       validation, and clipping/geometry evidence gates.
 - [x] Obtain human approval before runtime implementation (2026-10-09 user request).
+- [x] Record the user's numeric X/Y/Z coarse-graining extension in the
+      active proposal and design (2026-10-09 follow-up request).
 
 ## Contract evidence
 
@@ -22,6 +24,8 @@
 - [x] Implement the shared six-bound model and pure three-plane mappings.
 - [ ] Add optional CLI/frontend pixel/slice ranges and manifest recording,
       preserving full-volume defaults and complete snapshots.
+- [x] Add numeric GUI/CLI coarse-graining fields, validation, input and
+      manifest recording, with `8 8 2` as the default.
 - [x] Implement bounded responsive stack loading and orthogonal views.
 - [x] Implement navigation, contrast, labels, pointer readout, two-click
       selection, synchronized fields/overlays, and Apply/Cancel/reset.

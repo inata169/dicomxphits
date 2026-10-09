@@ -116,10 +116,22 @@ require reinspection if files or geometry changed. Keep bounds out of global
 preferences and unrelated existing-case recovery. Preserve the immutable
 request of an active stage.
 
+## Coarse-graining controls
+
+Expose three positive integer factors in the CT2PHITS case page, defaulting
+to `8 8 2`. Pass them as an explicit CLI triple and record the effective
+triple in the input and manifest. Reject missing, noninteger, zero, or
+negative factors before workspace creation. Keep the default input bytes
+unchanged. The current external conversion gate applies to any non-default
+factor until the supported tool's averaging and geometry contract is checked.
+The numeric fields do not change the source preview or the manually selected
+source-index clipping box.
+
 ## Frontend and snapshot integration
 
-Proposed CLI groups are `--pixel-clipping NX_MIN NX_MAX NY_MIN NY_MAX` and
-`--slice-range FIRST LAST`. Omitted values retain the current input bytes.
+Proposed CLI groups are `--pixel-clipping NX_MIN NX_MAX NY_MIN NY_MAX`,
+`--slice-range FIRST LAST`, and `--coarse-graining NXC NYC NZC`. Omitted
+values retain the current input bytes.
 Validate complete integer ranges and established external-tool constraints
 before workspace creation, using a shared GUI/CLI contract.
 
@@ -138,6 +150,8 @@ Confirm from authoritative supported-version documentation:
 1. Inclusive original pixel/slice endpoints and axis/order meaning.
 2. X/Y coarse factor 8: small widths, remainder widths, and unaligned minima.
    Z factor 2: one slice, odd selected depth, and odd/even first indices.
+   Repeat the contract check for any user-entered factor triple before that
+   triple is eligible for external conversion.
 3. Where generated geometry represents skipped leading columns, rows, and
    slices: local CTsurf/lattice bounds, c91/c92/c93, or other parameters.
 4. Whether the current full-origin handoff preserves physical placement, and

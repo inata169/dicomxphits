@@ -8,9 +8,11 @@ copy the complete selected CT series without modifying sources, write a
 manifest, and generate `ct2phits.inp` using the reviewed CT2PHITS procedure.
 The input SHALL default to the full source slice count and Rows and Columns.
 It MAY use explicitly supplied, validated one-based inclusive pixel and slice
-ranges under the `ct-pixel-clipping` contract. It SHALL retain coarse graining
-`8 8 2` and DICOM coordinate mode `1`. Effective ranges SHALL be recorded in
-`ct2phits_input.clipping` and `ct2phits_input.slice_range` without changing the
+ranges under the `ct-pixel-clipping` contract. It SHALL use coarse graining
+`8 8 2` by default, accept an explicit positive integer X/Y/Z factor triple,
+and retain DICOM coordinate mode `1`. Effective ranges and factors SHALL be
+recorded in `ct2phits_input.clipping`, `ct2phits_input.slice_range`, and
+`ct2phits_input.coarse_graining` without changing the
 original snapshot numbering, source dimensions, slice count, or origin.
 The frontend SHALL record the source RT Plan SHA-256,
 copy it into the isolated workspace without modification, verify the snapshot
@@ -81,4 +83,17 @@ geometry of both snapshots before accepting the handoff.
 
 - **WHEN** a requested range is malformed, outside the selected source, or cannot
   satisfy the established clipping contract
+- **THEN** the frontend rejects it before workspace creation or external execution
+
+#### Scenario: Numeric coarse-graining factors
+
+- **WHEN** the user supplies three positive integer factors under the
+  established supported-tool geometry contract
+- **THEN** the frontend writes the same factors to the CT2PHITS input and
+  manifest while leaving source CT geometry unchanged
+
+#### Scenario: Invalid or unverified factors
+
+- **WHEN** a factor is not a positive integer or its external geometry behavior
+  remains unverified
 - **THEN** the frontend rejects it before workspace creation or external execution

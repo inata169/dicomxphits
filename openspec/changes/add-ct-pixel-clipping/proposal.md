@@ -8,7 +8,8 @@ or clicking points. Both methods should describe the same clipping volume.
 
 The supplied screenshot is a visual reference. The follow-up request expands
 the preview to three planes; this proposal includes first/last slice selection.
-Its coarse-graining values do not authorize changing the existing settings.
+The user's follow-up request on 2026-10-09 explicitly adds numeric X/Y/Z
+coarse-graining controls to this active change.
 The user's 2026-10-09 clarification confirms that a human, not an automatic
 classifier, chooses an arbitrary-size axis-aligned box after visually judging
 which source voxels to retain and which equipment or other material to exclude.
@@ -31,8 +32,9 @@ which source voxels to retain and which equipment or other material to exclude.
 - Pass explicit pixel/slice bounds through the current GUI-to-CLI path, validate
   them again in the frontend, and record them in the existing manifest.
   Retain complete, unmodified source CT and RT Plan snapshots.
-- Preserve the full-volume default, coarse graining `8 8 2`, coordinate mode
-  `1`, and existing safety gates.
+- Preserve the full-volume default and coarse-graining default `8 8 2`, while
+  allowing explicit positive X/Y/Z factors. Preserve coordinate mode `1` and
+  existing safety gates. Reject unverified non-default external conversion.
 - Establish supported-version clipping/coarse-graining and output-coordinate
   behavior before enabling non-default conversion. Do not guess offsets,
   silently snap indices, or infer real-tool compatibility from mock tests.
@@ -46,7 +48,7 @@ which source voxels to retain and which equipment or other material to exclude.
   English/Japanese GUI manual updates. No new imaging dependency is planned.
 - Orthogonal Coronal/Sagittal views derive from the already-supported uniform
   axial HFS source stack. Arbitrary oblique resampling, 3D surface rendering,
-  source DICOM rewriting, coarse-graining controls, and Structure selection
+  source DICOM rewriting and Structure selection
   are outside this proposal.
 - A user-selected smaller calculation volume can affect results; explain that
   only the selected box is retained. This is not an automatic crop to address
@@ -56,12 +58,14 @@ which source voxels to retain and which equipment or other material to exclude.
 ## Approval and unresolved evidence
 
 Status: approved for implementation by the user's 2026-10-09 request sending
-the saved implementation prompt. Real-data/tool execution and inferred
+the saved implementation prompt, extended by the same day's explicit numeric
+coarse-graining request. Real-data/tool execution and inferred
 coordinate or physics changes remain outside that approval. Implementation is
 active while the supported-tool crop geometry contract remains unresolved.
 
 Before enabling clipping, establish inclusive pixel/slice endpoint behavior,
-small/unaligned/remainder selections with `8 8 2`, and crop-offset placement
+small/unaligned/remainder selections with the default `8 8 2` and any supported
+user-entered factors, and crop-offset placement
 in generated geometry. The current handoff replaces c91/c92/c93 using the
 original full-series origin. See `design.md`.
 

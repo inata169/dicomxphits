@@ -131,3 +131,56 @@ human-directed behavior explicitly.
 The supported-version clipping and physical-placement evidence remains
 unresolved. Non-default conversion is still blocked, and the active change
 is not eligible for promotion or archive.
+
+## RT-PHITS lecture evidence, 2026-10-09
+
+At the user's direction, the five supplied RT-PHITS lecture decks were read
+without running the distribution or copying its files into the repository.
+The GUI decks (`phits-lec-RTphits-GUI-jp.pptx` slide 12,
+`phits-lec-RTphits-GUI-en.pptx` slide 12, and
+`HowToUseRTphitsGUI.pptx` slide 21) explicitly describe minimum/maximum CT
+pixel and slice clipping, show the selected area as a rectangle, and distinguish
+the voxel-center and DICOM-coordinate origin options. The CUI decks
+(`phits-lec-RTphits-CUI-jp.pptx` and
+`phits-lec-RTphits-CUI-en.pptx`, slide 6) document the CT2PHITS input order:
+minimum/maximum slice, then Nx minimum/maximum and Ny minimum/maximum,
+then X/Y/Z coarse-graining factors and coordinate mode. Both slide 12 examples
+use slices `2 46`, pixels `93 432 134 386`, coarse graining `8 8 1`, and
+coordinate mode `1`. They instruct the user to rerun CT2PHITS and
+InputCreater4PHITS after changing the region.
+
+These decks establish that manual spatial clipping is an intended RT-PHITS
+operation and support the proposed input-field mapping. They do not describe
+how the supported tool handles small, non-divisible, or unaligned selections
+with this project's then-fixed `8 8 2` factors, nor where crop offsets are encoded
+in generated geometry. Slide 12 says mode `1` extracts position from the DICOM
+header; it does not establish whether this project's later replacement of
+`c91/c92/c93` with the original series origin preserves cropped geometry.
+No clipped output was produced or checked. The conversion gate remains in
+place pending those contract and placement checks.
+
+## Numeric coarse-graining extension, 2026-10-09
+
+The user requested numeric X/Y/Z coarse-graining controls after seeing the
+lecture example. The active proposal and deltas now include case-local positive
+integer fields with default `8 8 2`. The GUI passes non-default factors through
+the existing CLI path; the frontend validates them before workspace creation,
+and the input renderer and manifest have an effective-factor parameter.
+Because the cited lecture examples use `8 8 1` and do not establish the
+supported tool's remainder or placement behavior for arbitrary triples, both
+GUI and frontend still reject non-default external conversion. No external
+tool was run. This extension is not complete until the documented supported
+tool geometry contract and required checks permit the requested conversion.
+
+Validation after this extension:
+
+- Focused synthetic GUI/frontend tests: **194 passed, 1 skipped**.
+- Full synthetic suite: **1525 passed, 15 skipped, 1 existing warning**.
+- `python -m compileall src`, `python tools/verify_public_tree.py`, and
+  `git diff --check`: passed.
+- OpenSpec CLI remains unavailable; manual proposal/delta structure check
+  passed for all three delta files.
+- The first full-suite attempt under sandbox permissions hit the existing
+  pytest temporary-directory access error. A later full-suite run was
+  interrupted after a small input-validation correction; the final run above
+  completed successfully under approved execution permissions.

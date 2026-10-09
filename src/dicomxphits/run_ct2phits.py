@@ -7,6 +7,7 @@ import locale
 import math
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,25 @@ CMD_ARGUMENT_METACHARACTERS = frozenset("&|<>^()%!\r\n")
 
 class Ct2PhitsFrontendError(ValueError):
     """Raised when the CT2PHITS frontend cannot complete safely."""
+
+
+def _coarse_graining_values(values: Sequence[object] | None) -> tuple[int, int, int]:
+    if values is None:
+        return CT2PHITS_COARSE_GRAINING
+    if len(values) != 3:
+        raise Ct2PhitsFrontendError("coarse graining requires X, Y, and Z factors")
+    parsed: list[int] = []
+    for value in values:
+        if isinstance(value, bool) or re.fullmatch(r"[0-9]+", str(value).strip()) is None:
+            raise Ct2PhitsFrontendError("coarse graining factors must be positive integers")
+        try:
+            factor = int(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise Ct2PhitsFrontendError("coarse graining factors must be positive integers") from exc
+        if factor <= 0:
+            raise Ct2PhitsFrontendError("coarse graining factors must be positive integers")
+        parsed.append(factor)
+    return parsed[0], parsed[1], parsed[2]
 
 
 class Ct2PhitsProcessTimeout(subprocess.TimeoutExpired):
@@ -511,6 +531,7 @@ def render_ct2phits_input(
     slice_count: int,
     rows: int,
     columns: int,
+    coarse_graining: Sequence[object] | None = None,
 ) -> str:
     if slice_count <= 0:
         raise Ct2PhitsFrontendError("CT2PHITS requires at least one CT slice")
@@ -523,7 +544,7 @@ def render_ct2phits_input(
         datfiles_root,
         rtphits_root=rtphits_root,
     )
-    coarse = " ".join(str(value) for value in CT2PHITS_COARSE_GRAINING)
+    coarse = " ".join(str(value) for value in _coarse_graining_values(coarse_graining))
     return (
         "CT2PHITS input\n"
         '"data/HumanVoxelTable.data"\n'
@@ -697,6 +718,7 @@ def run_ct2phits_frontend(
     series_instance_uid: str | None = None,
     pixel_clipping: Sequence[object] | None = None,
     slice_range: Sequence[object] | None = None,
+    coarse_graining: Sequence[object] | None = None,
     timeout_seconds: float = 300.0,
     runner: Runner = _default_runner,
     platform_system: str | None = None,
@@ -733,6 +755,12 @@ def run_ct2phits_frontend(
         raise Ct2PhitsFrontendError(
             "non-default CT clipping is unavailable: supported CT2PHITS endpoint, "
             "coarse-graining, and output-coordinate behavior is not established"
+        )
+    coarse_values = _coarse_graining_values(coarse_graining)
+    if coarse_values != CT2PHITS_COARSE_GRAINING:
+        raise Ct2PhitsFrontendError(
+            "non-default CT coarse graining is unavailable: supported CT2PHITS "
+            "averaging and output-coordinate behavior is not established"
         )
     rtplan_source = rtplan_path.resolve()
     try:
@@ -843,6 +871,7 @@ def run_ct2phits_frontend(
                 slice_count=len(copied_files),
                 rows=selected.rows,
                 columns=selected.columns,
+                coarse_graining=coarse_values,
             ),
             encoding="utf-8",
             newline="\n",
@@ -878,7 +907,7 @@ def run_ct2phits_frontend(
             "signature": "CT2PHITS input",
             "slice_range": [1, len(copied_files)],
             "clipping": [1, selected.columns, 1, selected.rows],
-            "coarse_graining": list(CT2PHITS_COARSE_GRAINING),
+            "coarse_graining": list(coarse_values),
             "coordinate_mode": 1,
         },
         "generated_output_contract": list(CT2PHITS_GENERATED_NAMES),
@@ -1080,6 +1109,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ct-series-instance-uid", default=None)
     parser.add_argument("--pixel-clipping", nargs=4, metavar=("NX_MIN", "NX_MAX", "NY_MIN", "NY_MAX"))
     parser.add_argument("--slice-range", nargs=2, metavar=("FIRST", "LAST"))
+    parser.add_argument("--coarse-graining", nargs=3, metavar=("NXC", "NYC", "NZC"))
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument(
         "--confirm-non-patient-phantom",
@@ -1101,6 +1131,7 @@ def main(argv: list[str] | None = None) -> int:
             series_instance_uid=args.ct_series_instance_uid,
             pixel_clipping=args.pixel_clipping,
             slice_range=args.slice_range,
+            coarse_graining=args.coarse_graining,
             timeout_seconds=args.timeout_seconds,
         )
     except Ct2PhitsFrontendError as exc:

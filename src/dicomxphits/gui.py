@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
 from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError
+from dicomxphits.run_ct2phits import CT2PHITS_COARSE_GRAINING
 
 from dicomxphits import __version__
 from dicomxphits.gui_tool_profile import (
@@ -163,6 +164,7 @@ class GuiConfig:
     ct2phits_workspace_root: str = ""
     ct_series_instance_uid: str = ""
     ct_clipping_bounds: tuple[int, int, int, int, int, int] | None = None
+    ct_coarse_graining: tuple[str, str, str] = ("8", "8", "2")
     ct2phits_timeout_seconds: float = DEFAULT_CT2PHITS_TIMEOUT_SECONDS
     maxcas: int | str = DEFAULT_SEGMENT_MAXCAS
     maxbch: int | str = DEFAULT_SEGMENT_MAXBCH
@@ -482,6 +484,25 @@ def _ct2phits_timeout_value(config: GuiConfig) -> float:
     return value
 
 
+def _ct2phits_coarse_values(config: GuiConfig) -> tuple[int, int, int]:
+    raw = config.ct_coarse_graining
+    if len(raw) != 3:
+        raise GuiValidationError("CT2PHITS coarse graining requires X, Y, and Z values")
+    parsed: list[int] = []
+    for axis, value in zip("XYZ", raw):
+        number = str(value).strip()
+        if isinstance(value, bool) or re.fullmatch(r"[0-9]+", number) is None:
+            raise GuiValidationError(f"CT2PHITS coarse graining {axis} must be a positive integer")
+        try:
+            factor = int(number)
+        except ValueError as exc:
+            raise GuiValidationError(f"CT2PHITS coarse graining {axis} must be a positive integer") from exc
+        if factor <= 0:
+            raise GuiValidationError(f"CT2PHITS coarse graining {axis} must be a positive integer")
+        parsed.append(factor)
+    return parsed[0], parsed[1], parsed[2]
+
+
 def _runtime_setting_value(config: GuiConfig, field_name: str) -> int:
     raw_value = getattr(config, field_name)
     if isinstance(raw_value, bool):
@@ -533,6 +554,7 @@ def validate_stage(
 
     if spec.key == "run_ct2phits":
         _ct2phits_timeout_value(config)
+        _ct2phits_coarse_values(config)
 
     if spec.key == "prepare_workspace":
         for field_name in RUNTIME_SETTING_DEFAULTS:
@@ -698,6 +720,9 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
             bounds = config.ct_clipping_bounds
             command.extend(["--pixel-clipping", *(str(x) for x in bounds[:4])])
             command.extend(["--slice-range", *(str(x) for x in bounds[4:])])
+        coarse = _ct2phits_coarse_values(config)
+        if coarse != CT2PHITS_COARSE_GRAINING:
+            command.extend(["--coarse-graining", *(str(x) for x in coarse)])
         command.append("--confirm-non-patient-phantom")
     elif spec.key == "prepare_workspace":
         geometry_mode = geometry_mode_value(config)
@@ -1693,6 +1718,9 @@ def _base_default_values() -> dict[str, str]:
         "rtphits_root": "",
         "ct2phits_workspace_root": "",
         "ct_series_instance_uid": "",
+        "ct_coarse_x": str(CT2PHITS_COARSE_GRAINING[0]),
+        "ct_coarse_y": str(CT2PHITS_COARSE_GRAINING[1]),
+        "ct_coarse_z": str(CT2PHITS_COARSE_GRAINING[2]),
         "ct2phits_timeout_seconds": f"{DEFAULT_CT2PHITS_TIMEOUT_SECONDS:g}",
         "rtplan_path": "",
         "workspace_root": "",
@@ -2737,6 +2765,10 @@ def _build_gui() -> int:
                 and not applied_ct_bounds.is_full(applied_ct_volume.shape)
                 else None
             ),
+            ct_coarse_graining=(
+                values["ct_coarse_x"].get(), values["ct_coarse_y"].get(),
+                values["ct_coarse_z"].get(),
+            ),
             ct2phits_timeout_seconds=timeout,
             maxcas=values["maxcas"].get(),
             maxbch=values["maxbch"].get(),
@@ -3562,6 +3594,20 @@ def _build_gui() -> int:
         text="I confirm non-patient phantom data",
         variable=confirmed_non_patient_phantom,
     ).grid(row=0, column=0, sticky="w")
+    coarse_row = ttk.Frame(ct2_actions, style="Surface.TFrame")
+    coarse_row.grid(row=1, column=0, sticky="w", pady=(8, 0))
+    ttk.Label(coarse_row, text="Coarse graining", style="Surface.TLabel").grid(
+        row=0, column=0, padx=(0, 12), sticky="w"
+    )
+    for column, (axis, key) in enumerate(
+        (("X", "ct_coarse_x"), ("Y", "ct_coarse_y"), ("Z", "ct_coarse_z")), start=1
+    ):
+        ttk.Label(coarse_row, text=axis, style="Surface.TLabel").grid(
+            row=0, column=column * 2 - 1, padx=(0, 3)
+        )
+        ttk.Entry(coarse_row, textvariable=values[key], width=5).grid(
+            row=0, column=column * 2, padx=(0, 12)
+        )
     def invalidate_ct_clipping(*_args: object) -> None:
         nonlocal applied_ct_volume, applied_ct_bounds
         applied_ct_volume = None
@@ -3612,10 +3658,10 @@ def _build_gui() -> int:
         )
 
     ttk.Button(ct2_actions, text="CT images / Clipping range…", command=open_ct_preview).grid(
-        row=1, column=0, sticky="w", pady=(5, 0)
+        row=2, column=0, sticky="w", pady=(5, 0)
     )
     ttk.Label(ct2_actions, textvariable=ct_clipping_status).grid(
-        row=2, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
     )
 
     workspace_page = new_page("workspace")
@@ -4269,6 +4315,20 @@ def _build_gui() -> int:
             finish_stage_error(spec, message, validation=True)
             return
         config = config_from_entries()
+        if stage_key == "run_ct2phits":
+            try:
+                coarse = _ct2phits_coarse_values(config)
+            except GuiValidationError as exc:
+                finish_stage_error(spec, str(exc), validation=True)
+                return
+            if coarse != CT2PHITS_COARSE_GRAINING:
+                finish_stage_error(
+                    spec,
+                    "Non-default coarse graining conversion is unavailable pending "
+                    "CT2PHITS averaging and coordinate evidence.",
+                    validation=True,
+                )
+                return
         if stage_key == "run_ct2phits" and applied_ct_volume is not None:
             if not applied_ct_volume.still_current():
                 invalidate_ct_clipping()

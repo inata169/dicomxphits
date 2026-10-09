@@ -70,6 +70,9 @@ full-volume workflow.
 
 The GUI SHALL distinguish draft and applied bounds, provide Apply, Cancel,
 and Reset to full volume, and display applied bounds before conversion.
+It SHALL show three numeric coarse-graining fields for X, Y, and Z with
+defaults `8 8 2`, validate positive integers, and treat them as case-local
+settings rather than global preferences.
 Apply MUST reject invalid or incomplete selection. Applied bounds SHALL use
 the accepted shell-free CLI and frontend revalidation. They MUST NOT persist
 as global preferences, carry silently into another series, or mutate an
@@ -92,4 +95,11 @@ active execution's request.
 
 - **WHEN** valid applied bounds and all existing plus clipping-specific gates pass
 - **THEN** the GUI passes exactly those pixel/slice ranges to the existing
-  frontend without changing coarse graining or duplicating tool invocation
+  frontend with the effective X/Y/Z coarse-graining factors, without
+  duplicating tool invocation
+
+#### Scenario: Numeric coarse-graining edit
+
+- **WHEN** the user enters three positive integer factors
+- **THEN** the GUI passes those factors through the existing CLI path only
+  when the supported-tool geometry contract permits conversion

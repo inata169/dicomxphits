@@ -58,6 +58,7 @@ existing accelerator mutual-exclusion or field-size safety guards.
 
 #### Scenario: Full-volume compatibility
 
-- **WHEN** bounds are omitted or explicitly cover the complete source
+- **WHEN** bounds and coarse-graining factors are omitted or explicitly equal
+  the complete source and `8 8 2` defaults
 - **THEN** current input behavior, coarse graining `8 8 2`, coordinate mode
   `1`, and frozen-reference handoff remain unchanged

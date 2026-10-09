@@ -2105,11 +2105,18 @@ def test_ct2phits_is_the_first_guided_gui_stage(tmp_path: Path) -> None:
     assert "--confirm-non-patient-phantom" in command
     assert "--pixel-clipping" not in command
     assert "--slice-range" not in command
+    assert "--coarse-graining" not in command
     clipped = build_stage_command(
         replace(config, ct_clipping_bounds=(2, 12, 3, 15, 2, 6)), spec
     )
     assert clipped[clipped.index("--pixel-clipping") + 1:clipped.index("--pixel-clipping") + 5] == ["2", "12", "3", "15"]
     assert clipped[clipped.index("--slice-range") + 1:clipped.index("--slice-range") + 3] == ["2", "6"]
+    coarse = build_stage_command(
+        replace(config, ct_coarse_graining=("04", "3", "1")), spec
+    )
+    assert coarse[coarse.index("--coarse-graining") + 1:coarse.index("--coarse-graining") + 4] == ["4", "3", "1"]
+    with pytest.raises(GuiValidationError, match="coarse graining Y"):
+        validate_stage(replace(config, ct_coarse_graining=("8", "0", "2")), spec)
 
 
 def test_ct2phits_gui_stage_keeps_explicit_confirmation_and_new_workspace_gate(
