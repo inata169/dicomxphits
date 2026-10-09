@@ -1,8 +1,9 @@
-# dicomxphits v1.1.2 Release Candidate
+# dicomxphits v1.1.2 Release Notes
 
-Status: under review. The current public release remains
-[v1.1.1](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1).
-This candidate is for education and research with authorized non-patient
+Status: published on 2026-10-09 as an experimental source release for
+education and research evaluation.
+Release: [v1.1.2](https://github.com/inata169/dicomxphits/releases/tag/v1.1.2).
+This release is for education and research with authorized non-patient
 phantom data. It is not clinical commissioning, patient QA, vendor
 certification, or a claim of physical dose accuracy.
 
@@ -23,7 +24,7 @@ certification, or a claim of physical dose accuracy.
   so that a typical several-hundred-slice series can be inspected. The
   conversion still reads the selected full-resolution CT data.
 - English user documentation covers CT clipping and the independent ROI GUI.
-  Package metadata and Help → About report version 1.1.2 for this candidate.
+  Package metadata and Help → About report version 1.1.2.
 
 Clipping keeps one axis-aligned box. Objects inside that box are retained; it
 does not perform automatic segmentation. Coarse graining averages source HU
@@ -35,18 +36,19 @@ in the source release.
 ## Verification and release boundary
 
 The integrated Windows / Python 3.12 candidate passed the full public suite
-on 2026-10-09: **1564 passed, 15 skipped**. The focused version, installation,
-CT clipping, and GUI suite passed **234 tests with 2 skips**. Source compilation,
-the public-tree audit (458 tracked files), and whitespace checks passed.
+on 2026-10-09: **1565 passed, 15 skipped**. The focused version, installation,
+CT clipping, and GUI suite passed **234 tests with 2 skips** before the review
+correction; the focused review regression group then passed **18 tests**.
+Source compilation, the public-tree audit (459 tracked files), and whitespace
+checks passed.
 The skips and a duplicate ZIP-member warning are not successful executions.
 This validation uses synthetic and mock data, not patient data or real
-external-tool execution of the candidate. A separate ongoing real PHITS
-calculation is not evidence of completed candidate execution. The user must
-review the completed external-tool workflow and resulting geometry before
-this candidate can be described as verified for that case. Live progress and
-geometry-only plots do not establish dose accuracy, convergence, or
-clinical suitability.
+external-tool execution of this release. A separately authorized non-patient
+case produced geometry-only plots that the user reviewed, while PHITS transport
+remained in progress. This does not establish completed end-to-end execution,
+dose accuracy, convergence, or clinical suitability. Retain and evaluate the
+case results only after the external calculation and downstream checks finish.
 
 No custom Windows offline bundle is planned. Existing workspaces remain
 subject to their recorded provenance and freshness checks. Use a separate
-workspace for candidate evaluation and retain the original inputs and results.
+workspace for evaluation and retain the original inputs and results.

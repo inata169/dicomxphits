@@ -2,9 +2,9 @@
 
 更新日：2026-10-09。[English](gui-manual.en.md) / [資料一覧](README.md)
 
-基本のv1.1.xワークフローは公開済みv1.1.1で確認しました。このリリースには[PR #83](https://github.com/inata169/dicomxphits/pull/83)の再開処理修正と、[PR #84](https://github.com/inata169/dicomxphits/pull/84)の観測更新・Structure変更検出修正を含みます。v1.1.2リリース候補ではHelp → Aboutのパッケージ表示は1.1.2です。起動済みGUIのコードは更新されません。
+基本のv1.1.xワークフローは公開済みv1.1.1で確認しました。このリリースには[PR #83](https://github.com/inata169/dicomxphits/pull/83)の再開処理修正と、[PR #84](https://github.com/inata169/dicomxphits/pull/84)の観測更新・Structure変更検出修正を含みます。v1.1.2ではHelp → Aboutのパッケージ表示は1.1.2です。起動済みGUIのコードは更新されません。
 
-リリース候補の注記（2026-10-09）：以下のCTプレビューと切り出し変換、独立したPHITS ROI統計GUIはv1.1.2候補に含まれます。公開済みv1.1.1タグには含まれません。統計GUIは[独立ツールの説明](../../phits-roi-statistics.md)を参照してください。
+リリース注記（2026-10-09）：以下のCTプレビューと切り出し変換、独立したPHITS ROI統計GUIはv1.1.2に含まれます。過去のv1.1.1タグには含まれません。統計GUIは[独立ツールの説明](../../phits-roi-statistics.md)を参照してください。
 
 このソフトウェアは教育・研究用の実験的な固定照射野3D-CRTワークフローです。許可を得た非患者ファントムデータを使用します。臨床利用、患者QA、IMRT、動的MLC、VMATは対象外です。実外部ツールを通した安定動作や臨床装置との線量一致を保証する説明書ではありません。
 

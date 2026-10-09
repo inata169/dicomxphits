@@ -424,7 +424,7 @@ class CtPreviewDialog:
             self.pending = None
         if self.crosshair is not None:
             x, y, z = self.crosshair
-            position = round(self.nav[name].get())
+            position = self.volume.displayed_plane_index(name, round(self.nav[name].get()))
             self.crosshair = ((x, y, position) if name == "Axial" else
                               (x, position, z) if name == "Coronal" else
                               (position, y, z))
@@ -474,7 +474,7 @@ class CtPreviewDialog:
         except (ValueError, tk.TclError):
             self.status.set("Contrast centre must be finite and width positive")
             return
-        photo = _photo(self.volume.plane(name, index), max(1, round(width)),
+        photo = _photo(self.volume.plane(name, displayed), max(1, round(width)),
                        max(1, round(height)), centre - window / 2, centre + window / 2)
         self.images[name] = photo
         canvas.create_image(left, top, image=photo, anchor="nw")
@@ -483,8 +483,8 @@ class CtPreviewDialog:
         except ClipError:
             return
         x0, y0, x1, y1 = transform.source_rectangle(bounds)
-        color = "#28e9a6" if bounds.contains_plane(name, index) else "#ffba67"
-        if bounds.contains_plane(name, index):
+        color = "#28e9a6" if bounds.contains_plane(name, displayed) else "#ffba67"
+        if bounds.contains_plane(name, displayed):
             for region in ((left, top, left + width, y0),
                            (left, y1, left + width, top + height),
                            (left, y0, x0, y1),
@@ -498,7 +498,7 @@ class CtPreviewDialog:
             middle_x, middle_y = (px0 + px1) / 2, (py0 + py1) / 2
             canvas.create_line(middle_x, top, middle_x, top + height, fill="#85caff", dash=(3, 3))
             canvas.create_line(left, middle_y, left + width, middle_y, fill="#85caff", dash=(3, 3))
-        if not bounds.contains_plane(name, index):
+        if not bounds.contains_plane(name, displayed):
             canvas.create_text(left + 8, top + 8, anchor="nw", text="Outside selected volume", fill=color)
         if self.pending is not None and self.pending[0] == name:
             point = self.pending[1]
@@ -519,7 +519,7 @@ class CtPreviewDialog:
         if point is None:
             self.pointer.set(f"Pointer: {name} outside image")
             return
-        fixed = round(self.nav[name].get())
+        fixed = self.volume.displayed_plane_index(name, round(self.nav[name].get()))
         xyz = ((point[0], point[1], fixed) if name == "Axial" else
                (point[0], fixed, point[1]) if name == "Coronal" else
                (fixed, point[0], point[1]))
@@ -529,10 +529,10 @@ class CtPreviewDialog:
         point = self._source_point(name, event)
         if point is None or self.volume is None:
             return
-        x, y, z = self.crosshair or (1, 1, 1)
-        self.crosshair = ((point[0], point[1], z) if name == "Axial" else
-                          (point[0], y, point[1]) if name == "Coronal" else
-                          (x, point[0], point[1]))
+        fixed = self.volume.displayed_plane_index(name, round(self.nav[name].get()))
+        self.crosshair = ((point[0], point[1], fixed) if name == "Axial" else
+                          (point[0], fixed, point[1]) if name == "Coronal" else
+                          (fixed, point[0], point[1]))
         x, y, z = self.crosshair
         for plane, index in (("Axial", z), ("Coronal", y), ("Sagittal", x)):
             self.nav[plane].set(index)

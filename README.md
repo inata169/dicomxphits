@@ -5,12 +5,12 @@ fixed-field 3D-CRT PHITS inputs from DICOM RT Plans and for controlling the
 explicit PHITS, Sumtally, RTDOSE, coordinate-correction, and external GPR
 handoff stages.
 
-> **Status: Experimental — v1.1.1 published**
+> **Status: Experimental — v1.1.2 published**
 >
-> The v1.1.1 source release is available for education and research evaluation.
-> Automated tests and a bounded two-field, low-statistics real PHITS GUI run
-> passed. Stable operation across the complete external-tool workflow,
-> sustained observation and real STOP/retry/recovery remain unverified.
+> The v1.1.2 source release is available for education and research evaluation.
+> Automated tests and public CI passed. CT clipping and large-volume preview
+> are included. Stable operation across the complete external-tool workflow
+> and physical dose accuracy remain unverified for this release.
 >
 > Preserve existing inputs and results, and evaluate this version in a
 > separate non-patient test workspace. This software is not validated for
@@ -65,25 +65,14 @@ All paths retain the same education-and-research-only boundary stated above.
 
 ## Status
 
-Version 1.1.1 is an experimental patch release based on the merged
-v1.1.0 follow-up fixes and Japanese/English GUI manuals. It repairs downstream
-recovery after PHITS retry, live observation refresh and retained Structure
-result freshness. Package metadata and GUI About report 1.1.1. See the
-[v1.1.1 release notes](docs/release-notes-v1.1.1.md) for the changes and the
-separate automated, manual and real-tool evidence boundaries. No new workflow
-capability or physical validation is claimed.
-
-The source tree contains two **post-v1.1.1** additions: the independent PHITS
-ROI statistics GUI and manual CT clipping in the guided GUI. They are not part
-of the published `v1.1.1` tag.
-
-Version 1.1.2 is being prepared from those additions and the bounded CT
-preview fix. The release candidate has not been published; see the
-[v1.1.2 candidate notes](docs/release-notes-v1.1.2.md) for its evidence and
-remaining checks. An installed candidate reports **Version 1.1.2** in About.
+Version 1.1.2 includes the independent PHITS ROI statistics GUI, manual CT
+clipping in the guided GUI, and bounded previews for several-hundred-slice CT
+series. Package metadata and GUI About report **Version 1.1.2**. See the
+[v1.1.2 release notes](docs/release-notes-v1.1.2.md) for the changes, checks,
+and limits. These additions are absent from the historical `v1.1.1` tag.
 
 The current public release is
-[`v1.1.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1). It is
+[`v1.1.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.2). It is
 published without a custom Windows offline ZIP. The v1.0.2 custom offline ZIP
 was withdrawn and removed after a later endpoint-protection compatibility
 failure and should not be used. The v1.0.2 tag, GitHub Release, source archives,
@@ -161,7 +150,7 @@ After the GUI opens:
 
 ## Windows Offline Installation
 
-The v1.1.1 GitHub Release provides source archives only, with no public Windows
+The v1.1.2 GitHub Release provides source archives only, with no public Windows
 offline ZIP. The earlier v1.0.3 release also had no public offline ZIP. A
 locally built v1.0.3 bundle passed bounded human installation and GUI-startup
 checks, but behavior-based endpoint protection blocked the verified

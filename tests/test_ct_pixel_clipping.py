@@ -191,6 +191,81 @@ def test_six_hundred_slice_preview_keeps_every_axial_position(
     assert ClipBounds.full(volume.shape) == ClipBounds(1, 512, 1, 512, 1, 600)
 
 
+def test_sampled_plane_overlay_and_pointer_use_the_shown_source_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "ct"
+    _pixel_series(root)
+    monkeypatch.setattr("dicomxphits.ct_preview.PREVIEW_MEMORY_LIMIT",
+                        24 * 1024 * 1024 + 8 * 5 * 7 + 145)
+    volume = load_preview(root, None)
+    assert volume.sample_stride == 2
+
+    class Variable:
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+        def get(self) -> object:
+            return self.value
+
+        def set(self, value: object) -> None:
+            self.value = value
+
+    class Canvas:
+        def __init__(self) -> None:
+            self.texts: list[str] = []
+
+        def delete(self, *_args: object) -> None:
+            self.texts.clear()
+
+        def winfo_width(self) -> int:
+            return 340
+
+        def winfo_height(self) -> int:
+            return 340
+
+        def create_image(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def create_rectangle(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def create_line(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def create_text(self, *_args: object, **kwargs: object) -> None:
+            self.texts.append(str(kwargs["text"]))
+
+    dialog = object.__new__(CtPreviewDialog)
+    dialog.volume = volume
+    dialog.canvases = {"Coronal": Canvas(), "Sagittal": Canvas()}
+    dialog.images = {}
+    dialog.nav = {name: Variable(2) for name in ("Axial", "Coronal", "Sagittal")}
+    dialog.position_labels = {name: Variable("") for name in dialog.canvases}
+    dialog.fields = [Variable(value) for value in (2, 6, 2, 4, 1, 3)]
+    dialog.center = Variable(0)
+    dialog.width = Variable(400)
+    dialog.status = Variable("")
+    dialog.pointer = Variable("")
+    dialog.pending = None
+    dialog.crosshair = (3, 2, 2)
+    monkeypatch.setattr("dicomxphits.ct_preview._photo", lambda *_args: object())
+
+    for name in ("Coronal", "Sagittal"):
+        dialog._draw(name)
+        assert dialog.position_labels[name].get().endswith("(shown 1)")
+        assert "Outside selected volume" in dialog.canvases[name].texts
+
+    monkeypatch.setattr(dialog, "_source_point", lambda *_args: (4, 3))
+    monkeypatch.setattr(dialog, "_draw_all", lambda: None)
+    dialog._motion("Coronal", SimpleNamespace())
+    assert "Ny 1" in dialog.pointer.get()
+    dialog._navigate("Coronal")
+    assert dialog.crosshair == (3, 1, 2)
+    dialog._set_crosshair("Coronal", SimpleNamespace())
+    assert dialog.crosshair == (4, 1, 3)
+
+
 def test_synthetic_tk_corner_selection_and_apply(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root_path = tmp_path / "ct"
     _pixel_series(root_path)
