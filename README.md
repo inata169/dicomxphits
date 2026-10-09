@@ -53,6 +53,10 @@ Choose the path that matches your purpose:
   for the standalone, explicitly invoked CLI that creates a new calculation-
   only CT series from target and clean-water RTSTRUCT ROIs without overwriting
   the source CT. It is not exposed in the GUI or run by the guided workflow.
+- **Independent PHITS ROI statistics** — use the
+  [standalone ROI statistics guide](docs/phits-roi-statistics.md) for a completed
+  Sumtally dose/error pair. On Windows, launch its separate desktop GUI with
+  `run_phits_roi_stats_gui.bat` after setting up the repository `.venv`.
 - **Contributors** — use the
   [development guidance](docs/development.md) and current specifications under
   `openspec/specs/`.
@@ -68,6 +72,11 @@ result freshness. Package metadata and GUI About report 1.1.1. See the
 [v1.1.1 release notes](docs/release-notes-v1.1.1.md) for the changes and the
 separate automated, manual and real-tool evidence boundaries. No new workflow
 capability or physical validation is claimed.
+
+The current `main` branch also contains two **post-v1.1.1** additions: the
+independent PHITS ROI statistics GUI and manual CT clipping in the guided GUI.
+They are not part of the published `v1.1.1` tag; the unchanged package/About
+version does not indicate that these additions are in that release.
 
 The current public release is
 [`v1.1.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1). It is
@@ -498,6 +507,25 @@ dicomxphits-prepare-3dcrt-workspace `
 Neither adapter runs PHITS, Sumtally, phits2dicom, or GPR as part of this
 frontend stage.
 
+For manual CT clipping, open **CT images / Clipping range…** in the guided GUI
+after confirming non-patient phantom data. Linked Axial, Coronal, and Sagittal
+views let you choose one axis-aligned box by two corners or six source-index
+fields. The GUI retains the selected box; it does not identify or remove a
+couch or other object inside the box. The CLI accepts one-based inclusive
+`--pixel-clipping NX_MIN NX_MAX NY_MIN NY_MAX` and
+`--slice-range FIRST LAST` bounds. The full CT volume remains the default.
+The GUI fields and CLI `--coarse-graining X Y Z` option accept **equal positive
+X/Y integers** and **Z from 1 through 4**; the default is `8 8 2`. Each axis
+must produce at least one complete coarse voxel. Incomplete groups at the
+high end are discarded: the GUI warns before conversion, and the frontend
+records requested and retained bounds. For a crop or non-default factors,
+dicomxphits checks the generated grid and every voxel material against the
+frozen CT and conversion table before downstream use. Unequal X/Y factors are
+rejected because the inspected CT2PHITS source has a Y-count defect. The
+physical voxel pitch also depends on the source CT spacing. See the
+[GUI operating manual](docs/instruction/_manual/gui-manual.en.md) and
+[CLI reference](docs/cli-reference.md) for the selection and warning details.
+
 ## Guided Desktop GUI
 
 Use the [Windows GUI Quick Start](#windows-gui-quick-start) to create the
@@ -509,6 +537,13 @@ PHITS, Sumtally, and RTDOSE conversion as separate gated actions. After a
 successful CT2PHITS run, it automatically passes the frozen `RTPLAN.dcm`,
 `CT/CT000001.dcm`, and `DATfiles` paths to workspace preparation. An existing
 validated handoff can still be entered from the advanced workspace controls.
+
+The CT2PHITS page also offers the linked three-plane clipping preview and
+case-local X/Y/Z coarse-graining fields described above. Applying a clipping
+box changes only the CT region requested for a new conversion; it does not
+rewrite the source DICOM series. The selected first slice supplies the clipped
+phantom placement, while the original series origin remains recorded as source
+evidence.
 
 After a restart, select **Open existing case…** and choose the existing 3D-CRT
 workspace. The GUI verifies the current IEC gantry-geometry contract and
@@ -575,6 +610,28 @@ Prepare, and is not persisted. Leaving it blank preserves the legacy
 101 x 101 x 101, 3 mm tally. See
 [Calculation Configuration](docs/calculation-configuration.md) for the schema,
 inclusive voxel-centre convention, limits, evidence, and downstream guards.
+
+## Independent PHITS ROI Statistics GUI
+
+The standalone ROI tool analyses a **completed** PHITS 3.35 T-Deposit xyz/xy
+`isumtally=2` Sumtally combined dose and its matching relative-error output.
+It does not run PHITS, Sumtally, or DICOM conversion, and it does not change
+the guided workflow's completion state. From the repository root on Windows,
+double-click
+`run_phits_roi_stats_gui.bat` (or run
+`.venv\Scripts\python.exe tools\phits_roi_stats_gui.py`). The launcher uses
+this checkout's Python 3.12 `.venv`.
+
+Choose a case folder or ZIP, confirm the suggested dose/error and evidence
+members, then select a sphere or an RT Structure ROI. A Structure selection
+requires the matching frozen workspace, CT reference, RT Plan, RT Structure,
+and explicit ROI number. Select **Add case** before **Analyse**; results for
+several cases can appear in one table. The display language can be switched
+between Japanese and English without rerunning an analysis. Optional CSV/JSON
+reports are created as new files in an existing output folder outside the
+repository and source cases; existing reports are not overwritten. See the
+[standalone guide](docs/phits-roi-statistics.md) for
+input contracts, statistics definitions, failure handling, and export limits.
 
 ## Key Files and Directories
 
@@ -688,6 +745,7 @@ section; see the CLI reference for the fail-closed boundaries.
 - [Manual smoke workflow](docs/manual_smoke_workflow.md)
 - [Workflow stages and gates](docs/workflow_stages.md)
 - [CT2PHITS frontend handoff](docs/ct2phits-frontend-handoff.md)
+- [Independent PHITS ROI statistics and desktop GUI](docs/phits-roi-statistics.md)
 - [Development and Dev Container guidance](docs/development.md)
 - [Current project status](docs/project-status.md)
 

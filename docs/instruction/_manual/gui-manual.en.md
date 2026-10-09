@@ -1,10 +1,10 @@
 # dicomxphits GUI operating manual (English)
 
-Date: 2026-09-24. [日本語](gui-manual.ja.md) / [Document index](README.md)
+Updated: 2026-10-09. [日本語](gui-manual.ja.md) / [Document index](README.md)
 
-Applies to v1.1.x, checked against published v1.1.1. This release includes the retry recovery repair in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Install v1.1.1 before starting a new GUI session; Help → About should report 1.1.1. An already running GUI retains its imported code.
+The base v1.1.x workflow was checked against published v1.1.1. That release includes the retry recovery repair in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Install the current checkout to use the later source-tree additions described below; Help → About still reports package version 1.1.1. An already running GUI retains its imported code.
 
-Development branch note: the CT preview described below is not part of published v1.1.1. The clipping conversion remains disabled until the supported CT2PHITS crop and coordinate contract is verified.
+Source-tree note (2026-10-09): the CT preview and clipping conversion described below were added after the published v1.1.1 tag. They are available in the current source tree, not in the v1.1.1 release. The PHITS ROI statistics GUI is a separate tool described in the [standalone guide](../../phits-roi-statistics.md).
 
 This is experimental education and research software for fixed-field 3D-CRT using authorized non-patient phantom data. Clinical use, patient QA, IMRT, dynamic MLC and VMAT are outside its scope. This manual does not establish stable operation with real external tools or dose agreement with a clinical machine.
 
@@ -86,7 +86,7 @@ Keep calculation data outside the repository and out of Git. Standard CT2PHITS o
 
 Downstream processing uses the Frozen RT Plan. Editing the original source does not update an already prepared workspace. On failure, use Chapter 10 rather than repeatedly running into the same output directory.
 
-#### CT image preview and clipping draft (development branch)
+#### CT image preview and clipping selection (current source tree)
 
 After selecting the non-patient phantom confirmation, choose `CT images / Clipping range…` to inspect the selected series. The dialog reads CT pixels only for display and does not run CT2PHITS. It shows Axial (Nx/Ny), Coronal (Nx/slice), and Sagittal (Ny/slice) views, with the superior end at the top of the latter two. Sliders change the viewed plane; right-click sets the linked viewing crosshair. The pointer displays original one-based Nx, Ny, and slice indices. The contrast centre and width affect display only.
 
