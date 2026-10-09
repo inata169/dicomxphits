@@ -11,7 +11,8 @@ import pytest
 from pydicom.dataset import Dataset, FileDataset
 
 from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, PlaneTransform, VolumeShape, coarse_coverage
-from dicomxphits.ct_preview import CtPreviewDialog, PreviewError, load_preview
+from dicomxphits.ct_preview import CtPreviewDialog, PreviewError, _preview_stride, load_preview
+from dicomxphits.run_ct2phits import SelectedCtSeries
 
 
 def test_three_plane_corner_mapping_and_display_inverse() -> None:
@@ -131,10 +132,72 @@ def test_single_slice_and_bounded_loading(tmp_path: Path, monkeypatch: pytest.Mo
         load_preview(root, None)
 
 
+def test_large_ct_preview_uses_bounded_sampling_without_changing_source_indices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _preview_stride(512, 512, 300) == 2
+    assert _preview_stride(512, 512, 600) == 3
+    assert _preview_stride(512, 512, 1000) == 4
+    root = tmp_path / "ct"
+    _pixel_series(root)
+    # A synthetic small budget forces the same sampled path without creating
+    # hundreds of large DICOM files in the test suite.
+    budget = 24 * 1024 * 1024 + 8 * 5 * 7 + 145
+    monkeypatch.setattr("dicomxphits.ct_preview.PREVIEW_MEMORY_LIMIT", budget)
+    volume = load_preview(root, None)
+    assert volume.sample_stride == 2
+    assert volume.shape == VolumeShape(7, 5, 3, 1.0, 2.0, 3.0)
+    assert volume.pixels.shape == (3, 3, 4)
+    assert volume.sampled_rows.tolist() == [0, 2, 4]
+    assert volume.sampled_columns.tolist() == [0, 2, 4, 6]
+    assert volume.plane("Axial", 2)[1, 2] == 118 * 2 - 100
+    assert volume.displayed_plane_index("Coronal", 2) == 1
+    assert volume.displayed_plane_index("Coronal", 3) == 3
+    assert ClipBounds.full(volume.shape) == ClipBounds(1, 7, 1, 5, 1, 3)
+
+
+def test_six_hundred_slice_preview_keeps_every_axial_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = tuple(tmp_path / f"{z}.dcm" for z in range(600))
+    selected = SelectedCtSeries(tmp_path, "synthetic-series", "synthetic-frame",
+                                files, 512, 512, (1.0, 1.0))
+    source_pixels = np.zeros((512, 512), dtype=np.int16)
+    monkeypatch.setattr("dicomxphits.ct_preview.select_ct_series", lambda *_args, **_kwargs: selected)
+    monkeypatch.setattr("dicomxphits.ct_preview._hash_file", lambda _path: "synthetic-hash")
+
+    def synthetic_slice(path: str, **_kwargs: object) -> SimpleNamespace:
+        z = int(Path(path).stem)
+        source_pixels.fill(z)
+        return SimpleNamespace(
+            PhotometricInterpretation="MONOCHROME2", SamplesPerPixel=1,
+            NumberOfFrames=1, BitsAllocated=16, pixel_array=source_pixels,
+            RescaleSlope=1, RescaleIntercept=0,
+            ImagePositionPatient=(0.0, 0.0, float(z)),
+        )
+
+    monkeypatch.setattr("dicomxphits.ct_preview.pydicom.dcmread", synthetic_slice)
+    progress: list[tuple[int, int]] = []
+    volume = load_preview(tmp_path, None, progress=lambda done, total: progress.append((done, total)))
+    assert volume.sample_stride == 3
+    assert volume.pixels.shape == (600, 171, 171)
+    assert volume.shape == VolumeShape(512, 512, 600, 1.0, 1.0, 1.0)
+    assert progress[-1] == (600, 600)
+    for index in (1, 300, 600):
+        assert volume.displayed_plane_index("Axial", index) == index
+        assert volume.plane("Axial", index)[0, 0] == index - 1
+    assert volume.plane("Coronal", 256).shape == (600, 171)
+    assert volume.plane("Sagittal", 256).shape == (600, 171)
+    assert ClipBounds.full(volume.shape) == ClipBounds(1, 512, 1, 512, 1, 600)
+
+
 def test_synthetic_tk_corner_selection_and_apply(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root_path = tmp_path / "ct"
     _pixel_series(root_path)
+    monkeypatch.setattr("dicomxphits.ct_preview.PREVIEW_MEMORY_LIMIT",
+                        24 * 1024 * 1024 + 8 * 5 * 7 + 145)
     volume = load_preview(root_path, None)
+    assert volume.sample_stride == 2
     try:
         root = tk.Tk()
     except tk.TclError:
@@ -151,6 +214,8 @@ def test_synthetic_tk_corner_selection_and_apply(tmp_path: Path, monkeypatch: py
                 break
             time.sleep(0.01)
         assert dialog.volume is volume
+        assert set(dialog.images) == {"Axial", "Coronal", "Sagittal"}
+        assert "bounds use source indices" in dialog.retained.get()
         canvas = dialog.canvases["Axial"]
         transform = PlaneTransform("Axial", volume.shape,
                                    canvas.winfo_width(), canvas.winfo_height())
