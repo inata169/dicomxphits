@@ -333,3 +333,87 @@ one-index stepping preserved the box. After setting the supported minimum
 width to 1120, focused preview tests passed again (10 passed, 1.43 s), and
 `python -m compileall src` passed. The full suite above preceded only this
 minimum-width adjustment and documentation updates.
+
+## CT versus accelerator geometry audit against v1.1.1, 2026-10-09
+
+Requested by the user because clipping might disturb phantom/linac geometry.
+Baseline: Git tag v1.1.1; reviewed implementation: 2d2604f. This audit adds
+synthetic regression tests only; runtime code and current public specs are
+unchanged. No real DICOM or external scientific program was executed.
+
+The accelerator_geometry, rectangular_geometry, gantry_geometry and
+prepare_ct_calibration modules have identical Git blobs at v1.1.1 and HEAD.
+The CT-to-IEC rotation and origin-minus-isocentre formula are unchanged.
+Only a cropped series's selected-first-slice placement reference changes.
+The complete-series origin remains audit evidence. CTsurf, CTuniverse and
+CTvoxel assets are copied from CT2PHITS rather than recentered by the GUI.
+The dose tally grid is independent of the CT crop and is not resized by it.
+
+A temporary comparison loaded the v1.1.1 CT-preparation and workspace-generation
+modules directly from Git without modifying a checkout. With the same generated
+non-patient axial HFS CT, RT Plan and synthetic raw assets:
+
+- Full-volume preparation produced identical hashes for all six prepared CT
+  files in v1.1.1 and current code.
+- Full-volume PHITS input bytes matched across eight angle combinations:
+  gantry 0/90/180/270 degrees, collimator 0/37 degrees, couch zero.
+- Applying the old full-origin preparation to a Z crop starting at slice 3
+  differed from current placement by +0.6 cm in IEC Y, matching two skipped
+  3 mm slices. This illustrates why the selected-first-slice correction is
+  required for the new cropped path; v1.1.1 did not offer that cropped path.
+
+New tests in tests/test_clipped_ct_linac_geometry.py independently calculate
+retained coarse-block centres from source DICOM indices and the RT Plan
+isocentre, then compare with the generated CT parameter file and transform.
+All retained centres match to floating-point arithmetic precision for full,
+XY-only, Z-only and combined/remainder cases with 8 8 2 and 8 8 1. The 1e-12
+assertion threshold is a numerical comparison tolerance for these exact
+synthetic values, not a new physical tolerance in the product.
+
+Eight additional comparisons generate full/cropped PHITS inputs using the
+public default accelerator and the same angles above. After removing only
+the CT lattice counts line, input text is identical: source, accelerator
+surfaces/cells, rotations, materials, dose factor and tally are unchanged.
+The CT wrapper excludes accelerator cell 2 (#2), and the main-air cell excludes
+both CT and accelerator (#1201 #2), preserving the v1.1.1 topology protection.
+
+Interpretation: no displacement of retained material or change of the linac
+geometry was found in the inspected application code and synthetic comparison.
+Cropping changes the phantom's outer extent. Coarse graining changes HU and
+boundary representation; unaligned crop starts also change coarse-block
+membership and centres compared with the old full-volume coarse lattice.
+These are not a rigid displacement or stretch of the retained source region,
+but they can affect transport/scatter and dose. Identical geometry code does
+not establish identical dose after removing material.
+
+Limits: the new raw fixtures deliberately use placeholder surface/material/
+universe/voxel bodies and model the previously observed CT2PHITS parameter
+contract. They validate application placement and emitted accelerator input,
+not external surface semantics, lost particles or real PHITS transport. The
+frontend checks raw origin and voxel counts but does not independently verify
+every surface, voxel pitch/minimum or material assignment. Prior approved
+CT2PHITS experiments provide bounded external evidence for 8 8 2 and 8 8 1,
+not a full current-branch CT-to-PHITS transport validation. Nonzero couch and
+non-axial/non-HFS CT remain outside the supported contract.
+
+Focused command: .venv/Scripts/python.exe -m pytest -q --tb=short
+-p no:cacheprovider tests/test_clipped_ct_linac_geometry.py
+tests/test_ct2phits_datfiles.py tests/test_prepare_3dcrt_workspace.py
+tests/test_accelerator_geometry.py tests/test_rectangular_geometry.py
+tests/test_phits_geometry_diagnostics.py: 171 passed (8.16 s).
+The first attempt failed 16 new cases because the synthetic fixture rendered
+voxel counts with decimal points; rendering the integer counts in the documented
+format corrected the fixture, and the same focused set then passed. No runtime
+validation was weakened. General-factor acceptance is still incomplete and
+this OpenSpec change remains active.
+
+Final public checks for this audit:
+
+- `python -m compileall src`: passed.
+- `.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider`: 1550 passed,
+  15 skipped, one existing duplicate-ZIP-member warning (151.38 s).
+- `.venv/Scripts/python.exe tools/verify_public_tree.py`: passed, 456 tracked
+  files checked after staging the new test.
+- `git diff --check` and `git diff --cached --check`: passed.
+- Diff/stat/status review: only this validation record and the new regression
+  test are included; unrelated untracked configuration/screenshots preserved.
