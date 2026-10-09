@@ -526,3 +526,73 @@ The staged stat and status contain only the approved implementation and
 documentation; the user's unrelated configuration and screenshot files remain
 untracked and untouched. The OpenSpec CLI is unavailable, so proposal and
 delta-spec structure was checked manually; accepted deltas remain active.
+
+## Review correction, 2026-10-09
+
+The `@codex review` of `a1acb0a` identified that invalid UTF-8 in a generated
+text asset could raise outside the controlled frontend failure path and omit
+the execution summary. All verifier text reads now turn decoding errors into
+`CtVoxelVerificationError`, and a synthetic invalid-material-file test checks
+that the frontend records `status: failed` with a reason. The focused frontend
+file passed **72 tests**. The first focused attempt used the system Python,
+which lacks `pydicom`; the second hit the existing sandbox pytest temporary
+directory permission issue. The successful run used `.venv/Scripts/python.exe`
+with the required filesystem permission. Full-suite recheck follows.
+That recheck passed **1559 tests, 15 skipped**, with the existing duplicate-ZIP
+warning, before the later factor-input revision.
+
+## Equal-X/Y factor scope, 2026-10-09
+
+The user did not approve the proposed PHITS 3.37 executable run for unequal
+factors. Instead, they chose equal arbitrary positive X/Y inputs with Z from
+`1` through `4`; their 13 examples are not an allowlist. GUI and CLI now
+reject unequal X/Y or out-of-range Z before workspace creation. The internal
+verifier's previously approved correction path remains unit-tested but is not
+reachable through supported GUI/CLI inputs. A `5 5 2` synthetic case checks
+that the allowed range is not limited to the listed examples. The focused
+frontend/GUI set passed **209 tests, 1 skipped**. Actual voxel pitch remains
+source DICOM spacing times each factor; no 2-3 mm promise is inferred from
+the factors alone. Installed CT2PHITS execution for the final supported
+range still requires separate authorization.
+The full public suite after the factor validation passed **1561 tests,
+15 skipped**, with the same existing warning (169.19 s). The last GUI-label
+and manual edits were made while that suite was running; a final focused GUI
+check and compile check follow. Computer Use confirmed that the revised GUI
+launches and preserves its dark palette. The new factor guidance was below
+the visible viewport and the desktop scroll control did not respond to the
+bounded interaction attempt; its rendered text remains visually unverified.
+
+## Authorized PHITS 3.37 synthetic CT2PHITS run, 2026-10-09
+
+The user explicitly approved executing the installed PHITS 3.37 CT2PHITS
+utility with only newly generated, non-patient synthetic CT for `1 1 1`,
+`2 2 4`, `4 4 2`, and `8 8 3`. The installed executable SHA-256 was
+`A30F32991EA8D7D3533F92D44D11034DAE355144634CB7EAC9AC4CEA3399FACA`.
+No PHITS transport was run, and no distribution source, executable, table,
+or batch file was modified. Test source and outputs were created only in a
+unique `work/codex-synthetic-ct337-*` directory outside the repository.
+
+The first attempt stopped before conversion for all four factors because the
+generated DICOM lacked the tool-required Slice Thickness tag. This was a test
+fixture omission. After adding a synthetic 1 mm thickness, the same matrix
+ran against a 32 x 32 x 12 CT with 0.5 mm in-plane spacing, 1 mm slice
+interval, nonzero origin, multiple synthetic HU regions, and a separate
+high-density object outside the selected Y range. The off-centre requested
+box was X 5-28, Y 3-26, slices 2-11. Results:
+
+| Factors | Accepted voxel counts | Retained slices | Material mismatches | Result |
+| --- | --- | --- | --- | --- |
+| `1 1 1` | 24 x 24 x 10 | 2-11 | 0 | completed |
+| `2 2 4` | 12 x 12 x 2 | 2-9 | 0 | completed |
+| `4 4 2` | 6 x 6 x 5 | 2-11 | 0 | completed |
+| `8 8 3` | 3 x 3 x 3 | 2-10 | 0 | completed |
+
+The verifier also accepted each grid's pitch, local minimum, surface/cell
+expressions, material definitions, and selected-first-slice DICOM placement.
+The generated material file hashes were unchanged. The remainder warnings for
+`2 2 4` and `8 8 3` correctly reported discarded high-end Z slices. This
+evidence is limited to these synthetic cases and the identified executable;
+it does not establish clinical suitability or every possible equal X/Y value.
+The complete public test suite after the Z-factor boundary case passed
+**1562 tests, 15 skipped**, with the existing duplicate-ZIP warning. The
+temporary synthetic run files were removed after the results were recorded.

@@ -72,6 +72,10 @@ def _coarse_graining_values(values: Sequence[object] | None) -> tuple[int, int, 
         if factor <= 0:
             raise Ct2PhitsFrontendError("coarse graining factors must be positive integers")
         parsed.append(factor)
+    if parsed[0] != parsed[1]:
+        raise Ct2PhitsFrontendError("CT coarse graining X and Y factors must be equal")
+    if parsed[2] > 4:
+        raise Ct2PhitsFrontendError("CT coarse graining Z factor must be between 1 and 4")
     return parsed[0], parsed[1], parsed[2]
 
 

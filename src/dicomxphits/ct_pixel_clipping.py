@@ -1,8 +1,8 @@
 """Source-index clipping and reversible orthogonal preview coordinates.
 
-Preview coordinates are display-only. Coarse coverage reports the complete
-source groups established for the approved CT2PHITS default factors; it does
-not infer anatomy or authorize unverified factor combinations.
+Preview coordinates are display-only. Coarse coverage reports complete source
+groups for supplied factors; it does not infer anatomy or authorize factors
+outside the frontend's supported input contract.
 """
 
 from __future__ import annotations

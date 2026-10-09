@@ -50,8 +50,15 @@ def _fortran_float(value: str) -> float:
     return result
 
 
+def _text_lines(path: Path) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except UnicodeError as exc:
+        raise CtVoxelVerificationError("CT2PHITS output is not valid UTF-8 text") from exc
+
+
 def _read_table(path: Path) -> _ConversionTable:
-    lines = path.read_text(encoding="utf-8").splitlines()
+    lines = _text_lines(path)
     if len(lines) < 4:
         raise CtVoxelVerificationError("CT conversion table is incomplete")
     def fields(line: str) -> list[str]:
@@ -95,7 +102,7 @@ def _read_table(path: Path) -> _ConversionTable:
 
 
 def _verify_material_assets(datfiles: Path, table: _ConversionTable) -> None:
-    material_lines = (datfiles / "CTmaterial.dat").read_text(encoding="utf-8").splitlines()
+    material_lines = _text_lines(datfiles / "CTmaterial.dat")
     sections: list[list[str]] = []
     for line in material_lines:
         match = re.match(r"\s*MAT\[\s*(\d+)\s*\]", line, re.I)
@@ -107,7 +114,7 @@ def _verify_material_assets(datfiles: Path, table: _ConversionTable) -> None:
             sections[-1].append(line.strip())
     if tuple(tuple(section) for section in sections) != table.compositions:
         raise CtVoxelVerificationError("CT material compositions disagree with conversion table")
-    universe_lines = (datfiles / "CTuniverse.dat").read_text(encoding="utf-8").splitlines()
+    universe_lines = _text_lines(datfiles / "CTuniverse.dat")
     if len(universe_lines) != len(table.densities):
         raise CtVoxelVerificationError("CT universe count disagrees with conversion table")
     for index, (line, density) in enumerate(zip(universe_lines, table.densities), 1):
@@ -119,13 +126,13 @@ def _verify_material_assets(datfiles: Path, table: _ConversionTable) -> None:
         if (match is None or int(match.group(1)) != material_id
             or int(match.group(2)) != material_id
             or int(match.group(4)) != material_id
-            or not math.isclose(float(match.group(3)), density, rel_tol=0, abs_tol=5.1e-6)):
+            or not math.isclose(_fortran_float(match.group(3)), density, rel_tol=0, abs_tol=5.1e-6)):
             raise CtVoxelVerificationError("CT universe material or density disagrees with conversion table")
 
 
 def _parameters(path: Path) -> dict[int, float]:
     result: dict[int, float] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in _text_lines(path):
         match = re.match(r"\s*set:\s*c(8[1-9]|90)\[\s*([^\]]+)\s*\]", line, re.I)
         if match:
             number = int(match.group(1))
@@ -166,7 +173,7 @@ def _verify_geometry(
         tolerance = 0 if number <= 83 else 5.1e-6  # CT2PHITS prints five decimals.
         if not math.isclose(actual[number], value, rel_tol=0, abs_tol=tolerance):
             raise CtVoxelVerificationError(f"CT lattice c{number} disagrees with source geometry")
-    surface = " ".join((datfiles / "CTsurf.dat").read_text(encoding="utf-8").split()).lower()
+    surface = " ".join(" ".join(_text_lines(datfiles / "CTsurf.dat")).split()).lower()
     for fragment in (
         "5000 rpp c87 c87+c84 c88 c88+c85 c89 c89+c86",
         "97 rpp c87 c87+c81*c84 c88 c88+c82*c85 c89 c89+c83*c86",
@@ -174,7 +181,7 @@ def _verify_geometry(
     ):
         if fragment not in surface:
             raise CtVoxelVerificationError("CT surfaces do not use the verified lattice parameters")
-    cell = " ".join((datfiles / "CTcell.dat").read_text(encoding="utf-8").split()).lower()
+    cell = " ".join(" ".join(_text_lines(datfiles / "CTcell.dat")).split()).lower()
     if (f"fill= 0:{counts[0]-1} 0:{counts[1]-1} 0:{counts[2]-1}" not in cell
         or "5000 0 -5000 lat=1 u=5000" not in cell
         or "infl:{ctuniverse.inp}" not in cell

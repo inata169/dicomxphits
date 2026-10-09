@@ -21,9 +21,9 @@
 - [x] Revise the proposal and obtain separate human decisions for the
       selected-first-slice coordinate handoff and warning-plus-conversion
       behavior for non-divisible default-factor boxes.
-- [ ] Complete bounded external synthetic checks for unequal and larger factors
-      after separate execution authorization; the installed tool has a known
-      unequal-factor Y-count defect.
+- [x] Complete bounded external synthetic checks for the final supported
+      equal-X/Y factor range after separate execution authorization; unequal
+      factors are now rejected before the installed tool is run.
 
 ## Implementation after approval
 
@@ -83,5 +83,18 @@ in `validation.md`. The change remains active and cannot be archived yet.
 - [x] Record original and accepted CT voxel hashes when correction occurs.
 - [x] Complete focused/full public checks and bounded synthetic GUI review for
       the current diff.
-- [ ] Complete a separately authorized installed-CT2PHITS synthetic comparison
-      for arbitrary-factor cases before claiming external behavior verified.
+- [x] Complete a separately authorized installed-CT2PHITS synthetic comparison
+      for the final supported equal-factor cases before claiming external
+      behavior verified.
+
+## Revised supported factor range
+
+- [x] Record the user's rejection of a 13-triple allowlist and approval of
+      equal arbitrary positive X/Y factors with Z from `1` through `4`.
+- [x] Apply the same factor validation in GUI and CLI before workspace creation.
+- [x] Retain output verification for supported factors and document that
+      physical voxel pitch also depends on source DICOM spacing.
+- [x] Re-run all public checks and review the bounded GUI state after the
+      revised factor validation.
+- [x] Confirm supported factors against the installed CT2PHITS executable
+      only after a separate explicit execution approval.

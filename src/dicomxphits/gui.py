@@ -500,6 +500,10 @@ def _ct2phits_coarse_values(config: GuiConfig) -> tuple[int, int, int]:
         if factor <= 0:
             raise GuiValidationError(f"CT2PHITS coarse graining {axis} must be a positive integer")
         parsed.append(factor)
+    if parsed[0] != parsed[1]:
+        raise GuiValidationError("CT coarse graining X and Y factors must be equal")
+    if parsed[2] > 4:
+        raise GuiValidationError("CT coarse graining Z factor must be between 1 and 4")
     return parsed[0], parsed[1], parsed[2]
 
 
@@ -3627,6 +3631,12 @@ def _build_gui() -> int:
         ttk.Entry(coarse_row, textvariable=values[key], width=5).grid(
             row=0, column=column * 2, padx=(0, 12)
         )
+    ttk.Label(
+        coarse_row,
+        text="X = Y; Z = 1–4. CT grid pitch also depends on source pixel and slice spacing.",
+        style="SurfaceMuted.TLabel",
+    ).grid(row=1, column=0, columnspan=7, sticky="w", pady=(4, 0))
+
     def invalidate_ct_clipping(*_args: object) -> None:
         nonlocal applied_ct_volume, applied_ct_bounds
         applied_ct_volume = None

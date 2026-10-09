@@ -290,3 +290,16 @@ PHITS input topology. Compare equal-factor synthetic results with the existing
 tool and check unequal factors against independent DICOM block calculations.
 Real CT2PHITS or PHITS execution still requires its own explicit authorization.
 The implementation is being validated with synthetic CT and fake runners.
+
+## Final factor-input scope (2026-10-09)
+
+The user then chose equal X/Y factors, each an arbitrary positive integer,
+and a Z factor from `1` through `4`. Their 13 listed triples are examples,
+not a fixed menu; `1 1 2` and `5 5 2` are also valid when complete output
+groups fit. Validate this rule in both GUI and CLI before creating a workspace.
+Keep the independent output verifier for accepted conversions. The known
+unequal-X/Y correction code remains internal and is not reachable through
+supported user inputs. The PHITS 3.37 source still contains the Y-count typo,
+but equal X/Y values make that expression numerically correct. A requested
+2-3 mm physical grid depends on source DICOM pixel and slice spacing as well
+as factors; the application must not claim a factor alone guarantees it.

@@ -2112,11 +2112,15 @@ def test_ct2phits_is_the_first_guided_gui_stage(tmp_path: Path) -> None:
     assert clipped[clipped.index("--pixel-clipping") + 1:clipped.index("--pixel-clipping") + 5] == ["2", "12", "3", "15"]
     assert clipped[clipped.index("--slice-range") + 1:clipped.index("--slice-range") + 3] == ["2", "6"]
     coarse = build_stage_command(
-        replace(config, ct_coarse_graining=("04", "3", "1")), spec
+        replace(config, ct_coarse_graining=("04", "4", "1")), spec
     )
-    assert coarse[coarse.index("--coarse-graining") + 1:coarse.index("--coarse-graining") + 4] == ["4", "3", "1"]
+    assert coarse[coarse.index("--coarse-graining") + 1:coarse.index("--coarse-graining") + 4] == ["4", "4", "1"]
     with pytest.raises(GuiValidationError, match="coarse graining Y"):
         validate_stage(replace(config, ct_coarse_graining=("8", "0", "2")), spec)
+    with pytest.raises(GuiValidationError, match="X and Y factors must be equal"):
+        validate_stage(replace(config, ct_coarse_graining=("4", "8", "1")), spec)
+    with pytest.raises(GuiValidationError, match="Z factor must be between 1 and 4"):
+        validate_stage(replace(config, ct_coarse_graining=("4", "4", "5")), spec)
 
 
 def test_ct2phits_gui_stage_keeps_explicit_confirmation_and_new_workspace_gate(

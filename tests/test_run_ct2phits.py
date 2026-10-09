@@ -17,6 +17,12 @@ if str(PUBLIC_SRC) not in sys.path:
     sys.path.insert(0, str(PUBLIC_SRC))
 
 import dicomxphits.run_ct2phits as run_ct2phits_module
+from dicomxphits.ct_pixel_clipping import ClipBounds
+from dicomxphits.ct_voxel_verification import (
+    CtVoxelVerificationError,
+    _decode_voxels,
+    verify_and_correct_ct_voxels,
+)
 from dicomxphits.run_ct2phits import (
     CT2PHITS_GENERATED_NAMES,
     Ct2PhitsFrontendError,
@@ -373,7 +379,7 @@ def test_invalid_clipping_is_rejected_before_workspace_creation(tmp_path: Path) 
     assert not case["workspace"].exists()
 
 
-@pytest.mark.parametrize("factors", [(4, 4, 1), (4, 8, 1), (1, 1, 1)])
+@pytest.mark.parametrize("factors", [(4, 4, 1), (5, 5, 2), (1, 1, 1)])
 def test_nondefault_coarse_graining_verifies_all_voxels(
     tmp_path: Path, factors: tuple[int, int, int],
 ) -> None:
@@ -393,7 +399,48 @@ def test_nondefault_coarse_graining_verifies_all_voxels(
     assert summary["voxel_verification"]["corrected"] is False
 
 
-def test_unequal_factors_correct_only_missing_y_materials(tmp_path: Path) -> None:
+def test_z_factor_four_verifies_full_volume(tmp_path: Path) -> None:
+    case = _case(tmp_path, z_positions_mm=(-100, -97, -94, -91))
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(48, 32, 1))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        coarse_graining=(2, 2, 4), runner=runner,
+    )
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["voxel_verification"]["voxel_count"] == 48 * 32
+
+
+def _unequal_verifier_fixture(case: dict[str, Path]) -> Path:
+    root = case["workspace"] / "DATfiles"
+    root.parent.mkdir(parents=True, exist_ok=True)
+    _write_generated_datfiles(root, counts=(24, 8, 2))
+    parameters = root / "CTusrparam.dat"
+    text = parameters.read_text(encoding="utf-8")
+    parameters.write_text(
+        text.replace("set: c84[0.64000]", "set: c84[0.32000]")
+            .replace("set: c86[10.00000]", "set: c86[5.00000]"),
+        encoding="utf-8",
+    )
+    return root
+
+
+def _verify_unequal_fixture(case: dict[str, Path], root: Path):
+    return verify_and_correct_ct_voxels(
+        datfiles_root=root,
+        table_path=case["rtphits"] / "data" / "HumanVoxelTable.data",
+        source_files=tuple(sorted(case["ct_root"].glob("*.dcm"))),
+        bounds=ClipBounds(1, 96, 1, 64, 1, 2),
+        factors=(4, 8, 1),
+    )
+
+
+def test_internal_verifier_corrects_only_known_y_material_loss(tmp_path: Path) -> None:
     case = _case(tmp_path)
     for path in case["ct_root"].glob("*.dcm"):
         dataset = pydicom.dcmread(str(path))
@@ -402,45 +449,23 @@ def test_unequal_factors_correct_only_missing_y_materials(tmp_path: Path) -> Non
         dataset.PixelData = pixels.tobytes()
         dataset.save_as(str(path))
 
-    def runner(command, cwd, timeout_seconds):
-        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(24, 8, 2))
-        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
-
-    result = run_ct2phits_frontend(
-        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
-        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
-        confirmed_non_patient_phantom=True, platform_system="Windows",
-        coarse_graining=(4, 8, 1), runner=runner,
-    )
-    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
-    evidence = summary["voxel_verification"]
-    assert evidence["corrected"] is True
-    assert evidence["mismatched_voxels"] == 24 * 4 * 2
-    assert evidence["original_ctvoxel_sha256"] != evidence["accepted_ctvoxel_sha256"]
-    from dicomxphits.ct_voxel_verification import _decode_voxels
-    voxels = _decode_voxels(result.datfiles_root / "CTvoxel.dat", 24 * 8 * 2)
+    root = _unequal_verifier_fixture(case)
+    original = (root / "CTvoxel.dat").read_bytes()
+    evidence = _verify_unequal_fixture(case, root)
+    assert evidence.corrected is True
+    assert evidence.mismatched_voxels == 24 * 4 * 2
+    assert original != (root / "CTvoxel.dat").read_bytes()
+    voxels = _decode_voxels(root / "CTvoxel.dat", 24 * 8 * 2)
     assert voxels[:24 * 4] == [5001] * (24 * 4)
     assert voxels[24 * 4:24 * 8] == [5002] * (24 * 4)
-    assert (result.prepared_assets_root / "CTvoxel.inp").read_bytes() == (
-        result.datfiles_root / "CTvoxel.dat").read_bytes()
 
 
-def test_unequal_factors_reject_unexplained_material_mismatch(tmp_path: Path) -> None:
+def test_internal_verifier_rejects_unexplained_material_mismatch(tmp_path: Path) -> None:
     case = _case(tmp_path)
-
-    def runner(command, cwd, timeout_seconds):
-        root = case["workspace"] / "DATfiles"
-        _write_generated_datfiles(root, counts=(24, 8, 2))
-        (root / "CTvoxel.dat").write_text(f"5002 5001 {-24*8*2+2}\n", encoding="ascii")
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    with pytest.raises(Ct2PhitsFrontendError, match="outside known Y-count defect"):
-        run_ct2phits_frontend(
-            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
-            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
-            confirmed_non_patient_phantom=True, platform_system="Windows",
-            coarse_graining=(4, 8, 1), runner=runner,
-        )
+    root = _unequal_verifier_fixture(case)
+    (root / "CTvoxel.dat").write_text(f"5002 5001 {-24*8*2+2}\n", encoding="ascii")
+    with pytest.raises(CtVoxelVerificationError, match="outside known Y-count defect"):
+        _verify_unequal_fixture(case, root)
 
 
 def test_threshold_boundary_and_rescale_choose_upper_material(tmp_path: Path) -> None:
@@ -478,7 +503,7 @@ def test_verifier_rejects_geometry_or_material_asset_change(
 
     def runner(command, cwd, timeout_seconds):
         root = case["workspace"] / "DATfiles"
-        _write_generated_datfiles(root, counts=(24, 8, 2))
+        _write_generated_datfiles(root, counts=(24, 16, 2))
         path = root / filename
         text = path.read_text(encoding="utf-8")
         path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
@@ -489,15 +514,36 @@ def test_verifier_rejects_geometry_or_material_asset_change(
             ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
             rtphits_root=case["rtphits"], workspace_root=case["workspace"],
             confirmed_non_patient_phantom=True, platform_system="Windows",
-            coarse_graining=(4, 8, 1), runner=runner,
+            coarse_graining=(4, 4, 1), runner=runner,
         )
+
+
+def test_verifier_records_undecodable_material_output(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        root = case["workspace"] / "DATfiles"
+        _write_generated_datfiles(root, counts=(24, 16, 2))
+        (root / "CTmaterial.dat").write_bytes(b"\xff")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="not valid UTF-8 text"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            coarse_graining=(4, 4, 1), runner=runner,
+        )
+    summary = json.loads((case["workspace"] / "ct2phits_execution_summary.json").read_text())
+    assert summary["status"] == "failed"
+    assert "not valid UTF-8 text" in summary["failure_reason"]
 
 
 def test_conversion_table_change_during_execution_is_rejected(tmp_path: Path) -> None:
     case = _case(tmp_path)
 
     def runner(command, cwd, timeout_seconds):
-        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(24, 8, 2))
+        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(24, 16, 2))
         with (case["rtphits"] / "data" / "HumanVoxelTable.data").open("a", encoding="utf-8") as stream:
             stream.write("! changed during execution\n")
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -507,16 +553,16 @@ def test_conversion_table_change_during_execution_is_rejected(tmp_path: Path) ->
             ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
             rtphits_root=case["rtphits"], workspace_root=case["workspace"],
             confirmed_non_patient_phantom=True, platform_system="Windows",
-            coarse_graining=(4, 8, 1), runner=runner,
+            coarse_graining=(4, 4, 1), runner=runner,
         )
 
 
-def test_unequal_factor_off_centre_crop_records_retained_extent(tmp_path: Path) -> None:
+def test_equal_factor_off_centre_crop_records_retained_extent(tmp_path: Path) -> None:
     case = _case(tmp_path, z_positions_mm=(-100, -97, -94, -91, -88, -85))
 
     def runner(command, cwd, timeout_seconds):
         _write_generated_datfiles(
-            case["workspace"] / "DATfiles", counts=(5, 3, 1),
+            case["workspace"] / "DATfiles", counts=(5, 6, 1),
             raw_origin_cm=(-12, -8, -9.7),
         )
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -526,12 +572,12 @@ def test_unequal_factor_off_centre_crop_records_retained_extent(tmp_path: Path) 
         rtphits_root=case["rtphits"], workspace_root=case["workspace"],
         confirmed_non_patient_phantom=True, platform_system="Windows",
         pixel_clipping=(9, 30, 5, 30), slice_range=(2, 6),
-        coarse_graining=(4, 8, 3), runner=runner,
+        coarse_graining=(4, 4, 3), runner=runner,
     )
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["ct2phits_input"]["retained_source_bounds"] == [9, 28, 5, 28, 2, 4]
     assert manifest["ct2phits_input"]["discarded_high_source_counts"] == [2, 2, 2]
-    assert manifest["ct2phits_input"]["expected_voxel_counts"] == [5, 3, 1]
+    assert manifest["ct2phits_input"]["expected_voxel_counts"] == [5, 6, 1]
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["placement_origin_dicom_cm"] == [-12.0, -8.0, -9.7]
 
@@ -554,7 +600,10 @@ def test_full_volume_8_8_1_checks_generated_voxel_counts(tmp_path: Path) -> None
     assert summary["status"] == "failed"
 
 
-@pytest.mark.parametrize("factors", [(8, 0, 2), (8, "1.5", 2), (8, 2), (8, True, 2)])
+@pytest.mark.parametrize("factors", [
+    (8, 0, 2), (8, "1.5", 2), (8, 2), (8, True, 2),
+    (4, 8, 1), (4, 4, 5),
+])
 def test_invalid_coarse_graining_is_rejected_before_workspace_creation(
     tmp_path: Path, factors: tuple[object, ...],
 ) -> None:

@@ -33,10 +33,10 @@ which source voxels to retain and which equipment or other material to exclude.
   them again in the frontend, and record them in the existing manifest.
   Retain complete, unmodified source CT and RT Plan snapshots.
 - Preserve the full-volume default and coarse-graining default `8 8 2`, while
-  allowing explicit positive X/Y/Z factors. Preserve coordinate mode `1` and
-  existing safety gates. Every clipped or non-default-factor result is checked
-  against the frozen CT and conversion table before downstream use. The known
-  unequal-factor Y material loss may be corrected only in the CT voxel include.
+  allowing equal positive X/Y factors and Z factors from `1` through `4`.
+  Preserve coordinate mode `1` and existing safety gates. Every clipped or
+  non-default-factor result is checked against the frozen CT and conversion
+  table before downstream use.
 - For clipped conversion, retain complete coarse groups and warn before
   execution when incomplete high-end groups will be discarded. Record both
   requested and retained bounds. Reject a box that yields zero voxels on any
@@ -78,3 +78,10 @@ handoff and warning rather than rejection for incomplete high-end coarse
 groups. The user reconfirmed `8 8 2` for clipped conversion because `1 1 1`
 would take longer. These approvals do not authorize guessing geometry or
 running PHITS transport or real-patient data.
+
+After the PHITS 3.37 source audit, the user narrowed the supported input to
+equal arbitrary positive X/Y factors with Z from `1` through `4`. The listed
+13 triples are examples, not an allowlist. This avoids exercising the observed
+unequal-X/Y Y-count defect through the GUI or CLI. The user separately approved
+a bounded run of the PHITS 3.37 CT2PHITS executable with synthetic CT and four
+equal-X/Y factor triples. Those checks passed as recorded in `validation.md`.

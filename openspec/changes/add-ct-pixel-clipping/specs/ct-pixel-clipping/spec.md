@@ -24,8 +24,9 @@ The default SHALL retain the complete source volume.
 
 ### Requirement: Verified Clipped Geometry Contract
 
-CT2PHITS conversion SHALL accept positive integer factors that yield at least
-one complete voxel on each selected axis. The frontend MUST independently
+CT2PHITS conversion SHALL accept equal positive integer X/Y factors and a Z
+factor from `1` through `4` that yield at least one complete voxel on each
+selected axis. The frontend MUST independently
 verify generated geometry and material identity before accepting a non-default
 or clipped output. It SHALL preserve the accepted physical
 placement of retained material and MUST NOT invent a crop-origin shift,
@@ -55,7 +56,7 @@ rounding rule, physical tolerance, or coordinate correction.
 #### Scenario: External output cannot be verified
 
 - **WHEN** the external tool fails or output geometry/materials cannot be
-  independently verified or corrected under the known defect
+  independently verified
 - **THEN** the conversion is not accepted and the reason is recorded
 
 ### Requirement: Original Source and Selection Evidence
