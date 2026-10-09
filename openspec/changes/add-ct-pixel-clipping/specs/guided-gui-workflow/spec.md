@@ -9,6 +9,12 @@ pointer readout, and synchronized overlays for one shared box. Display SHALL
 preserve physical aspect ratio and map clicks independently of scaling,
 letterboxing, and display-axis reversal. It MUST NOT rewrite source DICOM,
 display demographics, or launch an external tool from preview actions.
+The GUI SHALL let the human visually choose any valid axis-aligned source box,
+independently of whether excluded content is a couch or other material. It
+MUST NOT infer an automatic material or anatomy boundary. Browse mode SHALL
+leave bounds unchanged; explicit corner-selection mode SHALL change only the
+selected view's two axes. Plane enlargement and one-index stepping SHALL
+preserve the shared bounds and pointer mapping.
 
 #### Scenario: Edit two axes in one view
 
@@ -26,6 +32,13 @@ display demographics, or launch an external tool from preview actions.
 - **WHEN** viewing position, crosshairs, or contrast changes
 - **THEN** clipping bounds remain unchanged and a plane outside the selected
   volume is identified as outside
+
+#### Scenario: Human reviews an unwanted object
+
+- **WHEN** the user inspects planes, enlarges one view, and manually adjusts
+  bounds to place unwanted material outside the chosen box
+- **THEN** the GUI shows retained and excluded source regions without claiming
+  to classify the material or removing any voxel inside the box
 
 #### Scenario: Outside click or interrupted pair
 

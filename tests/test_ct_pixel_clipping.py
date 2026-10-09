@@ -148,13 +148,37 @@ def test_synthetic_tk_corner_selection_and_apply(tmp_path: Path, monkeypatch: py
             return SimpleNamespace(x=left + (x - 0.5) * width / volume.shape.columns,
                                    y=top + (y - 0.5) * height / volume.shape.rows)
         dialog._click("Axial", event_for(6, 4))
-        dialog._click("Axial", event_for(2, 2))
-        assert tuple(field.get() for field in dialog.fields) == ("2", "6", "2", "4", "1", "3")
-        dialog._reset()
+        assert dialog.crosshair[:2] == (6, 4)
         assert tuple(field.get() for field in dialog.fields) == ("1", "7", "1", "5", "1", "3")
+        initial_width = canvas.winfo_width()
+        dialog._focus("Axial")
+        root.update()
+        assert dialog.focused_plane == "Axial"
+        assert canvas.winfo_width() >= initial_width
+        transform = PlaneTransform("Axial", volume.shape,
+                                   canvas.winfo_width(), canvas.winfo_height())
+        dialog.selection_mode.set(True)
+        dialog._set_selection_mode()
         dialog._click("Axial", event_for(6, 4))
         dialog._click("Axial", event_for(2, 2))
+        assert tuple(field.get() for field in dialog.fields) == ("2", "6", "2", "4", "1", "3")
+        assert not dialog.selection_mode.get()
+        dialog._reset()
+        assert tuple(field.get() for field in dialog.fields) == ("1", "7", "1", "5", "1", "3")
+        dialog.selection_mode.set(True)
+        dialog._set_selection_mode()
+        dialog._click("Axial", event_for(6, 4))
+        dialog._click("Axial", event_for(2, 2))
+        dialog._focus(None)
+        assert dialog.focused_plane is None
+        transform = PlaneTransform("Axial", volume.shape,
+                                   canvas.winfo_width(), canvas.winfo_height())
         dialog._set_crosshair("Axial", event_for(7, 5))
+        previous = round(dialog.nav["Coronal"].get())
+        dialog._step("Coronal", -1)
+        assert round(dialog.nav["Coronal"].get()) == previous - 1
+        dialog._wheel("Coronal", SimpleNamespace(delta=-120))
+        assert round(dialog.nav["Coronal"].get()) == previous
         dialog.nav["Coronal"].set(5)
         dialog._navigate("Coronal")
         dialog.center.set(30)

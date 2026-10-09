@@ -9,6 +9,9 @@ or clicking points. Both methods should describe the same clipping volume.
 The supplied screenshot is a visual reference. The follow-up request expands
 the preview to three planes; this proposal includes first/last slice selection.
 Its coarse-graining values do not authorize changing the existing settings.
+The user's 2026-10-09 clarification confirms that a human, not an automatic
+classifier, chooses an arbitrary-size axis-aligned box after visually judging
+which source voxels to retain and which equipment or other material to exclude.
 
 ## What Changes
 
@@ -22,6 +25,9 @@ Its coarse-graining values do not authorize changing the existing settings.
   Numeric edits update all views, and mouse selection updates the numbers.
 - Keep viewing position/crosshairs separate from clipping. Provide Apply,
   Cancel, and Reset to full volume; show applied bounds before conversion.
+- Make manual review explicit: a browse mode cannot change bounds, a corner
+  selection mode changes only the chosen view's two axes, and each plane can
+  be enlarged and stepped one source index at a time.
 - Pass explicit pixel/slice bounds through the current GUI-to-CLI path, validate
   them again in the frontend, and record them in the existing manifest.
   Retain complete, unmodified source CT and RT Plan snapshots.

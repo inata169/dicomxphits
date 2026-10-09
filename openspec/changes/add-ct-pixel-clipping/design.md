@@ -25,11 +25,13 @@
    existing non-patient phantom confirmation before decoding preview pixels.
 2. Open **CT preview / Clipping range** from the CT2PHITS page. Display Axial,
    Coronal, and Sagittal images together, with plane navigation, linked
-   crosshairs, direction labels, and readable contrast. Omit demographics.
-3. Enter six bounds, or activate **Select two corners** and click **From here**
-   and **To here** within one view. Show the first point immediately and a
+   crosshairs, direction labels, readable contrast, one-index stepping, and
+   optional enlargement of one plane. Omit demographics.
+3. In browse mode, inspect the candidate source volume without changing its
+   bounds. Enter six bounds, or activate **Select two corners** and click
+   opposite corners within one view. Show the first point immediately and a
    rectangle after the second. Pointer readout identifies original pixel and
-   slice indices.
+   slice indices. Return to browse mode after a completed pair.
 4. Update the shared box, all numeric fields, and all three overlays. Shade
    excluded regions lightly. Show retained column, row, and slice counts.
    Identify a viewed plane outside the box as outside; do not imply that a
@@ -52,6 +54,11 @@ complete keyboard-accessible path. Invalid fields or an incomplete active
 corner pair disable Apply. Closing without Apply preserves the previous
 selection. Switching views during a corner pair cancels that unfinished pair.
 Preview actions never launch conversion.
+
+The human decides what material belongs inside the box. The preview does not
+recognize a couch or other unwanted material and cannot remove voxels inside
+the selected box by semantic class. Enlargement and single-index stepping
+make visual review easier; neither changes selected bounds.
 
 ## Coordinate model
 

@@ -101,3 +101,33 @@ scientific tools were neither explored nor executed. Independent XY-only,
 Z-only, and XYZ cropped mesh position expectations therefore remain
 unverified. The acceptance criteria for non-default conversion are not met;
 the change stays active, and its deltas must not be promoted or archived.
+
+## Human-directed manual-selection refinement, 2026-10-09
+
+The user clarified that a human must visually identify the source region to
+retain and manually exclude a couch or any other unwanted material. The user
+approved arbitrary-size, image-axis-aligned rectangular selection shared by
+all three planes. This is a manual spatial selection, not an automatic couch
+or anatomy classifier, and it does not remove voxels inside the selected box.
+
+The preview now separates browse clicks from explicit two-corner selection,
+returns to browse after a completed pair, allows one-index plane stepping by
+buttons or mouse wheel, and can enlarge one plane before returning to all
+three. The six source-index bounds, overlays, and conversion gate remain
+unchanged. The proposal, design, delta, and bilingual manual now state this
+human-directed behavior explicitly.
+
+- Focused `.venv/Scripts/python.exe -m pytest -q -x -p no:cacheprovider
+  tests/test_ct_pixel_clipping.py tests/test_gui.py`: **144 passed,
+  1 skipped**; the synthetic Tk browse, enlargement, selection, step, and
+  Apply interaction passed.
+- Full `.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider`:
+  **1518 passed, 15 skipped, 1 existing warning in 150.73 seconds**.
+- `python -m compileall src`: passed.
+- `python tools/verify_public_tree.py`: passed, 453 tracked files checked.
+- OpenSpec CLI remains unavailable; manual structural check passed for the
+  proposal and all seven active delta requirements.
+
+The supported-version clipping and physical-placement evidence remains
+unresolved. Non-default conversion is still blocked, and the active change
+is not eligible for promotion or archive.

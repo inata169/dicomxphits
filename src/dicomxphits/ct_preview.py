@@ -159,11 +159,15 @@ class CtPreviewDialog:
         self.fields: list[tk.StringVar] = []
         self.nav: dict[str, tk.DoubleVar] = {}
         self.scales: dict[str, ttk.Scale] = {}
+        self.frames: dict[str, ttk.LabelFrame] = {}
+        self.position_labels: dict[str, tk.StringVar] = {}
         self.canvases: dict[str, tk.Canvas] = {}
         self.images: dict[str, tk.PhotoImage] = {}
         self.pending: tuple[str, tuple[int, int]] | None = None
         self.crosshair: tuple[int, int, int] | None = None
         self.updating_fields = False
+        self.selection_mode = tk.BooleanVar(value=False)
+        self.focused_plane: str | None = None
         self.status = tk.StringVar(value="Loading validated non-patient CT pixels…")
         self.pointer = tk.StringVar(value="Pointer: —")
         self.retained = tk.StringVar(value="Retained source voxels: —")
@@ -179,18 +183,47 @@ class CtPreviewDialog:
         ttk.Label(outer, textvariable=self.status).pack(anchor="w")
         ttk.Label(outer, textvariable=self.pointer).pack(anchor="w")
         ttk.Label(outer, textvariable=self.retained).pack(anchor="w")
+        ttk.Label(
+            outer,
+            text="Green outline = retained box; shaded area = excluded. Browse with left click; "
+                 "turn on corner selection to edit the box. Right click always moves the crosshair.",
+            wraplength=1050,
+        ).pack(anchor="w", pady=(4, 0))
+        view_tools = ttk.Frame(outer)
+        view_tools.pack(fill="x", pady=(6, 0))
+        ttk.Checkbutton(
+            view_tools, text="Select two corners (left click)",
+            variable=self.selection_mode, command=self._set_selection_mode,
+        ).pack(side="left")
+        ttk.Button(view_tools, text="Show all three views", command=lambda: self._focus(None)).pack(
+            side="right"
+        )
         views = ttk.Frame(outer)
         views.pack(fill="both", expand=True, pady=8)
+        views.rowconfigure(0, weight=1)
+        self.views = views
         for column, name in enumerate(("Axial", "Coronal", "Sagittal")):
             frame = ttk.LabelFrame(views, text=name, padding=5)
             frame.grid(row=0, column=column, sticky="nsew", padx=3)
             views.columnconfigure(column, weight=1)
+            self.frames[name] = frame
+            controls = ttk.Frame(frame)
+            controls.pack(fill="x", pady=(0, 4))
+            ttk.Button(controls, text="−", width=3,
+                       command=lambda n=name: self._step(n, -1)).pack(side="left")
+            position = tk.StringVar(value="—")
+            self.position_labels[name] = position
+            ttk.Label(controls, textvariable=position, width=12, anchor="center").pack(side="left")
+            ttk.Button(controls, text="+", width=3,
+                       command=lambda n=name: self._step(n, 1)).pack(side="left")
+            ttk.Button(controls, text="Expand", command=lambda n=name: self._focus(n)).pack(side="right")
             canvas = tk.Canvas(frame, width=340, height=340, bg="#151d28", highlightthickness=0)
             canvas.pack(fill="both", expand=True)
             canvas.bind("<Configure>", lambda _e, n=name: self._draw(n))
             canvas.bind("<Motion>", lambda e, n=name: self._motion(n, e))
             canvas.bind("<Button-1>", lambda e, n=name: self._click(n, e))
             canvas.bind("<Button-3>", lambda e, n=name: self._set_crosshair(n, e))
+            canvas.bind("<MouseWheel>", lambda e, n=name: self._wheel(n, e))
             self.canvases[name] = canvas
             index = tk.DoubleVar(value=1)
             self.nav[name] = index
@@ -290,6 +323,48 @@ class CtPreviewDialog:
                 self.status.set(str(exc))
             self._draw_all()
 
+    def _set_selection_mode(self) -> None:
+        if not self.selection_mode.get():
+            self.pending = None
+        for canvas in self.canvases.values():
+            canvas.configure(cursor="crosshair" if self.selection_mode.get() else "arrow")
+        self.status.set(
+            "Select two corners in one image. The other axis remains unchanged."
+            if self.selection_mode.get() else
+            "Browse mode: left click moves the linked crosshair without editing the box."
+        )
+        self._draw_all()
+
+    def _focus(self, name: str | None) -> None:
+        self.focused_plane = name
+        if self.pending is not None and self.pending[0] != name:
+            self.pending = None
+        for frame in self.frames.values():
+            frame.grid_forget()
+        if name is None:
+            for column, plane in enumerate(("Axial", "Coronal", "Sagittal")):
+                self.views.columnconfigure(column, weight=1)
+                self.frames[plane].grid(row=0, column=column, sticky="nsew", padx=3)
+        else:
+            for column in range(3):
+                self.views.columnconfigure(column, weight=1 if column == 0 else 0)
+            self.frames[name].grid(row=0, column=0, columnspan=3, sticky="nsew", padx=3)
+        self.window.update_idletasks()
+        self._draw_all()
+
+    def _step(self, name: str, delta: int) -> None:
+        if self.volume is None:
+            return
+        shape = self.volume.shape
+        limit = {"Axial": shape.slices, "Coronal": shape.rows, "Sagittal": shape.columns}[name]
+        self.nav[name].set(max(1, min(limit, round(self.nav[name].get()) + delta)))
+        self._navigate(name)
+
+    def _wheel(self, name: str, event: tk.Event) -> str:
+        if event.delta:
+            self._step(name, -1 if event.delta > 0 else 1)
+        return "break"
+
     def _navigate(self, name: str) -> None:
         if self.volume is None:
             return
@@ -329,6 +404,7 @@ class CtPreviewDialog:
             return
         limit = {"Axial": shape.slices, "Coronal": shape.rows, "Sagittal": shape.columns}[name]
         index = max(1, min(limit, round(self.nav[name].get())))
+        self.position_labels[name].set(f"{index} / {limit}")
         transform = PlaneTransform(name, shape, max(1, canvas.winfo_width()), max(1, canvas.winfo_height()))
         left, top, width, height = transform.frame
         try:
@@ -403,6 +479,9 @@ class CtPreviewDialog:
         self._draw_all()
 
     def _click(self, name: str, event: tk.Event) -> None:
+        if not self.selection_mode.get():
+            self._set_crosshair(name, event)
+            return
         point = self._source_point(name, event)
         if point is None:
             return
@@ -415,14 +494,20 @@ class CtPreviewDialog:
                 bounds.validate(self.volume.shape)
                 self._set_bounds(bounds)
                 self.status.set(f"{name}: selected corners {self.pending[1]} and {point}")
+                self.selection_mode.set(False)
             except ClipError as exc:
                 self.status.set(str(exc))
             self.pending = None
+            for canvas in self.canvases.values():
+                canvas.configure(cursor="arrow" if not self.selection_mode.get() else "crosshair")
         self._draw_all()
 
     def _reset(self) -> None:
         if self.volume is not None:
             self.pending = None
+            self.selection_mode.set(False)
+            for canvas in self.canvases.values():
+                canvas.configure(cursor="arrow")
             self._set_bounds(ClipBounds.full(self.volume.shape))
 
     def _apply(self) -> None:
