@@ -14,11 +14,19 @@ and retain DICOM coordinate mode `1`. Requested ranges and factors SHALL be
 recorded in `ct2phits_input.clipping`, `ct2phits_input.slice_range`, and
 `ct2phits_input.coarse_graining` without changing the
 original snapshot numbering, source dimensions, slice count, or origin.
-For clipped `8 8 2` conversion, the manifest SHALL also record retained source
+For clipped conversion, the manifest SHALL also record retained source
 bounds, discarded high-end source counts, expected voxel counts, and the frozen
 placement reference slice. The frontend SHALL reject zero-voxel selections,
 check the raw tool's DICOM origin against that slice, and check the generated
 voxel counts against complete coarse groups before accepting the handoff.
+For every clipped or non-default-factor conversion, the frontend SHALL verify
+the generated lattice parameters, surfaces, fill dimensions, conversion-table
+material definitions, and every voxel material against the frozen source CT.
+It MAY correct only the CT voxel material include when the difference is
+confined to the installed converter's known unequal-X/Y Y-count defect. It
+MUST reject other differences and preserve the original and accepted voxel
+hashes in the execution evidence. It SHALL preserve the default full-volume
+`8 8 2` output bytes when no clipping is requested.
 The execution summary SHALL record the placement origin separately from the
 full-series source origin.
 The frontend SHALL record the source RT Plan SHA-256,
@@ -99,8 +107,21 @@ geometry of both snapshots before accepting the handoff.
 - **THEN** the frontend writes the same factors to the CT2PHITS input and
   manifest while leaving source CT geometry unchanged
 
-#### Scenario: Invalid or unverified factors
+#### Scenario: Invalid or output-free factors
 
-- **WHEN** a factor is not a positive integer or its external geometry behavior
-  remains unverified
+- **WHEN** a factor is not a positive integer or no complete coarse voxel fits
+  in the requested range on an axis
 - **THEN** the frontend rejects it before workspace creation or external execution
+
+#### Scenario: Known unequal-factor material loss
+
+- **WHEN** generated voxel materials differ from independent source-CT block
+  calculations only where the converter's unequal-X/Y Y-count defect applies
+- **THEN** the frontend replaces only the CT voxel material include with the
+  verified voxel sequence and records original and accepted hashes
+
+#### Scenario: Other output discrepancy
+
+- **WHEN** the generated geometry, material definitions, or voxel materials
+  differ for any other reason
+- **THEN** downstream preparation stops with a recorded failure

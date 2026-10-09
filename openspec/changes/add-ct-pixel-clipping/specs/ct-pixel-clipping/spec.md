@@ -24,10 +24,10 @@ The default SHALL retain the complete source volume.
 
 ### Requirement: Verified Clipped Geometry Contract
 
-Non-default CT2PHITS conversion SHALL be enabled only after supported-version
-endpoint, coarse-graining, and generated-coordinate behavior is established.
-The frontend MUST reject a selection it cannot map and verify under that
-contract before external execution. It SHALL preserve the accepted physical
+CT2PHITS conversion SHALL accept positive integer factors that yield at least
+one complete voxel on each selected axis. The frontend MUST independently
+verify generated geometry and material identity before accepting a non-default
+or clipped output. It SHALL preserve the accepted physical
 placement of retained material and MUST NOT invent a crop-origin shift,
 rounding rule, physical tolerance, or coordinate correction.
 
@@ -39,7 +39,7 @@ rounding rule, physical tolerance, or coordinate correction.
 
 #### Scenario: Incomplete high-end coarse groups
 
-- **WHEN** a clipped selection under verified `8 8 2` or `8 8 1` contains an incomplete high-end
+- **WHEN** a clipped selection with valid factors contains an incomplete high-end
   group on any axis and at least one complete group on every axis
 - **THEN** the GUI warns before conversion, the frontend reports the exact lost
   source counts and retained bounds, and conversion proceeds without changing
@@ -52,10 +52,11 @@ rounding rule, physical tolerance, or coordinate correction.
 - **THEN** the frontend rejects it before workspace creation because no output
   voxel can be produced on that axis
 
-#### Scenario: Unresolved external behavior
+#### Scenario: External output cannot be verified
 
-- **WHEN** range or output-coordinate behavior is not established
-- **THEN** non-default conversion remains unavailable with a clear reason
+- **WHEN** the external tool fails or output geometry/materials cannot be
+  independently verified or corrected under the known defect
+- **THEN** the conversion is not accepted and the reason is recorded
 
 ### Requirement: Original Source and Selection Evidence
 

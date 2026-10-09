@@ -21,9 +21,9 @@
 - [x] Revise the proposal and obtain separate human decisions for the
       selected-first-slice coordinate handoff and warning-plus-conversion
       behavior for non-divisible default-factor boxes.
-- [ ] Establish supported-tool behavior for non-default factor triples before
-      enabling their conversion; unequal X/Y factors lost material in the
-      installed version.
+- [ ] Complete bounded external synthetic checks for unequal and larger factors
+      after separate execution authorization; the installed tool has a known
+      unequal-factor Y-count defect.
 
 ## Implementation after approval
 
@@ -69,3 +69,19 @@ in `validation.md`. The change remains active and cannot be archived yet.
 - [x] Use Windows Computer Use for synthetic clipping and workflow controls.
 - [x] Correct clipped preview actions/sliders and unify application message colors.
 - [x] Record explicit validation coverage and remaining unverified items.
+
+## Arbitrary numeric factors and independent output verification
+
+- [x] Record the user's separate approval for CT2PHITS output verification
+      and CT voxel-only correction of the known Y-count defect.
+- [x] Remove the fixed-factor gate while retaining positive-integer and
+      at-least-one-output-voxel checks.
+- [x] Recalculate all retained voxel materials from frozen CT pixels and the
+      conversion table; stream the comparison and reject other mismatches.
+- [x] Verify lattice pitch, minimum bounds, surfaces, cell fill, material
+      definitions and densities before accepting a clipped/non-default result.
+- [x] Record original and accepted CT voxel hashes when correction occurs.
+- [x] Complete focused/full public checks and bounded synthetic GUI review for
+      the current diff.
+- [ ] Complete a separately authorized installed-CT2PHITS synthetic comparison
+      for arbitrary-factor cases before claiming external behavior verified.

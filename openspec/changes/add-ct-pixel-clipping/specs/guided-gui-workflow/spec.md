@@ -106,7 +106,7 @@ active execution's request.
 
 #### Scenario: Clipped default coarse conversion with remainders
 
-- **WHEN** a valid selected box under verified `8 8 2` or `8 8 1` has incomplete high-end groups
+- **WHEN** a valid selected box under positive factors has incomplete high-end groups
 - **THEN** the GUI shows the lost source counts and retained source bounds as a
   warning in a child window using the main GUI palette before starting the
   frontend; Continue proceeds with the requested box and Cancel leaves it idle

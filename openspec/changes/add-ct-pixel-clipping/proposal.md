@@ -34,8 +34,9 @@ which source voxels to retain and which equipment or other material to exclude.
   Retain complete, unmodified source CT and RT Plan snapshots.
 - Preserve the full-volume default and coarse-graining default `8 8 2`, while
   allowing explicit positive X/Y/Z factors. Preserve coordinate mode `1` and
-  existing safety gates. The approved clipped conversion uses `8 8 2`; other
-  factor triples remain unavailable until their tool behavior is established.
+  existing safety gates. Every clipped or non-default-factor result is checked
+  against the frozen CT and conversion table before downstream use. The known
+  unequal-factor Y material loss may be corrected only in the CT voxel include.
 - For clipped conversion, retain complete coarse groups and warn before
   execution when incomplete high-end groups will be discarded. Record both
   requested and retained bounds. Reject a box that yields zero voxels on any
@@ -66,10 +67,11 @@ Status: approved for implementation by the user's 2026-10-09 request sending
 the saved implementation prompt, extended by the same day's explicit numeric
 coarse-graining request. The separately approved synthetic CT2PHITS experiment
 established the default-factor crop behavior described in `validation.md`.
-The change remains active because general user-entered factor triples are not
-yet established for conversion; unequal X/Y factors lost material in the
-installed version. Real-patient data and PHITS transport remain outside the
-approval.
+The change remains active while independent material/geometry verification and
+required validation are completed. Unequal X/Y factors lost material in the
+installed version; the user separately approved verifying and correcting only
+the resulting CT voxel material include on 2026-10-09. Real-patient data and
+PHITS transport remain outside the approval.
 
 The user's subsequent approvals authorize the selected-first-slice coordinate
 handoff and warning rather than rejection for incomplete high-end coarse

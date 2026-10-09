@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
 from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, coarse_coverage
-from dicomxphits.run_ct2phits import CT2PHITS_COARSE_GRAINING, CT2PHITS_VERIFIED_COARSE_GRAINING
+from dicomxphits.run_ct2phits import CT2PHITS_COARSE_GRAINING, select_ct_series
 
 from dicomxphits import __version__
 from dicomxphits.gui_tool_profile import (
@@ -4344,22 +4344,33 @@ def _build_gui() -> int:
             except GuiValidationError as exc:
                 finish_stage_error(spec, str(exc), validation=True)
                 return
-            if coarse not in CT2PHITS_VERIFIED_COARSE_GRAINING:
-                finish_stage_error(
-                    spec,
-                    "Use verified coarse graining 8 8 2 or 8 8 1. Other factors "
-                    "remain unavailable pending CT2PHITS averaging and coordinate evidence.",
-                    validation=True,
-                )
-                return
-        if stage_key == "run_ct2phits" and applied_ct_volume is not None:
-            if not applied_ct_volume.still_current():
+        if stage_key == "run_ct2phits":
+            if applied_ct_volume is not None and not applied_ct_volume.still_current():
                 invalidate_ct_clipping()
                 finish_stage_error(spec, "CT source changed; reopen the preview", validation=True)
                 return
-            if config.ct_clipping_bounds is not None:
+            bounds_for_warning = applied_ct_bounds if config.ct_clipping_bounds is not None else None
+            if bounds_for_warning is None and coarse != CT2PHITS_COARSE_GRAINING:
+                if not config.confirmed_non_patient_phantom:
+                    finish_stage_error(
+                        spec, "Confirm non-patient phantom data before inspecting CT geometry",
+                        validation=True,
+                    )
+                    return
                 try:
-                    coverage = coarse_coverage(applied_ct_bounds, coarse)
+                    source = select_ct_series(
+                        Path(config.ct_dicom_root),
+                        series_instance_uid=config.ct_series_instance_uid.strip() or None,
+                    )
+                    bounds_for_warning = ClipBounds(
+                        1, source.columns, 1, source.rows, 1, len(source.files),
+                    )
+                except ValueError as exc:
+                    finish_stage_error(spec, str(exc), validation=True)
+                    return
+            if bounds_for_warning is not None:
+                try:
+                    coverage = coarse_coverage(bounds_for_warning, coarse)
                 except ClipError as exc:
                     finish_stage_error(spec, str(exc), validation=True)
                     return

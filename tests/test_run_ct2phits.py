@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pydicom
+import numpy as np
 import pytest
 from pydicom.dataset import Dataset, FileDataset
 
@@ -74,6 +75,15 @@ def _write_ct_series(
         dataset.PixelSpacing = list(pixel_spacing_mm)
         dataset.Rows = rows
         dataset.Columns = columns
+        dataset.SamplesPerPixel = 1
+        dataset.PhotometricInterpretation = "MONOCHROME2"
+        dataset.PixelRepresentation = 1
+        dataset.BitsAllocated = 16
+        dataset.BitsStored = 16
+        dataset.HighBit = 15
+        dataset.RescaleSlope = 1
+        dataset.RescaleIntercept = 0
+        dataset.PixelData = np.zeros((rows, columns), dtype="<i2").tobytes()
         dataset.save_as(str(path))
         paths.append(path)
     return tuple(paths)
@@ -111,7 +121,8 @@ def _fake_rtphits_root(root: Path) -> Path:
         encoding="utf-8",
     )
     (root / "data" / "HumanVoxelTable.data").write_text(
-        "synthetic fake table marker\n",
+        "synthetic material table\n2\n-1000 -0.001 1\n1000 -1.0 1\n"
+        "2000\n# air\n1H 1\n# solid\n1H 1\n",
         encoding="utf-8",
     )
     return root
@@ -127,6 +138,25 @@ def _write_generated_datfiles(
     raw_origin_cm: tuple[float, float, float] = (-12.0, -8.0, -10.0),
 ) -> None:
     root.mkdir(exist_ok=True)
+    input_path = root.parent / "ct2phits.inp"
+    if input_path.is_file():
+        input_lines = input_path.read_text(encoding="utf-8").splitlines()
+        first, last = map(int, input_lines[4].split())
+        nx_min, _nx_max, ny_min, _ny_max = map(int, input_lines[5].split())
+        x_factor, y_factor, z_factor = map(int, input_lines[6].split())
+        first_ct = pydicom.dcmread(str(root.parent / "CT" / f"CT{first:06d}.dcm"), stop_before_pixels=True)
+        spacing_y, spacing_x = (float(value) / 10 for value in first_ct.PixelSpacing)
+        if last > first:
+            second_ct = pydicom.dcmread(str(root.parent / "CT" / f"CT{first+1:06d}.dcm"), stop_before_pixels=True)
+            spacing_z = (float(second_ct.ImagePositionPatient[2]) - float(first_ct.ImagePositionPatient[2])) / 10
+        else:
+            next_ct = pydicom.dcmread(str(root.parent / "CT" / "CT000002.dcm"), stop_before_pixels=True)
+            spacing_z = abs(float(next_ct.ImagePositionPatient[2]) - float(first_ct.ImagePositionPatient[2])) / 10
+    else:
+        nx_min = ny_min = 1
+        x_factor, y_factor, z_factor = (8, 8, 2)
+        spacing_x = spacing_y = 0.08
+        spacing_z = 5.0
     for name in CT2PHITS_GENERATED_NAMES:
         if name == missing:
             continue
@@ -136,13 +166,38 @@ def _write_generated_datfiles(
                 f"set: c81[{counts[0]}]\n"
                 f"set: c82[{counts[1]}]\n"
                 f"set: c83[{counts[2]}]\n"
-                "set: c84[0.8]\n"
-                "set: c85[0.8]\n"
-                "set: c86[1.0]\n"
+                f"set: c84[{spacing_x * x_factor:.5f}]\n"
+                f"set: c85[{spacing_y * y_factor:.5f}]\n"
+                f"set: c86[{spacing_z * z_factor:.5f}]\n"
+                f"set: c87[{(nx_min - 1.5) * spacing_x:.5f}]\n"
+                f"set: c88[{(ny_min - 1.5) * spacing_y:.5f}]\n"
+                f"set: c89[{-0.5 * spacing_z:.5f}]\n"
+                "set: c90[0.00001]\n"
                 f"set: c91[{raw_origin_cm[0]:.5f}]\n"
                 f"set: c92[{raw_origin_cm[1]:.5f}]\n"
                 f"set: c93[{raw_origin_cm[2]:.5f}]\n"
             )
+        elif name == "CTsurf.dat":
+            content = (
+                "$ synthetic CT surfaces\n"
+                " 5000 rpp c87 c87+c84 c88 c88+c85 c89 c89+c86\n"
+                " 97 rpp c87 c87+c81*c84 c88 c88+c82*c85 c89 c89+c83*c86\n"
+                " 98 500 rpp c87+c90 c87+c81*c84-c90 c88+c90 c88+c82*c85-c90 c89+c90 c89+c83*c86-c90\n"
+            )
+        elif name == "CTcell.dat":
+            content = (
+                "$ synthetic CT cells\n"
+                " infl:{CTuniverse.inp}\n"
+                " 5000 0 -5000 lat=1 u=5000\n"
+                f" fill= 0:{counts[0]-1} 0:{counts[1]-1} 0:{counts[2]-1}\n"
+                " infl:{CTvoxel.inp}\n"
+            )
+        elif name == "CTmaterial.dat":
+            content = "$ synthetic material table\nMAT[5001] ! air\n      1H 1\nMAT[5002] ! solid\n      1H 1\n"
+        elif name == "CTuniverse.dat":
+            content = " 5001 5001 -0.00100 -99 u=5001\n 5002 5002 -1.00000 -99 u=5002\n"
+        elif name == "CTvoxel.dat":
+            content = f"      5001 {-counts[0]*counts[1]*counts[2]+1}\n"
         path = root / name
         path.write_text("" if name == empty else content, encoding="utf-8")
         if old_mtime:
@@ -278,7 +333,7 @@ def test_combined_xy_z_crop_preserves_requested_and_retained_geometry(
 
 @pytest.mark.parametrize("raw_origin,counts,reason", [
     ((-12, -8, -10), (12, 8, 2), "DICOM origin c93"),
-    ((-12, -8, -9.4), (12, 8, 1), "voxel counts disagree"),
+    ((-12, -8, -9.4), (12, 8, 1), "CT lattice c83 disagrees"),
 ])
 def test_clipped_output_with_wrong_geometry_is_not_accepted(
     tmp_path: Path,
@@ -319,18 +374,184 @@ def test_invalid_clipping_is_rejected_before_workspace_creation(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("factors", [(4, 4, 1), (4, 8, 1), (1, 1, 1)])
-def test_nondefault_coarse_graining_is_rejected_before_workspace_creation(
+def test_nondefault_coarse_graining_verifies_all_voxels(
     tmp_path: Path, factors: tuple[int, int, int],
 ) -> None:
     case = _case(tmp_path)
-    with pytest.raises(Ct2PhitsFrontendError, match="unverified CT coarse graining"):
+    counts = (96 // factors[0], 64 // factors[1], 2 // factors[2])
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=counts)
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        coarse_graining=factors, runner=runner,
+    )
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["voxel_verification"]["voxel_count"] == counts[0] * counts[1] * counts[2]
+    assert summary["voxel_verification"]["corrected"] is False
+
+
+def test_unequal_factors_correct_only_missing_y_materials(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    for path in case["ct_root"].glob("*.dcm"):
+        dataset = pydicom.dcmread(str(path))
+        pixels = np.zeros((64, 96), dtype="<i2")
+        pixels[32:, :] = 1200
+        dataset.PixelData = pixels.tobytes()
+        dataset.save_as(str(path))
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(24, 8, 2))
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        coarse_graining=(4, 8, 1), runner=runner,
+    )
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    evidence = summary["voxel_verification"]
+    assert evidence["corrected"] is True
+    assert evidence["mismatched_voxels"] == 24 * 4 * 2
+    assert evidence["original_ctvoxel_sha256"] != evidence["accepted_ctvoxel_sha256"]
+    from dicomxphits.ct_voxel_verification import _decode_voxels
+    voxels = _decode_voxels(result.datfiles_root / "CTvoxel.dat", 24 * 8 * 2)
+    assert voxels[:24 * 4] == [5001] * (24 * 4)
+    assert voxels[24 * 4:24 * 8] == [5002] * (24 * 4)
+    assert (result.prepared_assets_root / "CTvoxel.inp").read_bytes() == (
+        result.datfiles_root / "CTvoxel.dat").read_bytes()
+
+
+def test_unequal_factors_reject_unexplained_material_mismatch(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        root = case["workspace"] / "DATfiles"
+        _write_generated_datfiles(root, counts=(24, 8, 2))
+        (root / "CTvoxel.dat").write_text(f"5002 5001 {-24*8*2+2}\n", encoding="ascii")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="outside known Y-count defect"):
         run_ct2phits_frontend(
             ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
             rtphits_root=case["rtphits"], workspace_root=case["workspace"],
             confirmed_non_patient_phantom=True, platform_system="Windows",
-            coarse_graining=factors,
+            coarse_graining=(4, 8, 1), runner=runner,
         )
-    assert not case["workspace"].exists()
+
+
+def test_threshold_boundary_and_rescale_choose_upper_material(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    for path in case["ct_root"].glob("*.dcm"):
+        dataset = pydicom.dcmread(str(path))
+        dataset.RescaleSlope = 2
+        dataset.PixelData = np.full((64, 96), 500, dtype="<i2").tobytes()
+        dataset.save_as(str(path))
+
+    def runner(command, cwd, timeout_seconds):
+        root = case["workspace"] / "DATfiles"
+        _write_generated_datfiles(root, counts=(12, 8, 2))
+        (root / "CTvoxel.dat").write_text(f"5002 {-12*8*2+1}\n", encoding="ascii")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        coarse_graining=(8, 8, 1), runner=runner,
+    )
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["voxel_verification"]["mismatched_voxels"] == 0
+
+
+@pytest.mark.parametrize("filename,needle,replacement,reason", [
+    ("CTusrparam.dat", "set: c84[0.32000]", "set: c84[0.33000]", "CT lattice c84 disagrees"),
+    ("CTmaterial.dat", "1H 1", "2H 1", "CT material compositions disagree"),
+])
+def test_verifier_rejects_geometry_or_material_asset_change(
+    tmp_path: Path, filename: str, needle: str, replacement: str, reason: str,
+) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        root = case["workspace"] / "DATfiles"
+        _write_generated_datfiles(root, counts=(24, 8, 2))
+        path = root / filename
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(Ct2PhitsFrontendError, match=reason):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            coarse_graining=(4, 8, 1), runner=runner,
+        )
+
+
+def test_conversion_table_change_during_execution_is_rejected(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(24, 8, 2))
+        with (case["rtphits"] / "data" / "HumanVoxelTable.data").open("a", encoding="utf-8") as stream:
+            stream.write("! changed during execution\n")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="tool inputs changed"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            coarse_graining=(4, 8, 1), runner=runner,
+        )
+
+
+def test_unequal_factor_off_centre_crop_records_retained_extent(tmp_path: Path) -> None:
+    case = _case(tmp_path, z_positions_mm=(-100, -97, -94, -91, -88, -85))
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(
+            case["workspace"] / "DATfiles", counts=(5, 3, 1),
+            raw_origin_cm=(-12, -8, -9.7),
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        pixel_clipping=(9, 30, 5, 30), slice_range=(2, 6),
+        coarse_graining=(4, 8, 3), runner=runner,
+    )
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["ct2phits_input"]["retained_source_bounds"] == [9, 28, 5, 28, 2, 4]
+    assert manifest["ct2phits_input"]["discarded_high_source_counts"] == [2, 2, 2]
+    assert manifest["ct2phits_input"]["expected_voxel_counts"] == [5, 3, 1]
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["placement_origin_dicom_cm"] == [-12.0, -8.0, -9.7]
+
+
+def test_full_volume_8_8_1_checks_generated_voxel_counts(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+
+    def wrong_count_runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(12, 8, 1))
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+
+    with pytest.raises(Ct2PhitsFrontendError, match="CT lattice c83 disagrees"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            coarse_graining=(8, 8, 1), runner=wrong_count_runner,
+        )
+    summary = json.loads((case["workspace"] / "ct2phits_execution_summary.json").read_text())
+    assert summary["status"] == "failed"
 
 
 @pytest.mark.parametrize("factors", [(8, 0, 2), (8, "1.5", 2), (8, 2), (8, True, 2)])

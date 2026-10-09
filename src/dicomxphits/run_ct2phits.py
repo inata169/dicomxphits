@@ -33,6 +33,10 @@ from dicomxphits.ct2phits_datfiles import (
     validate_raw_ct2phits_datfiles,
 )
 from dicomxphits.prepare_ct_calibration import CtCalibrationError
+from dicomxphits.ct_voxel_verification import (
+    CtVoxelVerificationError,
+    verify_and_correct_ct_voxels,
+)
 
 
 CT2PHITS_GENERATED_NAMES = (*RAW_CT2PHITS_NAMES, "CTtrans.dat")
@@ -42,7 +46,6 @@ CT2PHITS_SUMMARY_NAME = "ct2phits_execution_summary.json"
 CT2PHITS_BATCH_NAME = "RTphits_win.bat"
 CT2PHITS_TABLE_RELATIVE = Path("data") / "HumanVoxelTable.data"
 CT2PHITS_COARSE_GRAINING = (8, 8, 2)
-CT2PHITS_VERIFIED_COARSE_GRAINING = frozenset({(8, 8, 2), (8, 8, 1)})
 CT_SLICE_SPACING_TOLERANCE_MM = 1.0e-6
 RTPLAN_SNAPSHOT_NAME = "RTPLAN.dcm"
 PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS = 10.0
@@ -484,12 +487,16 @@ def _validate_external_layout(
         raise Ct2PhitsFrontendError(
             f"required RT-PHITS batch file is missing: {CT2PHITS_BATCH_NAME}"
         )
+    if batch.is_symlink():
+        raise Ct2PhitsFrontendError("RT-PHITS batch file must not be a symbolic link")
     table = root / CT2PHITS_TABLE_RELATIVE
     if not table.is_file():
         raise Ct2PhitsFrontendError(
             "required CT2PHITS HU conversion table is missing: "
             + CT2PHITS_TABLE_RELATIVE.as_posix()
         )
+    if table.is_symlink():
+        raise Ct2PhitsFrontendError("CT2PHITS HU conversion table must not be a symbolic link")
 
     workspace = workspace_root.resolve()
     if workspace.exists():
@@ -737,7 +744,7 @@ def run_ct2phits_frontend(
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise Ct2PhitsFrontendError("timeout seconds must be positive and finite")
 
-    root, workspace, batch, _table = _validate_external_layout(
+    root, workspace, batch, table = _validate_external_layout(
         rtphits_root=rtphits_root,
         workspace_root=workspace_root,
     )
@@ -745,6 +752,11 @@ def run_ct2phits_frontend(
         ct_dicom_root,
         series_instance_uid=series_instance_uid,
     )
+    try:
+        table_sha256 = _sha256(table)
+        batch_sha256 = _sha256(batch)
+    except OSError as exc:
+        raise Ct2PhitsFrontendError("could not hash CT2PHITS tool inputs") from exc
     source_shape = VolumeShape(
         selected.columns, selected.rows, len(selected.files),
         selected.pixel_spacing_mm[1], selected.pixel_spacing_mm[0], None,
@@ -756,18 +768,17 @@ def run_ct2phits_frontend(
     except ClipError as exc:
         raise Ct2PhitsFrontendError(str(exc)) from exc
     coarse_values = _coarse_graining_values(coarse_graining)
-    if coarse_values not in CT2PHITS_VERIFIED_COARSE_GRAINING:
-        raise Ct2PhitsFrontendError(
-            "unverified CT coarse graining is unavailable: use 8 8 2 or 8 8 1; "
-            "other factors lack supported CT2PHITS averaging and coordinate evidence"
-        )
     is_clipped = not bounds.is_full(source_shape)
     coverage = None
-    if is_clipped:
+    expected_voxel_counts = None
+    verify_voxels = is_clipped or coarse_values != CT2PHITS_COARSE_GRAINING
+    if verify_voxels:
         try:
-            coverage = coarse_coverage(bounds, coarse_values)
+            computed_coverage = coarse_coverage(bounds, coarse_values)
         except ClipError as exc:
             raise Ct2PhitsFrontendError(str(exc)) from exc
+        expected_voxel_counts = computed_coverage.voxel_counts
+        coverage = computed_coverage
     rtplan_source = rtplan_path.resolve()
     try:
         ct_origin, frame_uid, _series_uid, selected_count = _ct_series_origin(
@@ -918,6 +929,10 @@ def run_ct2phits_frontend(
             "coordinate_mode": 1,
         },
         "generated_output_contract": list(CT2PHITS_GENERATED_NAMES),
+        "tool_input_sha256": {
+            "RTphits_win.bat": batch_sha256,
+            CT2PHITS_TABLE_RELATIVE.as_posix(): table_sha256,
+        },
         "downstream_raw_datfiles_contract": list(RAW_CT2PHITS_NAMES),
         "cttrans_contract": {
             "generated_cttrans_dat": "DATfiles/CTtrans.dat",
@@ -972,6 +987,8 @@ def run_ct2phits_frontend(
     failure: str | None = None
     log_write_errors: dict[str, str] = {}
     inventory: dict[str, dict[str, Any]] = {}
+    original_voxel_sha256: str | None = None
+    voxel_verification: dict[str, Any] | None = None
     raw_hashes: dict[str, str] | None = None
     prepared_hashes: dict[str, str] | None = None
     placement_origin_cm: tuple[float, float, float] | None = None
@@ -996,7 +1013,26 @@ def run_ct2phits_frontend(
             raise Ct2PhitsFrontendError(
                 f"RTphits_win.bat returned non-zero exit code {returncode}"
             )
-        inventory = _generated_inventory(datfiles_root)
+        if _sha256(table) != table_sha256 or _sha256(batch) != batch_sha256:
+            raise Ct2PhitsFrontendError("CT2PHITS tool inputs changed during execution")
+        initial_inventory = _generated_inventory(datfiles_root)
+        if verify_voxels:
+            original_voxel_sha256 = initial_inventory["CTvoxel.dat"]["sha256"]
+            verified = verify_and_correct_ct_voxels(
+                datfiles_root=datfiles_root,
+                table_path=table,
+                source_files=selected.files,
+                bounds=bounds,
+                factors=coarse_values,
+            )
+            voxel_verification = {
+                "voxel_count": verified.voxel_count,
+                "mismatched_voxels": verified.mismatched_voxels,
+                "corrected": verified.corrected,
+                "original_ctvoxel_sha256": original_voxel_sha256,
+                "accepted_ctvoxel_sha256": _sha256(datfiles_root / "CTvoxel.dat"),
+            }
+        inventory = _generated_inventory(datfiles_root) if verify_voxels else initial_inventory
         raw = validate_raw_ct2phits_datfiles(
             datfiles_root,
             confirmed_non_patient_phantom=True,
@@ -1013,8 +1049,8 @@ def run_ct2phits_frontend(
             ),
         )
         placement_origin_cm = prepared.placement_origin_dicom_cm
-        if (coverage is not None
-            and tuple(prepared.assets.voxel_counts) != coverage.voxel_counts):
+        if (expected_voxel_counts is not None
+            and tuple(prepared.assets.voxel_counts) != expected_voxel_counts):
             raise Ct2PhitsFrontendError(
                 "CT2PHITS voxel counts disagree with the retained source bounds"
             )
@@ -1044,6 +1080,8 @@ def run_ct2phits_frontend(
             expected_ct_series=selected,
             expected_rtplan_isocenter=rtplan_isocenter,
         )
+        if _sha256(table) != table_sha256 or _sha256(batch) != batch_sha256:
+            raise Ct2PhitsFrontendError("CT2PHITS tool inputs changed during verification")
         inventory = post_handoff_inventory
         prepared_hashes = dict(prepared.assets.sha256)
     except subprocess.TimeoutExpired as exc:
@@ -1061,6 +1099,7 @@ def run_ct2phits_frontend(
         Ct2PhitsFrontendError,
         Ct2PhitsDatfilesError,
         CtCalibrationError,
+        CtVoxelVerificationError,
         OSError,
     ) as exc:
         failure = str(exc)
@@ -1103,6 +1142,7 @@ def run_ct2phits_frontend(
         "log_write_errors": log_write_errors,
         "failure_reason": failure,
         "generated_inventory": inventory,
+        "voxel_verification": voxel_verification,
         "raw_datfiles_sha256": raw_hashes,
         "prepared_assets_sha256": prepared_hashes,
         "placement_origin_dicom_cm": (

@@ -454,3 +454,75 @@ This documentation-only audit passed `python -m compileall src`,
 15 skipped, one existing duplicate-ZIP warning),
 `python tools/verify_public_tree.py` (456 tracked files), and `git diff --check`.
 No runtime code or current public specification was changed.
+
+The `@codex review` of commit `08e1a08` then identified two merge-blocking
+problems in the current diff. First, clipping was permitted against any
+RT-PHITS root containing the expected filenames, although the observed crop
+contract came from one installed build and counts/origin checks cannot detect
+changed material assignments. Second, full-volume `8 8 1` was not checking
+generated voxel counts because the count comparison ran only for clipped
+selections. The latter was verified and corrected by calculating expected
+complete-group counts for non-default factors even when bounds cover the full
+source; the selected-first-slice placement remains exclusive to clipped
+selections. A focused synthetic test with deliberately wrong full-volume
+`8 8 1` counts now fails closed (64 frontend tests passed). The build/material
+identity finding remains open pending a verified material and geometry check;
+an unrecorded current executable hash alone cannot prove it is the build used
+in the earlier authorized experiment.
+
+## Approved independent voxel verification, 2026-10-09
+
+The user separately approved retaining CT2PHITS and verifying the generated
+voxel materials and geometry from the frozen CT and HU conversion table, with
+correction limited to the known unequal-X/Y Y-count defect. No PHITS or
+RT-PHITS source or executable was modified, rebuilt, or run for this change.
+
+The frontend now accepts any positive integer factor triple that produces at
+least one complete voxel on each axis. For clipped or non-default conversions,
+it checks the generated counts, pitch, local minimum, selected-first-slice
+origin, surface expressions, cell fill, material definitions, densities, and
+every RLE-decoded voxel against independently rescaled source pixels and table
+thresholds. The material calculation uses the external reader's float32 HU
+stage and Y-then-X per-pixel accumulation order. Only mismatches in the Y rows
+affected by the installed converter's X/Y count mix-up can be corrected; other
+differences fail closed. Comparison and correction stream the voxel sequence
+rather than loading the entire CT lattice into a Python list. The original and
+accepted voxel hashes are recorded separately in the execution summary. Batch
+and table hashes are checked before and after external execution.
+
+Synthetic tests exercise `4 8 1`, `4 4 1`, `1 1 1`, off-centre `4 8 3`,
+threshold/rescale classification, known Y loss, unexplained mismatch, geometry
+and material-definition tampering, table changes, and default compatibility.
+The 71 focused frontend tests passed. The existing GUI/clipping focused set
+passed 215 tests with one skip. A later full-suite result belongs below.
+
+Read-only inspection of the user-designated PHITS 3.37 installation found the
+same `SETcoarse` Y-count expression (`iynum=iynum0/nyc` followed by
+`iynum0=iynum*nxc`) in its bundled RT-PHITS source. Its Windows batch invokes
+the bundled CT2PHITS executable. That executable has a different hash from the
+previously inspected installation and was **not executed**, so the exact 3.37
+binary symptom and all arbitrary-factor combinations remain unverified.
+
+The first sandboxed GUI launch was not targetable by Computer Use; the agent
+stopped without guessing a window. Explicitly interactive launches exposed
+the exact dicomxphits window. Computer Use confirmed the `8 8 2` defaults,
+edited X to `4` while Y stayed `8`, and used the empty-input Run action to
+check that no external conversion began. That interaction revealed that
+non-default full-volume preflight inspected CT headers before non-patient
+confirmation. A small guard was added; a second Computer Use pass showed the
+GUI now stops at the confirmation warning before CT inspection. Both error
+children used the dark GUI palette. X was restored to `8` and the temporary
+GUI instances closed. This is a bounded interaction check, not an all-functions
+external-tool run.
+
+The final focused frontend/GUI set passed with **206 passed, 1 skipped**. The
+final full public suite passed with **1558 passed, 15 skipped, 1 existing
+duplicate-ZIP-member warning** (162.57 s). These runs used the current source
+after the confirmation guard and geometry check. External CT2PHITS execution
+with PHITS 3.37 remains the separate acceptance gate above.
+`python -m compileall src`, `python tools/verify_public_tree.py` (457 staged
+tracked files), `git diff --check`, and `git diff --cached --check` passed.
+The staged stat and status contain only the approved implementation and
+documentation; the user's unrelated configuration and screenshot files remain
+untracked and untouched. The OpenSpec CLI is unavailable, so proposal and
+delta-spec structure was checked manually; accepted deltas remain active.
