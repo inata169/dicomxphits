@@ -417,3 +417,40 @@ Final public checks for this audit:
 - `git diff --check` and `git diff --cached --check`: passed.
 - Diff/stat/status review: only this validation record and the new regression
   test are included; unrelated untracked configuration/screenshots preserved.
+
+## Arbitrary-factor request and installed-tool source audit, 2026-10-09
+
+The user rejected completion with only `8 8 2` and `8 8 1`: any positive
+integer factor triple that produces at least one complete voxel on each axis
+must be usable. This supersedes accepting the current
+gate as the finished feature. The gate remains in place until conversion can
+be shown to preserve all retained source blocks and their geometry.
+
+Read-only inspection of the user-identified RT-PHITS installation found a
+specific defect in `src/ct2phits.f`'s `SETcoarse`: after calculating the Y
+output count using `nyc`, the routine truncates its Y input count using
+`nxc`. `READCONV` then uses that truncated input count as its Y loop limit,
+while dividing the Y index and HU sum by `nyc`. This directly explains the
+previous observed missing third Y material band for `4 8 1`; using X greater
+than Y could instead cause the loop to index beyond the Y output array.
+The tool can report success despite an incorrect phantom. The installed
+source's Windows build recipe requires 32-bit `gfortran`; no `gfortran` or
+`gcc` executable is currently available on PATH. Neither source nor binary
+was changed, compiled, or run during this audit.
+
+Removing the frontend's factor gate would accept a known wrong output.
+The smallest fidelity-preserving route is correction of this installed
+external tool and a bounded synthetic comparison covering unequal X/Y,
+several Z factors, material identities, voxel counts, pitch, and placement.
+This requires a separate explicit decision for modification/execution outside
+the repository. Replacing the conversion inside dicomxphits would require a
+new, independently reviewed material-mapping and geometry contract rather
+than assuming equivalent results from the existing synthetic mocks. The PR
+must remain draft and the OpenSpec change active until arbitrary factors are
+demonstrated and the approved acceptance criteria are met.
+
+This documentation-only audit passed `python -m compileall src`,
+`.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` (1550 passed,
+15 skipped, one existing duplicate-ZIP warning),
+`python tools/verify_public_tree.py` (456 tracked files), and `git diff --check`.
+No runtime code or current public specification was changed.

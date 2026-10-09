@@ -250,3 +250,36 @@ palette request also applies to information, error and yes/no confirmations:
 use application-colored, scrollable modal text with explicit buttons. Closing
 or pressing Escape cancels; confirmations initially focus the negative choice.
 Native OS file pickers and title bars retain the Windows appearance.
+
+## Proposed arbitrary-factor implementation (decision pending)
+
+The user rejected treating only `8 8 2` and `8 8 1` as completion. Any positive
+integer triple that yields at least one complete coarse voxel on every selected
+axis is the intended range; a factor larger than its selected axis has no
+output voxel and still fails with an explicit reason. Read-only
+inspection of the installed RT-PHITS source confirms that `SETcoarse` truncates
+the Y input count with the X factor even though its Y output count and HU
+indexing use the Y factor. Removing dicomxphits's factor gate would therefore
+accept a known incorrect phantom for unequal X/Y values. The installed build
+recipe needs a 32-bit Fortran compiler that is not on PATH, so the local tool
+cannot currently be rebuilt through its documented command.
+
+The proposed repository-owned route is a separate CT voxel conversion path
+for factor triples outside the two verified tool paths. It would decode the
+validated axial HFS source, apply each slice's DICOM rescale values, average
+each complete X/Y/Z source block in floating point, classify the resulting HU
+against the supplied RT-PHITS conversion table, and emit CT voxel, material,
+universe, surface, cell, and parameter assets in the existing PHITS handoff
+format. Requested and retained bounds, source hashes, and selected-first-slice
+placement evidence would remain distinct. The old default path and its bytes
+would stay intact. This would avoid modifying or distributing the installed
+RT-PHITS files, while requiring an independently reviewed material/geometry
+contract for the new path.
+
+Before enabling this path, verify material identity at threshold boundaries,
+all retained blocks and discarded remainders, voxel counts and pitch,
+off-centre first-slice placement, CT/accelerator mutual exclusion, and generated
+PHITS input topology. Compare equal-factor synthetic results with the existing
+tool and check unequal factors against independent DICOM block calculations.
+Real CT2PHITS or PHITS execution still requires its own explicit authorization.
+No runtime implementation of this proposed route has started.
