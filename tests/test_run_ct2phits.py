@@ -176,6 +176,39 @@ def _success_runner(workspace: Path):
     return runner
 
 
+@pytest.mark.parametrize("pixel_clipping,slice_range", [
+    ((2, 96, 1, 64), None),
+    (None, (2, 2)),
+    ((2, 95, 3, 63), (2, 2)),
+])
+def test_nondefault_clipping_is_rejected_before_workspace_creation(
+    tmp_path: Path,
+    pixel_clipping: tuple[int, int, int, int] | None,
+    slice_range: tuple[int, int] | None,
+) -> None:
+    case = _case(tmp_path)
+    with pytest.raises(Ct2PhitsFrontendError, match="non-default CT clipping is unavailable"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            pixel_clipping=pixel_clipping, slice_range=slice_range,
+        )
+    assert not case["workspace"].exists()
+
+
+def test_invalid_clipping_is_rejected_before_workspace_creation(tmp_path: Path) -> None:
+    case = _case(tmp_path)
+    with pytest.raises(Ct2PhitsFrontendError, match="bounds"):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            pixel_clipping=("two", "96", "1", "64"),
+        )
+    assert not case["workspace"].exists()
+
+
 def test_windows_frontend_generates_input_inventory_summary_and_handoff(
     tmp_path: Path,
 ) -> None:

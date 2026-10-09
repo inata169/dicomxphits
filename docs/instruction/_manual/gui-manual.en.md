@@ -4,6 +4,8 @@ Date: 2026-09-24. [日本語](gui-manual.ja.md) / [Document index](README.md)
 
 Applies to v1.1.x, checked against published v1.1.1. This release includes the retry recovery repair in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Install v1.1.1 before starting a new GUI session; Help → About should report 1.1.1. An already running GUI retains its imported code.
 
+Development branch note: the CT preview described below is not part of published v1.1.1. The clipping conversion remains disabled until the supported CT2PHITS crop and coordinate contract is verified.
+
 This is experimental education and research software for fixed-field 3D-CRT using authorized non-patient phantom data. Clinical use, patient QA, IMRT, dynamic MLC and VMAT are outside its scope. This manual does not establish stable operation with real external tools or dose agreement with a clinical machine.
 
 ## 1. Quick reference
@@ -83,6 +85,14 @@ Keep calculation data outside the repository and out of Git. Standard CT2PHITS o
 5. After success, check for `Verified frozen handoff`. Frozen RT Plan, CT reference and CT2PHITS DATfiles are handed to downstream stages.
 
 Downstream processing uses the Frozen RT Plan. Editing the original source does not update an already prepared workspace. On failure, use Chapter 10 rather than repeatedly running into the same output directory.
+
+#### CT image preview and clipping draft (development branch)
+
+After selecting the non-patient phantom confirmation, choose `CT images / Clipping range…` to inspect the selected series. The dialog reads CT pixels only for display and does not run CT2PHITS. It shows Axial (Nx/Ny), Coronal (Nx/slice), and Sagittal (Ny/slice) views, with the superior end at the top of the latter two. Sliders change the viewed plane; right-click sets the linked viewing crosshair. The pointer displays original one-based Nx, Ny, and slice indices. The contrast centre and width affect display only.
+
+Enter Nx min/max, Ny min/max, and First/Last slice, or left-click two opposite corners in one image. Either click order works; the remaining axis retains its bounds. A second click in a different image starts a new pair. `Reset to full volume` restores all source indices in the draft; `Apply` commits the draft to this case; `Cancel` discards it. Orange framing and `Outside selected volume` identify a viewed plane outside the selected range. A single-slice CT retains Axial and numeric controls while the other views are unavailable. Preview loading is capped at 128 MiB and may report unsupported pixel encoding or decoding failures.
+
+The selected bounds are inclusive source indices, not millimetres. The CT folder or series change invalidates the applied draft; changed source files require reopening the preview. A non-default applied range is displayed but **Run CT2PHITS is blocked** because the external crop's endpoint, coarse-graining, and physical placement have not been established. Full-volume conversion continues under the existing workflow. No patient attributes are shown in the preview.
 
 ### 4.2 Workspace: prepare inputs
 

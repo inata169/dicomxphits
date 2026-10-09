@@ -19,6 +19,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pydicom
 from pydicom.misc import is_dicom
+from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, VolumeShape
 
 from dicomxphits.ct2phits_datfiles import (
     RAW_CT2PHITS_NAMES,
@@ -694,6 +695,8 @@ def run_ct2phits_frontend(
     workspace_root: Path,
     confirmed_non_patient_phantom: bool,
     series_instance_uid: str | None = None,
+    pixel_clipping: Sequence[object] | None = None,
+    slice_range: Sequence[object] | None = None,
     timeout_seconds: float = 300.0,
     runner: Runner = _default_runner,
     platform_system: str | None = None,
@@ -716,6 +719,21 @@ def run_ct2phits_frontend(
         ct_dicom_root,
         series_instance_uid=series_instance_uid,
     )
+    source_shape = VolumeShape(
+        selected.columns, selected.rows, len(selected.files),
+        selected.pixel_spacing_mm[1], selected.pixel_spacing_mm[0], None,
+    )
+    pixel_values = (1, selected.columns, 1, selected.rows) if pixel_clipping is None else tuple(pixel_clipping)
+    slice_values = (1, len(selected.files)) if slice_range is None else tuple(slice_range)
+    try:
+        bounds = ClipBounds.parse((*pixel_values, *slice_values), source_shape)
+    except ClipError as exc:
+        raise Ct2PhitsFrontendError(str(exc)) from exc
+    if not bounds.is_full(source_shape):
+        raise Ct2PhitsFrontendError(
+            "non-default CT clipping is unavailable: supported CT2PHITS endpoint, "
+            "coarse-graining, and output-coordinate behavior is not established"
+        )
     rtplan_source = rtplan_path.resolve()
     try:
         ct_origin, frame_uid, _series_uid, selected_count = _ct_series_origin(
@@ -1060,6 +1078,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rtphits-root", required=True)
     parser.add_argument("--workspace-root", required=True)
     parser.add_argument("--ct-series-instance-uid", default=None)
+    parser.add_argument("--pixel-clipping", nargs=4, metavar=("NX_MIN", "NX_MAX", "NY_MIN", "NY_MAX"))
+    parser.add_argument("--slice-range", nargs=2, metavar=("FIRST", "LAST"))
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument(
         "--confirm-non-patient-phantom",
@@ -1079,6 +1099,8 @@ def main(argv: list[str] | None = None) -> int:
             workspace_root=Path(args.workspace_root),
             confirmed_non_patient_phantom=args.confirm_non_patient_phantom,
             series_instance_uid=args.ct_series_instance_uid,
+            pixel_clipping=args.pixel_clipping,
+            slice_range=args.slice_range,
             timeout_seconds=args.timeout_seconds,
         )
     except Ct2PhitsFrontendError as exc:

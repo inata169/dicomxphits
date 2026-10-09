@@ -2103,6 +2103,13 @@ def test_ct2phits_is_the_first_guided_gui_stage(tmp_path: Path) -> None:
     assert command[command.index("--ct-series-instance-uid") + 1] == "1.2.3.4"
     assert command[command.index("--timeout-seconds") + 1] == "125"
     assert "--confirm-non-patient-phantom" in command
+    assert "--pixel-clipping" not in command
+    assert "--slice-range" not in command
+    clipped = build_stage_command(
+        replace(config, ct_clipping_bounds=(2, 12, 3, 15, 2, 6)), spec
+    )
+    assert clipped[clipped.index("--pixel-clipping") + 1:clipped.index("--pixel-clipping") + 5] == ["2", "12", "3", "15"]
+    assert clipped[clipped.index("--slice-range") + 1:clipped.index("--slice-range") + 3] == ["2", "6"]
 
 
 def test_ct2phits_gui_stage_keeps_explicit_confirmation_and_new_workspace_gate(

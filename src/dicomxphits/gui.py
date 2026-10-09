@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
+from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError
 
 from dicomxphits import __version__
 from dicomxphits.gui_tool_profile import (
@@ -161,6 +162,7 @@ class GuiConfig:
     rtphits_root: str = ""
     ct2phits_workspace_root: str = ""
     ct_series_instance_uid: str = ""
+    ct_clipping_bounds: tuple[int, int, int, int, int, int] | None = None
     ct2phits_timeout_seconds: float = DEFAULT_CT2PHITS_TIMEOUT_SECONDS
     maxcas: int | str = DEFAULT_SEGMENT_MAXCAS
     maxbch: int | str = DEFAULT_SEGMENT_MAXBCH
@@ -692,6 +694,10 @@ def build_stage_command(config: GuiConfig, spec: StageSpec) -> list[str]:
         series_uid = str(config.ct_series_instance_uid or "").strip()
         if series_uid:
             command.extend(["--ct-series-instance-uid", series_uid])
+        if config.ct_clipping_bounds is not None:
+            bounds = config.ct_clipping_bounds
+            command.extend(["--pixel-clipping", *(str(x) for x in bounds[:4])])
+            command.extend(["--slice-range", *(str(x) for x in bounds[4:])])
         command.append("--confirm-non-patient-phantom")
     elif spec.key == "prepare_workspace":
         geometry_mode = geometry_mode_value(config)
@@ -2345,6 +2351,9 @@ def _build_gui() -> int:
     browse_directories = _browse_directories()
     overwrite = tk.BooleanVar(value=False)
     confirmed_non_patient_phantom = tk.BooleanVar(value=False)
+    applied_ct_volume = None
+    applied_ct_bounds: ClipBounds | None = None
+    ct_clipping_status = tk.StringVar(value="Clipping: complete source volume")
     manual_handoff = tk.BooleanVar(value=False)
     verified_handoff_available = tk.BooleanVar(value=False)
     existing_case_mode = tk.BooleanVar(value=False)
@@ -2720,6 +2729,14 @@ def _build_gui() -> int:
             rtphits_root=values["rtphits_root"].get(),
             ct2phits_workspace_root=values["ct2phits_workspace_root"].get(),
             ct_series_instance_uid=values["ct_series_instance_uid"].get(),
+            ct_clipping_bounds=(
+                (applied_ct_bounds.nx_min, applied_ct_bounds.nx_max,
+                 applied_ct_bounds.ny_min, applied_ct_bounds.ny_max,
+                 applied_ct_bounds.first, applied_ct_bounds.last)
+                if applied_ct_bounds is not None and applied_ct_volume is not None
+                and not applied_ct_bounds.is_full(applied_ct_volume.shape)
+                else None
+            ),
             ct2phits_timeout_seconds=timeout,
             maxcas=values["maxcas"].get(),
             maxbch=values["maxbch"].get(),
@@ -3119,6 +3136,7 @@ def _build_gui() -> int:
         )
         if not selected:
             return
+        invalidate_ct_clipping()
         values["workspace_root"].set(selected)
         remember_browse_directory(
             "workspace_root",
@@ -3162,6 +3180,7 @@ def _build_gui() -> int:
 
     def start_new_case_mode() -> None:
         nonlocal recovery_inspection
+        invalidate_ct_clipping()
         recovery_inspection = None
         existing_case_mode.set(False)
         clear_new_case_handoff_state(
@@ -3543,6 +3562,61 @@ def _build_gui() -> int:
         text="I confirm non-patient phantom data",
         variable=confirmed_non_patient_phantom,
     ).grid(row=0, column=0, sticky="w")
+    def invalidate_ct_clipping(*_args: object) -> None:
+        nonlocal applied_ct_volume, applied_ct_bounds
+        applied_ct_volume = None
+        applied_ct_bounds = None
+        ct_clipping_status.set("Clipping: complete source volume; inspect this CT again for selection")
+
+    values["ct_dicom_root"].trace_add("write", invalidate_ct_clipping)
+    values["ct_series_instance_uid"].trace_add("write", invalidate_ct_clipping)
+
+    def open_ct_preview() -> None:
+        nonlocal applied_ct_volume, applied_ct_bounds
+        if execution_guard.active_stage is not None:
+            messagebox.showerror("CT preview", "Wait until the active stage finishes")
+            return
+        if not confirmed_non_patient_phantom.get():
+            messagebox.showerror("CT preview", "Confirm non-patient phantom data before reading pixels")
+            return
+        source = values["ct_dicom_root"].get().strip()
+        if not source:
+            messagebox.showerror("CT preview", "Select a CT DICOM folder")
+            return
+        if applied_ct_volume is not None and not applied_ct_volume.still_current():
+            invalidate_ct_clipping()
+        from dicomxphits.ct_preview import CtPreviewDialog
+
+        def apply(volume: object, bounds: ClipBounds) -> None:
+            nonlocal applied_ct_volume, applied_ct_bounds
+            if (values["ct_dicom_root"].get().strip() != source
+                or values["ct_series_instance_uid"].get().strip() != selected_uid):
+                raise ClipError("CT selection changed; reopen the preview")
+            applied_ct_volume = volume
+            applied_ct_bounds = bounds
+            ct_clipping_status.set(
+                f"Clipping: Nx {bounds.nx_min}–{bounds.nx_max}, "
+                f"Ny {bounds.ny_min}–{bounds.ny_max}, "
+                f"slices {bounds.first}–{bounds.last}"
+                + (" (conversion unavailable pending CT2PHITS crop geometry evidence)"
+                   if not bounds.is_full(volume.shape) else "")
+            )
+
+        selected_uid = values["ct_series_instance_uid"].get().strip()
+        CtPreviewDialog(
+            root, Path(source), selected_uid or None, applied_ct_bounds, apply,
+            is_current=lambda: (
+                values["ct_dicom_root"].get().strip() == source
+                and values["ct_series_instance_uid"].get().strip() == selected_uid
+            ),
+        )
+
+    ttk.Button(ct2_actions, text="CT images / Clipping range…", command=open_ct_preview).grid(
+        row=1, column=0, sticky="w", pady=(5, 0)
+    )
+    ttk.Label(ct2_actions, textvariable=ct_clipping_status).grid(
+        row=2, column=0, columnspan=2, sticky="w", pady=(4, 0)
+    )
 
     workspace_page = new_page("workspace")
     existing_case_frame = ttk.Frame(
@@ -4195,6 +4269,19 @@ def _build_gui() -> int:
             finish_stage_error(spec, message, validation=True)
             return
         config = config_from_entries()
+        if stage_key == "run_ct2phits" and applied_ct_volume is not None:
+            if not applied_ct_volume.still_current():
+                invalidate_ct_clipping()
+                finish_stage_error(spec, "CT source changed; reopen the preview", validation=True)
+                return
+            if config.ct_clipping_bounds is not None:
+                finish_stage_error(
+                    spec,
+                    "Non-default clipping conversion is unavailable pending CT2PHITS "
+                    "endpoint, coarse-graining, and coordinate evidence.",
+                    validation=True,
+                )
+                return
         if retry_plan is not None:
             if Path(config.workspace_root).expanduser().resolve() != Path(retry_plan["workspace_root"]):
                 messagebox.showerror("Run incomplete segments", "Workspace selection changed; create a new preview.")
