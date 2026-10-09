@@ -262,3 +262,74 @@ Non-default coarse-graining triples remain unavailable at conversion time.
 The installed tool lost Y material with unequal X/Y factors. The user-entered
 fields and CLI input validation remain, but supported behavior for general
 triples is not established. The active OpenSpec change therefore remains open.
+
+## Authorized 8 8 1 and Computer Use follow-up, 2026-10-09
+
+The user explicitly approved another installed CT2PHITS run with newly generated
+non-patient synthetic CT and factors `8 8 1`, and requested GUI operation checks
+and bug fixes with Computer Use. The synthetic source had 32 columns, 24 rows,
+six slices, 2 mm in-plane spacing, 3 mm slice spacing, and a nonzero origin.
+Only the CT2PHITS batch adapter was executed; no PHITS transport was run.
+
+Observed full-volume output: 4 x 3 x 6; voxel sizes 1.6, 1.6, 0.3 cm. Three
+constant Y bands remained three distinct materials. The combined crop
+(columns 9-24, rows 5-20, slices 3-6) produced 2 x 2 x 4, local X/Y minima
+1.5/0.7 cm, and DICOM Z shift 30.6 cm. A 17 x 17 x 5 crop starting at
+column/row 4 and slice 2 produced 2 x 2 x 5, local minima 0.5/0.5 cm and
+DICOM Z shift 30.3 cm. These agree with retained complete groups and the
+selected-first-slice placement. The verified-factor set now includes exactly
+`8 8 2` and `8 8 1`; the default remains `8 8 2`.
+
+Windows Computer Use used isolated synthetic GUI processes, separate settings,
+and the existing harness's external-process prohibition. It did not inspect or
+operate other open applications or user data. Findings and checks:
+
+- Reproduced Apply/Cancel/Reset clipped below the initial preview window under
+  application styles. Reserved grid rows now retain actions, numeric fields,
+  sliders and direction labels while the image row resizes.
+- Reproduced a white native CT preview error dialog despite the requested child
+  palette. Application information, warning, error and confirmation messages
+  now use the main palette; Escape/close is negative and confirmation starts
+  focused on No/Cancel. Windows title bars/file pickers remain OS-controlled.
+- Selected Axial corners (5,9) and (28,16), observed synchronized overlays and
+  all six fields, then Apply displayed Nx 5-28, Ny 9-16, slices 1-6 in the main
+  page. Synthetic unwanted upper/lower bands were visibly outside the box.
+- Exercised PHITS Run with an in-process runner, Stop after current segment,
+  close-during-run warning, User stopped (1/2), incomplete preview, and retry.
+  Final state was Completed (2/2), retained 1, newly completed 1. Calls were
+  seg_001 followed by seg_002; no real PHITS process was started.
+- Exercised Cancel preparation: final state Preparation cancelled; runner
+  call list was empty.
+- Opened an isolated existing synthetic case through the folder picker,
+  observed PHITS verified/locked, Sumtally completed and RTDOSE recovery ready,
+  confirmed RTDOSE Run only and observed final Completed. Runner calls were
+  exactly run_rtdose; PHITS/Sumtally were not repeated.
+- Viewed CT2PHITS, Workspace, PHITS, Sumtally and RTDOSE pages. This is not a
+  claim that every button, every input combination, or a real end-to-end
+  scientific calculation was exercised through Computer Use.
+
+Focused GUI/frontend checks: 210 passed, 1 skipped. Full public suite:
+1534 passed, 15 skipped, one existing duplicate-ZIP-member warning (230.66 s).
+Compileall, public-tree audit and Git whitespace checks passed. OpenSpec CLI
+remains unavailable; deltas are structurally reviewed manually.
+
+An intermediate text replacement removed adjacent GUI construction statements;
+diff inspection caught it immediately and restored those statements before
+launching the edited GUI and before the passing validation. The first footer
+fix exposed a second instance of the same packing issue at the per-plane
+sliders; reserving their rows resolved it. Computer Use sometimes returned an
+occluded window image or stale element indexes; fresh activation/screenshot
+selection resolved this without operating another application.
+
+General numeric factor conversion remains incomplete due to the installed
+tool's observed unequal-X/Y material loss and lack of general-triple evidence.
+The active change therefore remains unarchived. Real patient data, real PHITS,
+Sumtally/phits2dicom, clinical accuracy, arbitrary factors and every GUI input
+combination remain unverified.
+
+Final preview recheck showed all three sliders, direction labels, numeric fields,
+and Apply/Cancel/Reset visible at the initial size; Coronal expansion and
+one-index stepping preserved the box. After setting the supported minimum
+width to 1120, focused preview tests passed again (10 passed, 1.43 s), and
+`python -m compileall src` passed. The full suite above preceded only this
+minimum-width adjustment and documentation updates.

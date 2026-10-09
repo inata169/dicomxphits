@@ -39,7 +39,7 @@ rounding rule, physical tolerance, or coordinate correction.
 
 #### Scenario: Incomplete high-end coarse groups
 
-- **WHEN** a clipped selection under `8 8 2` contains an incomplete high-end
+- **WHEN** a clipped selection under verified `8 8 2` or `8 8 1` contains an incomplete high-end
   group on any axis and at least one complete group on every axis
 - **THEN** the GUI warns before conversion, the frontend reports the exact lost
   source counts and retained bounds, and conversion proceeds without changing

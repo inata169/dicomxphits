@@ -42,6 +42,7 @@ CT2PHITS_SUMMARY_NAME = "ct2phits_execution_summary.json"
 CT2PHITS_BATCH_NAME = "RTphits_win.bat"
 CT2PHITS_TABLE_RELATIVE = Path("data") / "HumanVoxelTable.data"
 CT2PHITS_COARSE_GRAINING = (8, 8, 2)
+CT2PHITS_VERIFIED_COARSE_GRAINING = frozenset({(8, 8, 2), (8, 8, 1)})
 CT_SLICE_SPACING_TOLERANCE_MM = 1.0e-6
 RTPLAN_SNAPSHOT_NAME = "RTPLAN.dcm"
 PROCESS_TREE_TERMINATION_TIMEOUT_SECONDS = 10.0
@@ -755,10 +756,10 @@ def run_ct2phits_frontend(
     except ClipError as exc:
         raise Ct2PhitsFrontendError(str(exc)) from exc
     coarse_values = _coarse_graining_values(coarse_graining)
-    if coarse_values != CT2PHITS_COARSE_GRAINING:
+    if coarse_values not in CT2PHITS_VERIFIED_COARSE_GRAINING:
         raise Ct2PhitsFrontendError(
-            "non-default CT coarse graining is unavailable: supported CT2PHITS "
-            "averaging and output-coordinate behavior is not established"
+            "unverified CT coarse graining is unavailable: use 8 8 2 or 8 8 1; "
+            "other factors lack supported CT2PHITS averaging and coordinate evidence"
         )
     is_clipped = not bounds.is_full(source_shape)
     coverage = None

@@ -29,7 +29,7 @@ def exercise():
     sys.addaudithook(audit)
 
     import tkinter as tk
-    from tkinter import messagebox
+    from dicomxphits.gui_dialogs import GuiMessages as messagebox
     from dicomxphits import gui
     import dicomxphits.segment_stop as stop_module
     from dicomxphits.run_segments import run_segments, summary_path

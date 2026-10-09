@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
 from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, coarse_coverage
-from dicomxphits.run_ct2phits import CT2PHITS_COARSE_GRAINING
+from dicomxphits.run_ct2phits import CT2PHITS_COARSE_GRAINING, CT2PHITS_VERIFIED_COARSE_GRAINING
 
 from dicomxphits import __version__
 from dicomxphits.gui_tool_profile import (
@@ -2170,7 +2170,8 @@ def _friendly_stage_failure(spec: StageSpec, message: str) -> str:
 
 def _build_gui() -> int:
     import tkinter as tk
-    from tkinter import filedialog, messagebox, scrolledtext, ttk
+    from tkinter import filedialog, scrolledtext, ttk
+    from dicomxphits.gui_dialogs import GuiMessages
 
     colors = {
         "navy": "#071A2B",
@@ -2192,6 +2193,7 @@ def _build_gui() -> int:
     root.geometry("1360x820")
     root.minsize(1120, 720)
     root.configure(background=colors["navy"])
+    messagebox = GuiMessages(root, colors)
     try:
         root.state("zoomed")
     except tk.TclError:
@@ -3673,51 +3675,10 @@ def _build_gui() -> int:
         )
 
     def show_ct_clipping_warning(message: str) -> bool:
-        proceed = False
-        dialog = tk.Toplevel(root)
-        dialog.title("CT clipping / coarse graining")
-        dialog.configure(background=colors["navy"])
-        dialog.transient(root)
-        dialog.resizable(False, False)
-        panel = tk.Frame(
-            dialog, background=colors["surface"],
-            highlightbackground=colors["line"], highlightthickness=1,
+        return messagebox.askyesno(
+            "CT clipping / coarse graining", message,
+            accept="Continue conversion", cancel="Cancel",
         )
-        panel.pack(fill="both", expand=True, padx=12, pady=12)
-        tk.Label(
-            panel, text="CT clipping warning", background=colors["surface"],
-            foreground=colors["warning"], font=("Segoe UI Semibold", 15),
-            anchor="w",
-        ).pack(fill="x", padx=20, pady=(18, 8))
-        tk.Label(
-            panel, text=message, background=colors["surface"],
-            foreground=colors["text"], font=("Segoe UI", 10),
-            justify="left", wraplength=560, anchor="w",
-        ).pack(fill="x", padx=20, pady=(0, 16))
-        def continue_conversion() -> None:
-            nonlocal proceed
-            proceed = True
-            dialog.destroy()
-
-        actions = tk.Frame(panel, background=colors["surface"])
-        actions.pack(anchor="e", padx=20, pady=(0, 18))
-        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(
-            side="left", padx=(0, 10)
-        )
-        ttk.Button(
-            actions, text="Continue conversion", style="Primary.TButton",
-            command=continue_conversion,
-        ).pack(side="left")
-        dialog.bind("<Escape>", lambda _event: dialog.destroy())
-        dialog.update_idletasks()
-        dialog.geometry(
-            f"+{root.winfo_rootx() + max(0, (root.winfo_width() - dialog.winfo_width()) // 2)}"
-            f"+{root.winfo_rooty() + max(0, (root.winfo_height() - dialog.winfo_height()) // 2)}"
-        )
-        dialog.grab_set()
-        dialog.focus_set()
-        root.wait_window(dialog)
-        return proceed
 
     ttk.Button(ct2_actions, text="CT images / Clipping range…", command=open_ct_preview).grid(
         row=2, column=0, sticky="w", pady=(5, 0)
@@ -4383,11 +4344,11 @@ def _build_gui() -> int:
             except GuiValidationError as exc:
                 finish_stage_error(spec, str(exc), validation=True)
                 return
-            if coarse != CT2PHITS_COARSE_GRAINING:
+            if coarse not in CT2PHITS_VERIFIED_COARSE_GRAINING:
                 finish_stage_error(
                     spec,
-                    "Non-default coarse graining conversion is unavailable pending "
-                    "CT2PHITS averaging and coordinate evidence.",
+                    "Use verified coarse graining 8 8 2 or 8 8 1. Other factors "
+                    "remain unavailable pending CT2PHITS averaging and coordinate evidence.",
                     validation=True,
                 )
                 return

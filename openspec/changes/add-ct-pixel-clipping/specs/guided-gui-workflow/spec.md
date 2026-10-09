@@ -106,7 +106,14 @@ active execution's request.
 
 #### Scenario: Clipped default coarse conversion with remainders
 
-- **WHEN** a valid selected box under `8 8 2` has incomplete high-end groups
+- **WHEN** a valid selected box under verified `8 8 2` or `8 8 1` has incomplete high-end groups
 - **THEN** the GUI shows the lost source counts and retained source bounds as a
   warning in a child window using the main GUI palette before starting the
   frontend; Continue proceeds with the requested box and Cancel leaves it idle
+
+#### Scenario: Visible actions and consistent child windows
+
+- **WHEN** the CT preview opens at its initial size or is resized within its minimum
+- **THEN** Apply, Cancel, and Reset remain visible while the image row resizes
+- **AND** application message and confirmation windows use the main GUI palette,
+  with closure and Escape returning the negative confirmation result

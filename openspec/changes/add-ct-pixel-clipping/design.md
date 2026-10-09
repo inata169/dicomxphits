@@ -234,3 +234,19 @@ new path.
 
 Planning completion leaves this draft active. Promote accepted deltas and
 archive only after approved implementation and required verification finish.
+
+## Verified 8 8 1 and Windows GUI follow-up (2026-10-09)
+
+The separately authorized synthetic CT2PHITS run verified full-volume,
+combined crop, and remainder behavior for `8 8 1`. Enable exactly this triple
+alongside the unchanged `8 8 2` default; do not extrapolate to other factors.
+The GUI and frontend share the verified-factor set. General factor support
+remains incomplete because the installed tool loses material with unequal X/Y.
+
+Computer Use reproduced clipped Apply/Cancel buttons at the preview's initial
+size under the application styles. A weighted grid now allocates resizing to
+the image row and reserves the numeric and action rows. The user's child-window
+palette request also applies to information, error and yes/no confirmations:
+use application-colored, scrollable modal text with explicit buttons. Closing
+or pressing Escape cancels; confirmations initially focus the negative choice.
+Native OS file pickers and title bars retain the Windows appearance.

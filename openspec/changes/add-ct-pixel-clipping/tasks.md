@@ -38,7 +38,8 @@
 - [x] Integrate case invalidation, immutable execution state, and existing
       shell-free CT2PHITS invocation.
 - [x] Verify cropped geometry for the approved default factors, with raw
-      origin and output count checks; keep other factor triples gated.
+      origin and output count checks; also verify and enable `8 8 1`, keeping
+      other factor triples gated.
 - [x] Add synthetic pixel fixtures, independent geometry cases, mapping/state
       tests, input/manifest tests, and full-volume regressions.
 - [x] Update English/Japanese GUI manuals with warning, conversion, retained
@@ -60,3 +61,11 @@
 
 Implementation checks and the non-default factor evidence gate are recorded
 in `validation.md`. The change remains active and cannot be archived yet.
+
+## Windows follow-up
+
+- [x] Run the separately authorized synthetic `8 8 1` CT2PHITS contract check.
+- [x] Enable verified `8 8 1` in GUI/frontend while preserving default `8 8 2`.
+- [x] Use Windows Computer Use for synthetic clipping and workflow controls.
+- [x] Correct clipped preview actions/sliders and unify application message colors.
+- [x] Record explicit validation coverage and remaining unverified items.

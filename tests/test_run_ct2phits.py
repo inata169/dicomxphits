@@ -245,14 +245,15 @@ def test_z_crop_uses_selected_first_slice_for_placement(tmp_path: Path) -> None:
     assert summary["placement_origin_dicom_cm"] == [-12.0, -8.0, -9.4]
 
 
+@pytest.mark.parametrize("factors,z_count", [((8, 8, 2), 2), ((8, 8, 1), 4)])
 def test_combined_xy_z_crop_preserves_requested_and_retained_geometry(
-    tmp_path: Path,
+    tmp_path: Path, factors: tuple[int, int, int], z_count: int,
 ) -> None:
     case = _case(tmp_path, z_positions_mm=(-100, -97, -94, -91, -88, -85))
 
     def runner(command, cwd, timeout_seconds):
         _write_generated_datfiles(
-            case["workspace"] / "DATfiles", counts=(2, 2, 2),
+            case["workspace"] / "DATfiles", counts=(2, 2, z_count),
             raw_origin_cm=(-12, -8, -9.4),
         )
         return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
@@ -262,13 +263,14 @@ def test_combined_xy_z_crop_preserves_requested_and_retained_geometry(
         rtphits_root=case["rtphits"], workspace_root=case["workspace"],
         confirmed_non_patient_phantom=True, platform_system="Windows",
         pixel_clipping=(9, 24, 5, 20), slice_range=(3, 6),
+        coarse_graining=factors,
         timeout_seconds=12.0, runner=runner,
     )
     input_text = (case["workspace"] / "ct2phits.inp").read_text()
-    assert "3 6\n9 24 5 20\n8 8 2\n" in input_text
+    assert f"3 6\n9 24 5 20\n8 8 {factors[2]}\n" in input_text
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["ct2phits_input"]["retained_source_bounds"] == [9, 24, 5, 20, 3, 6]
-    assert manifest["ct2phits_input"]["expected_voxel_counts"] == [2, 2, 2]
+    assert manifest["ct2phits_input"]["expected_voxel_counts"] == [2, 2, z_count]
     assert "warnings" not in manifest["ct2phits_input"]
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["placement_origin_dicom_cm"] == [-12.0, -8.0, -9.4]
@@ -316,12 +318,12 @@ def test_invalid_clipping_is_rejected_before_workspace_creation(tmp_path: Path) 
     assert not case["workspace"].exists()
 
 
-@pytest.mark.parametrize("factors", [(4, 4, 1), (8, 8, 1), (1, 1, 1)])
+@pytest.mark.parametrize("factors", [(4, 4, 1), (4, 8, 1), (1, 1, 1)])
 def test_nondefault_coarse_graining_is_rejected_before_workspace_creation(
     tmp_path: Path, factors: tuple[int, int, int],
 ) -> None:
     case = _case(tmp_path)
-    with pytest.raises(Ct2PhitsFrontendError, match="non-default CT coarse graining"):
+    with pytest.raises(Ct2PhitsFrontendError, match="unverified CT coarse graining"):
         run_ct2phits_frontend(
             ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
             rtphits_root=case["rtphits"], workspace_root=case["workspace"],
