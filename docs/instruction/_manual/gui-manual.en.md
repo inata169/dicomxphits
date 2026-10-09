@@ -2,9 +2,9 @@
 
 Updated: 2026-10-09. [日本語](gui-manual.ja.md) / [Document index](README.md)
 
-The base v1.1.x workflow was checked against published v1.1.1. That release includes the retry recovery repair in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). Install the current checkout to use the later source-tree additions described below; Help → About still reports package version 1.1.1. An already running GUI retains its imported code.
+The base v1.1.x workflow was checked against published v1.1.1. That release includes the retry recovery repair in [PR #83](https://github.com/inata169/dicomxphits/pull/83) and observation/Structure freshness repairs in [PR #84](https://github.com/inata169/dicomxphits/pull/84). In the v1.1.2 release candidate, Help → About reports package version 1.1.2. An already running GUI retains its imported code.
 
-Source-tree note (2026-10-09): the CT preview and clipping conversion described below were added after the published v1.1.1 tag. They are available in the current source tree, not in the v1.1.1 release. The PHITS ROI statistics GUI is a separate tool described in the [standalone guide](../../phits-roi-statistics.md).
+Release-candidate note (2026-10-09): the CT preview and clipping conversion described below and the separate PHITS ROI statistics GUI are included in the v1.1.2 candidate. They are not in the published v1.1.1 tag. The statistics GUI is described in the [standalone guide](../../phits-roi-statistics.md).
 
 This is experimental education and research software for fixed-field 3D-CRT using authorized non-patient phantom data. Clinical use, patient QA, IMRT, dynamic MLC and VMAT are outside its scope. This manual does not establish stable operation with real external tools or dose agreement with a clinical machine.
 

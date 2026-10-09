@@ -76,7 +76,12 @@ capability or physical validation is claimed.
 The current `main` branch also contains two **post-v1.1.1** additions: the
 independent PHITS ROI statistics GUI and manual CT clipping in the guided GUI.
 They are not part of the published `v1.1.1` tag; the unchanged package/About
-version does not indicate that these additions are in that release.
+version on `main` does not indicate that these additions are in that release.
+
+Version 1.1.2 is being prepared from those additions and the bounded CT
+preview fix. The release candidate has not been published; see the
+[v1.1.2 candidate notes](docs/release-notes-v1.1.2.md) for its evidence and
+remaining checks. An installed candidate reports **Version 1.1.2** in About.
 
 The current public release is
 [`v1.1.1`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1). It is

@@ -1,0 +1,52 @@
+# dicomxphits v1.1.2 Release Candidate
+
+Status: under review. The current public release remains
+[v1.1.1](https://github.com/inata169/dicomxphits/releases/tag/v1.1.1).
+This candidate is for education and research with authorized non-patient
+phantom data. It is not clinical commissioning, patient QA, vendor
+certification, or a claim of physical dose accuracy.
+
+## Changes since v1.1.1
+
+- The independent PHITS ROI statistics GUI (`run_phits_roi_stats_gui.bat`)
+  provides a separate interface for inspecting a completed Sumtally dose and
+  error pair. It does not change the guided calculation workflow.
+- The guided CT2PHITS page offers linked Axial, Coronal, and Sagittal previews.
+  Users can select an axis-aligned CT box manually by two corners or by source
+  pixel and slice indices. The source DICOM series is not overwritten.
+- CT2PHITS coarse graining accepts equal positive X/Y factors and a Z factor
+  from 1 through 4; the default remains `8 8 2`. The GUI warns about any
+  incomplete high-end groups before conversion. The retained bounds are
+  recorded, and generated grid dimensions and every material assignment are
+  checked against the frozen CT and conversion table before downstream use.
+- The preview samples large CT volumes within a bounded display memory budget
+  so that a typical several-hundred-slice series can be inspected. The
+  conversion still reads the selected full-resolution CT data.
+- English user documentation covers CT clipping and the independent ROI GUI.
+  Package metadata and Help → About report version 1.1.2 for this candidate.
+
+Clipping keeps one axis-aligned box. Objects inside that box are retained; it
+does not perform automatic segmentation. Coarse graining averages source HU
+detail and may change representation of boundaries. The user must inspect the
+retained region and intended structures before conversion. CT2PHITS and PHITS
+are separately licensed, user-supplied external tools; they are not included
+in the source release.
+
+## Verification and release boundary
+
+The integrated Windows / Python 3.12 candidate passed the full public suite
+on 2026-10-09: **1564 passed, 15 skipped**. The focused version, installation,
+CT clipping, and GUI suite passed **234 tests with 2 skips**. Source compilation,
+the public-tree audit (458 tracked files), and whitespace checks passed.
+The skips and a duplicate ZIP-member warning are not successful executions.
+This validation uses synthetic and mock data, not patient data or real
+external-tool execution of the candidate. A separate ongoing real PHITS
+calculation is not evidence of completed candidate execution. The user must
+review the completed external-tool workflow and resulting geometry before
+this candidate can be described as verified for that case. Live progress and
+geometry-only plots do not establish dose accuracy, convergence, or
+clinical suitability.
+
+No custom Windows offline bundle is planned. Existing workspaces remain
+subject to their recorded provenance and freshness checks. Use a separate
+workspace for candidate evaluation and retain the original inputs and results.

@@ -2,9 +2,9 @@
 
 For clinical medical physicists and fourth-year university students studying medical physics
 
-The linked CT clipping preview described below is in the current source tree
-after v1.1.1; it is not included in the published v1.1.1 tag. The separate
-PHITS ROI statistics window is documented in the
+The linked CT clipping preview described below is in the v1.1.2 release
+candidate; it is not included in the published v1.1.1 tag. The separate
+PHITS ROI statistics window is also in the candidate and is documented in the
 [standalone guide](phits-roi-statistics.md).
 
 > **Important**
