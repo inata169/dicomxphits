@@ -376,6 +376,28 @@ def _current_combined_source(
     return dose, error, mesh, binding, current, control_evidence
 
 
+def _require_clipped_placement(
+    manifest: dict[str, Any],
+    summary: dict[str, Any],
+    ct_assets: dict[str, Any],
+) -> None:
+    ct2phits_input = manifest.get("ct2phits_input")
+    if not isinstance(ct2phits_input, dict) or ct2phits_input.get(
+        "placement_reference_dicom"
+    ) is None:
+        return
+    frontend_placement = summary.get("placement_origin_dicom_cm")
+    prepared_placement = ct_assets.get("placement_origin_dicom_cm")
+    if (
+        not isinstance(frontend_placement, list)
+        or len(frontend_placement) != 3
+        or prepared_placement != frontend_placement
+    ):
+        raise StructureRelativeErrorUnavailable(
+            "clipped CT placement does not match workspace preparation"
+        )
+
+
 def _frozen_ct_series(
     ct_reference_path: Path,
     *,
@@ -500,6 +522,7 @@ def _frozen_ct_series(
         raise StructureRelativeErrorUnavailable(
             "frozen CT/plan geometry does not match workspace preparation"
         )
+    _require_clipped_placement(manifest, summary, ct_assets)
     recorded_rtplan = manifest.get("rtplan")
     if (
         not isinstance(recorded_rtplan, dict)

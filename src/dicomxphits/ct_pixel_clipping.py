@@ -1,7 +1,8 @@
 """Source-index clipping and reversible orthogonal preview coordinates.
 
-These coordinates describe a display only. They do not establish the external
-CT2PHITS crop geometry or authorize a non-default conversion.
+Preview coordinates are display-only. Coarse coverage reports the complete
+source groups established for the approved CT2PHITS default factors; it does
+not infer anatomy or authorize unverified factor combinations.
 """
 
 from __future__ import annotations
@@ -101,6 +102,51 @@ class ClipBounds:
         if plane == "Sagittal":
             return self.nx_min <= index <= self.nx_max
         raise ClipError("unknown preview plane")
+
+
+@dataclass(frozen=True)
+class CoarseCoverage:
+    """Source indices represented by complete CT2PHITS coarse groups."""
+
+    effective: ClipBounds
+    discarded_high: tuple[int, int, int]
+    voxel_counts: tuple[int, int, int]
+
+    @property
+    def has_discarded_source(self) -> bool:
+        return any(self.discarded_high)
+
+    def warning(self) -> str:
+        x, y, z = self.discarded_high
+        return (
+            "CT2PHITS coarse graining will discard source pixels at the high end "
+            f"of the selected box: X {x}, Y {y}, Z {z}. "
+            f"Retained source bounds: X {self.effective.nx_min}-{self.effective.nx_max}, "
+            f"Y {self.effective.ny_min}-{self.effective.ny_max}, "
+            f"slices {self.effective.first}-{self.effective.last}. "
+            "Review that the retained box contains the intended anatomy and PTV. "
+            "Coarse graining also averages source detail."
+        )
+
+
+def coarse_coverage(bounds: ClipBounds, factors: tuple[int, int, int]) -> CoarseCoverage:
+    if len(factors) != 3 or any(factor < 1 for factor in factors):
+        raise ClipError("coarse graining factors must be positive")
+    widths = (
+        bounds.nx_max - bounds.nx_min + 1,
+        bounds.ny_max - bounds.ny_min + 1,
+        bounds.last - bounds.first + 1,
+    )
+    counts = tuple(width // factor for width, factor in zip(widths, factors))
+    if any(count == 0 for count in counts):
+        raise ClipError("selected CT box is smaller than one coarse voxel")
+    discarded = tuple(width % factor for width, factor in zip(widths, factors))
+    effective = ClipBounds(
+        bounds.nx_min, bounds.nx_max - discarded[0],
+        bounds.ny_min, bounds.ny_max - discarded[1],
+        bounds.first, bounds.last - discarded[2],
+    )
+    return CoarseCoverage(effective, discarded, counts)
 
 
 @dataclass(frozen=True)

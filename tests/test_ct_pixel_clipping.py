@@ -10,7 +10,7 @@ import pydicom
 import pytest
 from pydicom.dataset import Dataset, FileDataset
 
-from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, PlaneTransform, VolumeShape
+from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, PlaneTransform, VolumeShape, coarse_coverage
 from dicomxphits.ct_preview import CtPreviewDialog, PreviewError, load_preview
 
 
@@ -51,6 +51,17 @@ def test_three_plane_corner_mapping_and_display_inverse() -> None:
 def test_invalid_numeric_bounds_are_rejected(values: tuple[str, ...]) -> None:
     with pytest.raises(ClipError):
         ClipBounds.parse(values, VolumeShape(7, 5, 4, 1, 1, 2))
+
+
+def test_coarse_coverage_reports_exact_high_end_loss() -> None:
+    coverage = coarse_coverage(ClipBounds(9, 25, 5, 21, 2, 6), (8, 8, 2))
+    assert coverage.voxel_counts == (2, 2, 2)
+    assert coverage.discarded_high == (1, 1, 1)
+    assert coverage.effective == ClipBounds(9, 24, 5, 20, 2, 5)
+    assert coverage.has_discarded_source
+    assert "X 1, Y 1, Z 1" in coverage.warning()
+    with pytest.raises(ClipError, match="smaller than one coarse voxel"):
+        coarse_coverage(ClipBounds(1, 7, 1, 8, 1, 2), (8, 8, 2))
 
 
 def _pixel_series(root: Path, *, count: int = 3) -> None:

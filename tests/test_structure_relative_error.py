@@ -42,6 +42,17 @@ from dicomxphits.structure_relative_error import (
 from dicomxphits.workspace_recovery import normalize_relocated_sumtally_summaries
 
 
+def test_clipped_ct_placement_must_match_downstream_evidence() -> None:
+    manifest = {"ct2phits_input": {"placement_reference_dicom": "CT/CT000003.dcm"}}
+    summary = {"placement_origin_dicom_cm": [1.0, 2.0, 3.0]}
+    assets = {"placement_origin_dicom_cm": [1.0, 2.0, 3.0]}
+    module._require_clipped_placement(manifest, summary, assets)
+    with pytest.raises(module.StructureRelativeErrorUnavailable, match="clipped CT placement"):
+        module._require_clipped_placement(manifest, summary, {"placement_origin_dicom_cm": [1, 2, 2]})
+    with pytest.raises(module.StructureRelativeErrorUnavailable, match="clipped CT placement"):
+        module._require_clipped_placement(manifest, {}, assets)
+
+
 MESH = Mesh(
     "Authored completed fixture",
     "dose.out",

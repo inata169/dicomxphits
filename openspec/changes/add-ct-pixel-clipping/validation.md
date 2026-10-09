@@ -216,8 +216,49 @@ No distribution file or generated output was added to Git.
   agrees with the observed loss. Unequal X/Y factors are unsafe in this
   installed version.
 
-These observations do not authorize silently changing the public coordinate
-handoff or narrowing selectable ranges. The active conversion gate remains
-until the human decides on the selected-slice coordinate handoff and on how to
-handle non-divisible and unequal-factor selections. Tests with fake runners
-alone cannot establish these external-tool properties.
+At the time of this experiment, these observations did not authorize silently
+changing the public coordinate handoff or narrowing selectable ranges. Later
+human decisions for the default-factor clipping path are recorded below. Tests
+with fake runners alone cannot establish external-tool properties.
+
+## Approved default-factor clipped conversion, 2026-10-09
+
+The user chose the existing `8 8 2` default for clipped conversion, accepted
+that coarse graining changes fine HU and boundary representation, and directed
+that incomplete high-end groups cause a warning followed by conversion rather
+than rejection. A separate explicit `yes` approved using the selected first
+frozen slice's DICOM origin for clipped placement while retaining the complete
+source-series origin for audit. The user requested main-GUI colors on child
+windows; the CT preview and new modal warning use that palette.
+
+The frontend now writes requested bounds to the CT2PHITS input, and records
+retained source bounds, discarded high-end counts, expected voxel counts, and
+the selected placement slice. It warns before invoking the runner. A box with
+no complete coarse group on any axis still fails before creating a workspace.
+Raw CT2PHITS DICOM-origin fields must agree with the selected slice at the
+tool's printed precision, and generated voxel counts must match complete
+groups. The second CT asset preparation in the public 3D-CRT workspace builder
+reuses the frozen placement slice and checks origin, raw hashes, and counts
+against completed frontend evidence. Structure relative-error evaluation also
+checks placement-origin agreement while retaining full-series source mapping.
+
+Focused synthetic tests: **317 passed, 1 skipped** in the targeted run;
+the additional downstream integration test passed separately. The final full
+public suite after the raw-origin and full-volume compatibility checks:
+**1533 passed, 15 skipped, 1 existing warning**.
+`python -m compileall src`, `python tools/verify_public_tree.py`, and
+`git diff --check` passed. The OpenSpec CLI was unavailable; manual
+structural review found requirement headings and scenarios in all four delta
+specifications. The CT child windows could not be visually checked on this
+sandboxed Tk display; their colors and styles were inspected in code.
+The first full run exposed six synthetic fixture constructor failures after
+adding the placement-origin field; the optional default preserved legacy
+construction, and the final full run passed. One earlier focused run hit the
+existing sandbox pytest temporary-directory permission error and was rerun
+with approved execution permissions. No further real CT2PHITS or PHITS
+transport run was performed in this implementation turn.
+
+Non-default coarse-graining triples remain unavailable at conversion time.
+The installed tool lost Y material with unequal X/Y factors. The user-entered
+fields and CLI input validation remain, but supported behavior for general
+triples is not established. The active OpenSpec change therefore remains open.

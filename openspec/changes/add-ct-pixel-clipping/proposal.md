@@ -34,10 +34,15 @@ which source voxels to retain and which equipment or other material to exclude.
   Retain complete, unmodified source CT and RT Plan snapshots.
 - Preserve the full-volume default and coarse-graining default `8 8 2`, while
   allowing explicit positive X/Y/Z factors. Preserve coordinate mode `1` and
-  existing safety gates. Reject unverified non-default external conversion.
-- Establish supported-version clipping/coarse-graining and output-coordinate
-  behavior before enabling non-default conversion. Do not guess offsets,
-  silently snap indices, or infer real-tool compatibility from mock tests.
+  existing safety gates. The approved clipped conversion uses `8 8 2`; other
+  factor triples remain unavailable until their tool behavior is established.
+- For clipped conversion, retain complete coarse groups and warn before
+  execution when incomplete high-end groups will be discarded. Record both
+  requested and retained bounds. Reject a box that yields zero voxels on any
+  axis. Preserve the complete source snapshots.
+- Place a clipped output using the selected first frozen slice's DICOM origin,
+  while retaining the full-series origin as source evidence. Check that the
+  raw tool origin and generated voxel counts match the selected contract.
 
 ## Impact
 
@@ -59,16 +64,15 @@ which source voxels to retain and which equipment or other material to exclude.
 
 Status: approved for implementation by the user's 2026-10-09 request sending
 the saved implementation prompt, extended by the same day's explicit numeric
-coarse-graining request. Real-data/tool execution and inferred
-coordinate or physics changes remain outside that approval. Implementation is
-active while the supported-tool crop geometry contract remains unresolved.
+coarse-graining request. The separately approved synthetic CT2PHITS experiment
+established the default-factor crop behavior described in `validation.md`.
+The change remains active because general user-entered factor triples are not
+yet established for conversion; unequal X/Y factors lost material in the
+installed version. Real-patient data and PHITS transport remain outside the
+approval.
 
-Before enabling clipping, establish inclusive pixel/slice endpoint behavior,
-small/unaligned/remainder selections with the default `8 8 2` and any supported
-user-entered factors, and crop-offset placement
-in generated geometry. The current handoff replaces c91/c92/c93 using the
-original full-series origin. See `design.md`.
-
-If evidence requires changing that coordinate handoff or adding a selection
-restriction, revise the proposal and obtain the required separate decision.
-Plan approval does not authorize guessed geometry or real external execution.
+The user's subsequent approvals authorize the selected-first-slice coordinate
+handoff and warning rather than rejection for incomplete high-end coarse
+groups. The user reconfirmed `8 8 2` for clipped conversion because `1 1 1`
+would take longer. These approvals do not authorize guessing geometry or
+running PHITS transport or real-patient data.

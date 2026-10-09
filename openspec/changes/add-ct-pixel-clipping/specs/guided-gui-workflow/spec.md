@@ -103,3 +103,10 @@ active execution's request.
 - **WHEN** the user enters three positive integer factors
 - **THEN** the GUI passes those factors through the existing CLI path only
   when the supported-tool geometry contract permits conversion
+
+#### Scenario: Clipped default coarse conversion with remainders
+
+- **WHEN** a valid selected box under `8 8 2` has incomplete high-end groups
+- **THEN** the GUI shows the lost source counts and retained source bounds as a
+  warning in a child window using the main GUI palette before starting the
+  frontend; Continue proceeds with the requested box and Cancel leaves it idle

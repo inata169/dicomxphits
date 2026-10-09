@@ -123,6 +123,8 @@ def _write_generated_datfiles(
     missing: str | None = None,
     empty: str | None = None,
     old_mtime: bool = False,
+    counts: tuple[int, int, int] = (12, 8, 1),
+    raw_origin_cm: tuple[float, float, float] = (-12.0, -8.0, -10.0),
 ) -> None:
     root.mkdir(exist_ok=True)
     for name in CT2PHITS_GENERATED_NAMES:
@@ -131,15 +133,15 @@ def _write_generated_datfiles(
         content = f"$ synthetic {name}\n"
         if name == "CTusrparam.dat":
             content = (
-                "set: c81[12]\n"
-                "set: c82[8]\n"
-                "set: c83[1]\n"
+                f"set: c81[{counts[0]}]\n"
+                f"set: c82[{counts[1]}]\n"
+                f"set: c83[{counts[2]}]\n"
                 "set: c84[0.8]\n"
                 "set: c85[0.8]\n"
                 "set: c86[1.0]\n"
-                "set: c91[-12.0]\n"
-                "set: c92[-8.0]\n"
-                "set: c93[-10.0]\n"
+                f"set: c91[{raw_origin_cm[0]:.5f}]\n"
+                f"set: c92[{raw_origin_cm[1]:.5f}]\n"
+                f"set: c93[{raw_origin_cm[2]:.5f}]\n"
             )
         path = root / name
         path.write_text("" if name == empty else content, encoding="utf-8")
@@ -148,13 +150,16 @@ def _write_generated_datfiles(
             os.utime(path, ns=(old_ns, old_ns))
 
 
-def _case(tmp_path: Path) -> dict[str, Path]:
+def _case(
+    tmp_path: Path, *, z_positions_mm: tuple[float, ...] = (-100.0, -50.0),
+) -> dict[str, Path]:
     frame_uid = _uid()
     ct_root = tmp_path / "source_ct"
     _write_ct_series(
         ct_root,
         frame_uid=frame_uid,
         series_uid=_uid(),
+        z_positions_mm=z_positions_mm,
     )
     return {
         "ct_root": ct_root,
@@ -176,25 +181,127 @@ def _success_runner(workspace: Path):
     return runner
 
 
-@pytest.mark.parametrize("pixel_clipping,slice_range", [
-    ((2, 96, 1, 64), None),
-    (None, (2, 2)),
-    ((2, 95, 3, 63), (2, 2)),
-])
-def test_nondefault_clipping_is_rejected_before_workspace_creation(
-    tmp_path: Path,
-    pixel_clipping: tuple[int, int, int, int] | None,
-    slice_range: tuple[int, int] | None,
-) -> None:
+def test_clipping_smaller_than_one_coarse_voxel_is_rejected(tmp_path: Path) -> None:
     case = _case(tmp_path)
-    with pytest.raises(Ct2PhitsFrontendError, match="non-default CT clipping is unavailable"):
+    with pytest.raises(Ct2PhitsFrontendError, match="smaller than one coarse voxel"):
         run_ct2phits_frontend(
             ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
             rtphits_root=case["rtphits"], workspace_root=case["workspace"],
             confirmed_non_patient_phantom=True, platform_system="Windows",
-            pixel_clipping=pixel_clipping, slice_range=slice_range,
+            pixel_clipping=(2, 7, 1, 64),
         )
     assert not case["workspace"].exists()
+
+
+def test_clipped_default_coarse_records_warning_and_retained_box(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    case = _case(tmp_path)
+    warning_before_runner: list[bool] = []
+
+    def runner(command, cwd, timeout_seconds):
+        warning_before_runner.append("X 1, Y 1, Z 0" in capsys.readouterr().err)
+        _write_generated_datfiles(case["workspace"] / "DATfiles", counts=(2, 2, 1))
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        pixel_clipping=(9, 25, 5, 21), timeout_seconds=12.0, runner=runner,
+    )
+    assert warning_before_runner == [True]
+    assert "9 25 5 21\n" in (case["workspace"] / "ct2phits.inp").read_text()
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["ct2phits_input"]["retained_source_bounds"] == [9, 24, 5, 20, 1, 2]
+    assert manifest["ct2phits_input"]["discarded_high_source_counts"] == [1, 1, 0]
+    assert manifest["ct2phits_input"]["expected_voxel_counts"] == [2, 2, 1]
+    assert manifest["ct_series"]["slice_count"] == 2
+
+
+def test_z_crop_uses_selected_first_slice_for_placement(tmp_path: Path) -> None:
+    case = _case(tmp_path, z_positions_mm=(-100, -97, -94, -91, -88, -85))
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(
+            case["workspace"] / "DATfiles",
+            counts=(12, 8, 2), raw_origin_cm=(-12, -8, -9.4),
+        )
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        slice_range=(3, 6), timeout_seconds=12.0, runner=runner,
+    )
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["ct_series"]["ct_origin_dicom_cm"] == [-12.0, -8.0, -10.0]
+    assert manifest["ct2phits_input"]["placement_reference_dicom"] == "CT/CT000003.dcm"
+    assert "3 6\n" in (case["workspace"] / "ct2phits.inp").read_text()
+    prepared = (result.prepared_assets_root / "CTusrparam.dat").read_text()
+    assert "set: c92[-12.40000]" in prepared
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["placement_origin_dicom_cm"] == [-12.0, -8.0, -9.4]
+
+
+def test_combined_xy_z_crop_preserves_requested_and_retained_geometry(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path, z_positions_mm=(-100, -97, -94, -91, -88, -85))
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(
+            case["workspace"] / "DATfiles", counts=(2, 2, 2),
+            raw_origin_cm=(-12, -8, -9.4),
+        )
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+
+    result = run_ct2phits_frontend(
+        ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+        rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+        confirmed_non_patient_phantom=True, platform_system="Windows",
+        pixel_clipping=(9, 24, 5, 20), slice_range=(3, 6),
+        timeout_seconds=12.0, runner=runner,
+    )
+    input_text = (case["workspace"] / "ct2phits.inp").read_text()
+    assert "3 6\n9 24 5 20\n8 8 2\n" in input_text
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["ct2phits_input"]["retained_source_bounds"] == [9, 24, 5, 20, 3, 6]
+    assert manifest["ct2phits_input"]["expected_voxel_counts"] == [2, 2, 2]
+    assert "warnings" not in manifest["ct2phits_input"]
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["placement_origin_dicom_cm"] == [-12.0, -8.0, -9.4]
+
+
+@pytest.mark.parametrize("raw_origin,counts,reason", [
+    ((-12, -8, -10), (12, 8, 2), "DICOM origin c93"),
+    ((-12, -8, -9.4), (12, 8, 1), "voxel counts disagree"),
+])
+def test_clipped_output_with_wrong_geometry_is_not_accepted(
+    tmp_path: Path,
+    raw_origin: tuple[float, float, float],
+    counts: tuple[int, int, int],
+    reason: str,
+) -> None:
+    case = _case(tmp_path, z_positions_mm=(-100, -97, -94, -91, -88, -85))
+
+    def runner(command, cwd, timeout_seconds):
+        _write_generated_datfiles(
+            case["workspace"] / "DATfiles", counts=counts,
+            raw_origin_cm=raw_origin,
+        )
+        return subprocess.CompletedProcess(command, 0, "synthetic stdout\n", "")
+
+    with pytest.raises(Ct2PhitsFrontendError, match=reason):
+        run_ct2phits_frontend(
+            ct_dicom_root=case["ct_root"], rtplan_path=case["rtplan"],
+            rtphits_root=case["rtphits"], workspace_root=case["workspace"],
+            confirmed_non_patient_phantom=True, platform_system="Windows",
+            slice_range=(3, 6), timeout_seconds=12.0, runner=runner,
+        )
+    summary = json.loads((case["workspace"] / "ct2phits_execution_summary.json").read_text())
+    assert summary["status"] == "failed"
 
 
 def test_invalid_clipping_is_rejected_before_workspace_creation(tmp_path: Path) -> None:

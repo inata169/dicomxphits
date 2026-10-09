@@ -12,17 +12,23 @@
 
 ## Contract evidence
 
-- [ ] Establish supported-version endpoint, axis, slice ordering,
-      coarse-graining remainder/alignment, and crop-offset behavior.
-- [ ] Define independent expected counts/extents/placement for XY-only,
-      Z-only, and combined crops; assess the existing coordinate handoff.
-- [ ] If coordinate changes or additional restrictions are needed, revise
-      the proposal and obtain the required human decision first.
+- [x] Establish supported-version endpoint, axis, slice ordering,
+      coarse-graining remainder/alignment, and crop-offset behavior for the
+      approved `8 8 2` clipped path using the authorized synthetic tool run.
+- [x] Define expected counts/extents/placement for XY-only, Z-only, and
+      combined crops; assess both CT2PHITS handoffs. The combined case is
+      checked with a fake runner, not a second real-tool run.
+- [x] Revise the proposal and obtain separate human decisions for the
+      selected-first-slice coordinate handoff and warning-plus-conversion
+      behavior for non-divisible default-factor boxes.
+- [ ] Establish supported-tool behavior for non-default factor triples before
+      enabling their conversion; unequal X/Y factors lost material in the
+      installed version.
 
 ## Implementation after approval
 
 - [x] Implement the shared six-bound model and pure three-plane mappings.
-- [ ] Add optional CLI/frontend pixel/slice ranges and manifest recording,
+- [x] Add optional CLI/frontend pixel/slice ranges and manifest recording,
       preserving full-volume defaults and complete snapshots.
 - [x] Add numeric GUI/CLI coarse-graining fields, validation, input and
       manifest recording, with `8 8 2` as the default.
@@ -31,11 +37,12 @@
       selection, synchronized fields/overlays, and Apply/Cancel/reset.
 - [x] Integrate case invalidation, immutable execution state, and existing
       shell-free CT2PHITS invocation.
-- [ ] Verify cropped geometry; do not enable conversion with unresolved
-      external contract or coordinate assumptions.
-- [ ] Add synthetic pixel fixtures, independent geometry cases, mapping/state
+- [x] Verify cropped geometry for the approved default factors, with raw
+      origin and output count checks; keep other factor triples gated.
+- [x] Add synthetic pixel fixtures, independent geometry cases, mapping/state
       tests, input/manifest tests, and full-volume regressions.
-- [x] Update English/Japanese GUI manuals with the current development-stage boundary.
+- [x] Update English/Japanese GUI manuals with warning, conversion, retained
+      bounds, and factor limitations. Match CT child-window colors to the GUI.
 
 ## Verification and completion
 
@@ -51,5 +58,5 @@
 - [ ] After completed approved implementation, promote accepted deltas,
       archive, validate the resulting tree, and provide a reviewable PR.
 
-Implementation checks and the remaining contract evidence gate are recorded
+Implementation checks and the non-default factor evidence gate are recorded
 in `validation.md`. The change remains active and cannot be archived yet.

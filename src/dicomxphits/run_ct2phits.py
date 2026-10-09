@@ -20,7 +20,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import pydicom
 from pydicom.misc import is_dicom
-from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, VolumeShape
+from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, VolumeShape, coarse_coverage
 
 from dicomxphits.ct2phits_datfiles import (
     RAW_CT2PHITS_NAMES,
@@ -532,6 +532,7 @@ def render_ct2phits_input(
     rows: int,
     columns: int,
     coarse_graining: Sequence[object] | None = None,
+    bounds: ClipBounds | None = None,
 ) -> str:
     if slice_count <= 0:
         raise Ct2PhitsFrontendError("CT2PHITS requires at least one CT slice")
@@ -545,13 +546,15 @@ def render_ct2phits_input(
         rtphits_root=rtphits_root,
     )
     coarse = " ".join(str(value) for value in _coarse_graining_values(coarse_graining))
+    selected = bounds or ClipBounds(1, columns, 1, rows, 1, slice_count)
+    selected.validate(VolumeShape(columns, rows, slice_count, 1.0, 1.0, None))
     return (
         "CT2PHITS input\n"
         '"data/HumanVoxelTable.data"\n'
         f'"{ct_relative}"\n'
         f'"{datfiles_relative}"\n'
-        f"1 {slice_count}\n"
-        f"1 {columns} 1 {rows}\n"
+        f"{selected.first} {selected.last}\n"
+        f"{selected.nx_min} {selected.nx_max} {selected.ny_min} {selected.ny_max}\n"
         f"{coarse}\n"
         "1\n"
     )
@@ -751,17 +754,19 @@ def run_ct2phits_frontend(
         bounds = ClipBounds.parse((*pixel_values, *slice_values), source_shape)
     except ClipError as exc:
         raise Ct2PhitsFrontendError(str(exc)) from exc
-    if not bounds.is_full(source_shape):
-        raise Ct2PhitsFrontendError(
-            "non-default CT clipping is unavailable: supported CT2PHITS endpoint, "
-            "coarse-graining, and output-coordinate behavior is not established"
-        )
     coarse_values = _coarse_graining_values(coarse_graining)
     if coarse_values != CT2PHITS_COARSE_GRAINING:
         raise Ct2PhitsFrontendError(
             "non-default CT coarse graining is unavailable: supported CT2PHITS "
             "averaging and output-coordinate behavior is not established"
         )
+    is_clipped = not bounds.is_full(source_shape)
+    coverage = None
+    if is_clipped:
+        try:
+            coverage = coarse_coverage(bounds, coarse_values)
+        except ClipError as exc:
+            raise Ct2PhitsFrontendError(str(exc)) from exc
     rtplan_source = rtplan_path.resolve()
     try:
         ct_origin, frame_uid, _series_uid, selected_count = _ct_series_origin(
@@ -872,6 +877,7 @@ def run_ct2phits_frontend(
                 rows=selected.rows,
                 columns=selected.columns,
                 coarse_graining=coarse_values,
+                bounds=bounds,
             ),
             encoding="utf-8",
             newline="\n",
@@ -905,8 +911,8 @@ def run_ct2phits_frontend(
         "ct2phits_input": {
             "path": CT2PHITS_INPUT_NAME,
             "signature": "CT2PHITS input",
-            "slice_range": [1, len(copied_files)],
-            "clipping": [1, selected.columns, 1, selected.rows],
+            "slice_range": [bounds.first, bounds.last],
+            "clipping": [bounds.nx_min, bounds.nx_max, bounds.ny_min, bounds.ny_max],
             "coarse_graining": list(coarse_values),
             "coordinate_mode": 1,
         },
@@ -919,10 +925,29 @@ def run_ct2phits_frontend(
             ),
         },
     }
+    if coverage is not None:
+        manifest["ct2phits_input"]["placement_reference_dicom"] = (
+            f"CT/CT{bounds.first:06d}.dcm"
+        )
+        manifest["ct2phits_input"]["retained_source_bounds"] = [
+            coverage.effective.nx_min, coverage.effective.nx_max,
+            coverage.effective.ny_min, coverage.effective.ny_max,
+            coverage.effective.first, coverage.effective.last,
+        ]
+        manifest["ct2phits_input"]["discarded_high_source_counts"] = list(
+            coverage.discarded_high
+        )
+        manifest["ct2phits_input"]["expected_voxel_counts"] = list(
+            coverage.voxel_counts
+        )
+        if coverage.has_discarded_source:
+            manifest["ct2phits_input"]["warnings"] = [coverage.warning()]
     try:
         _write_json(manifest_path, manifest)
     except OSError as exc:
         _abort_workspace_preparation(workspace, exc)
+    for warning in manifest["ct2phits_input"].get("warnings", []):
+        print(f"CT2PHITS warning: {warning}", file=sys.stderr)
 
     input_relative = input_path.relative_to(root)
     command = (
@@ -948,6 +973,7 @@ def run_ct2phits_frontend(
     inventory: dict[str, dict[str, Any]] = {}
     raw_hashes: dict[str, str] | None = None
     prepared_hashes: dict[str, str] | None = None
+    placement_origin_cm: tuple[float, float, float] | None = None
     pre_run_outputs_absent = False
     try:
         _require_generated_outputs_absent(datfiles_root)
@@ -980,7 +1006,17 @@ def run_ct2phits_frontend(
             rtplan_path=rtplan_snapshot,
             output_root=prepared_root,
             confirmed_non_patient_phantom=True,
+            placement_reference_dicom=(
+                selected.files[bounds.first - 1]
+                if is_clipped else None
+            ),
         )
+        placement_origin_cm = prepared.placement_origin_dicom_cm
+        if (coverage is not None
+            and tuple(prepared.assets.voxel_counts) != coverage.voxel_counts):
+            raise Ct2PhitsFrontendError(
+                "CT2PHITS voxel counts disagree with the retained source bounds"
+            )
         raw_hashes = dict(raw.sha256)
         post_prepare_raw = validate_raw_ct2phits_datfiles(
             datfiles_root,
@@ -1068,6 +1104,9 @@ def run_ct2phits_frontend(
         "generated_inventory": inventory,
         "raw_datfiles_sha256": raw_hashes,
         "prepared_assets_sha256": prepared_hashes,
+        "placement_origin_dicom_cm": (
+            list(placement_origin_cm) if placement_origin_cm is not None else None
+        ),
         "workspace_preparation_handoff": {
             "ct_datfiles_root": "DATfiles",
             "ct_reference_dicom": "CT/CT000001.dcm",

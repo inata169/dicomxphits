@@ -147,6 +147,7 @@ class CtPreviewDialog:
         self.window = tk.Toplevel(parent)
         self.window.title("CT images / Clipping range")
         self.window.geometry("1120x760")
+        self.window.configure(background="#071A2B")
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.root = root
         self.series_uid = series_uid
@@ -178,42 +179,46 @@ class CtPreviewDialog:
         self.window.after(80, self._poll)
 
     def _build(self) -> None:
-        outer = ttk.Frame(self.window, padding=12)
+        outer = ttk.Frame(self.window, style="App.TFrame", padding=12)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, textvariable=self.status).pack(anchor="w")
-        ttk.Label(outer, textvariable=self.pointer).pack(anchor="w")
-        ttk.Label(outer, textvariable=self.retained).pack(anchor="w")
+        ttk.Label(outer, textvariable=self.status, style="CTPreview.TLabel").pack(anchor="w")
+        ttk.Label(outer, textvariable=self.pointer, style="CTPreview.TLabel").pack(anchor="w")
+        ttk.Label(outer, textvariable=self.retained, style="CTPreview.TLabel").pack(anchor="w")
         ttk.Label(
             outer,
             text="Green outline = retained box; shaded area = excluded. Browse with left click; "
                  "turn on corner selection to edit the box. Right click always moves the crosshair.",
             wraplength=1050,
+            style="CTPreview.TLabel",
         ).pack(anchor="w", pady=(4, 0))
-        view_tools = ttk.Frame(outer)
+        view_tools = ttk.Frame(outer, style="App.TFrame")
         view_tools.pack(fill="x", pady=(6, 0))
         ttk.Checkbutton(
             view_tools, text="Select two corners (left click)",
             variable=self.selection_mode, command=self._set_selection_mode,
+            style="CTPreview.TCheckbutton",
         ).pack(side="left")
         ttk.Button(view_tools, text="Show all three views", command=lambda: self._focus(None)).pack(
             side="right"
         )
-        views = ttk.Frame(outer)
+        views = ttk.Frame(outer, style="App.TFrame")
         views.pack(fill="both", expand=True, pady=8)
         views.rowconfigure(0, weight=1)
         self.views = views
         for column, name in enumerate(("Axial", "Coronal", "Sagittal")):
-            frame = ttk.LabelFrame(views, text=name, padding=5)
+            frame = ttk.LabelFrame(views, text=name, padding=5,
+                                   style="CTPreview.TLabelframe")
             frame.grid(row=0, column=column, sticky="nsew", padx=3)
             views.columnconfigure(column, weight=1)
             self.frames[name] = frame
-            controls = ttk.Frame(frame)
+            controls = ttk.Frame(frame, style="Surface.TFrame")
             controls.pack(fill="x", pady=(0, 4))
             ttk.Button(controls, text="−", width=3,
                        command=lambda n=name: self._step(n, -1)).pack(side="left")
             position = tk.StringVar(value="—")
             self.position_labels[name] = position
-            ttk.Label(controls, textvariable=position, width=12, anchor="center").pack(side="left")
+            ttk.Label(controls, textvariable=position, width=12, anchor="center",
+                      style="Surface.TLabel").pack(side="left")
             ttk.Button(controls, text="+", width=3,
                        command=lambda n=name: self._step(n, 1)).pack(side="left")
             ttk.Button(controls, text="Expand", command=lambda n=name: self._focus(n)).pack(side="right")
@@ -231,27 +236,29 @@ class CtPreviewDialog:
                               command=lambda _v, n=name: self._navigate(n))
             scale.pack(fill="x")
             self.scales[name] = scale
-            ttk.Label(frame, text={"Axial": "X →  Y ↓", "Coronal": "X →  Z ↑", "Sagittal": "Y →  Z ↑"}[name]).pack()
-        fields = ttk.Frame(outer)
+            ttk.Label(frame, text={"Axial": "X →  Y ↓", "Coronal": "X →  Z ↑", "Sagittal": "Y →  Z ↑"}[name],
+                      style="Surface.TLabel").pack()
+        fields = ttk.Frame(outer, style="App.TFrame")
         fields.pack(fill="x", pady=5)
         for i, label in enumerate(("Nx min", "Nx max", "Ny min", "Ny max", "First slice", "Last slice")):
-            ttk.Label(fields, text=label).grid(row=0, column=i)
+            ttk.Label(fields, text=label, style="CTPreview.TLabel").grid(row=0, column=i)
             var = tk.StringVar()
             var.trace_add("write", lambda *_: self._numeric_changed())
             self.fields.append(var)
             ttk.Entry(fields, textvariable=var, width=12).grid(row=1, column=i, padx=3)
-        contrast = ttk.Frame(outer)
+        contrast = ttk.Frame(outer, style="App.TFrame")
         contrast.pack(fill="x")
-        ttk.Label(contrast, text="Display centre").pack(side="left")
+        ttk.Label(contrast, text="Display centre", style="CTPreview.TLabel").pack(side="left")
         ttk.Entry(contrast, textvariable=self.center, width=9).pack(side="left", padx=6)
-        ttk.Label(contrast, text="Width").pack(side="left")
+        ttk.Label(contrast, text="Width", style="CTPreview.TLabel").pack(side="left")
         ttk.Entry(contrast, textvariable=self.width, width=9).pack(side="left", padx=6)
         ttk.Button(contrast, text="Refresh contrast", command=self._draw_all).pack(side="left")
-        actions = ttk.Frame(outer)
+        actions = ttk.Frame(outer, style="App.TFrame")
         actions.pack(fill="x", pady=10)
         ttk.Button(actions, text="Reset to full volume", command=self._reset).pack(side="left")
         ttk.Button(actions, text="Cancel", command=self.close).pack(side="right")
-        ttk.Button(actions, text="Apply", command=self._apply).pack(side="right", padx=8)
+        ttk.Button(actions, text="Apply", style="Primary.TButton",
+                   command=self._apply).pack(side="right", padx=8)
 
     def _load(self) -> None:
         try:
@@ -293,7 +300,7 @@ class CtPreviewDialog:
                     self.crosshair = ((shape.columns + 1) // 2,
                                       (shape.rows + 1) // 2,
                                       (shape.slices + 1) // 2)
-                    self.status.set("Two clicks in one image set its two axes. Conversion of a crop remains unavailable pending tool geometry evidence.")
+                    self.status.set("Two clicks in one image set its two axes. Review the retained bounds and coarse-graining warning before conversion.")
                     self._draw_all()
         except queue.Empty:
             pass

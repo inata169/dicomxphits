@@ -167,22 +167,45 @@ request with designated external paths. The original planning phase did not
 inspect an installation or execute a tool, and no official distribution file
 may be copied into the repository.
 
-### 2026-10-09 synthetic tool finding and pending decision
+### 2026-10-09 synthetic tool finding and approved default path
 
 An explicitly authorized run of the installed CT2PHITS batch on generated
 non-patient CT established inclusive bounds, floor-truncation of incomplete
 coarse groups, selected-slice DICOM shift, and loss of material data for
 unequal X/Y factors in this installed version. See `validation.md`.
 
-The current handoff uses the full source-series origin in its IEC translation.
+Before this change, the handoff used the full source-series origin in its IEC translation.
 For a Z crop beginning after slice one, that discards the tool's selected-slice
-translation. A proposed, not yet approved, correction is to derive the
-translation from the frozen selected first slice, cross-check it against the
-generated raw DICOM shift, and retain the full-series origin and count as
-separate source evidence. The geometry of unselected source snapshots and
-the HFS-to-IEC axis/sign transform would remain unchanged. Any conversion
-restriction for non-divisible source dimensions or unequal X/Y factors also
-requires an explicit human decision before the gate can be removed.
+translation. The user approved deriving the translation from the frozen
+selected first slice, checking it against the generated raw DICOM origin, and
+retaining the full-series origin and count as separate source evidence. The
+geometry of unselected source snapshots and the HFS-to-IEC axis/sign transform
+remain unchanged.
+
+The public 3D-CRT workspace builder prepares CT assets a second time from the
+frozen raw DATfiles. For a clipped frontend workspace it therefore reads the
+completed frontend manifest and summary, verifies the selected frozen slice's
+hash and input range, and passes that slice as the placement reference again.
+It compares the new source origin, placement origin, raw hashes, and voxel
+counts with frontend evidence before generating the downstream workspace.
+Standalone preparation without a frontend manifest retains its established
+full-series behavior.
+
+The user chose the existing `8 8 2` factor for clipped conversion and approved
+a warning, followed by conversion, when incomplete high-end coarse groups are
+discarded. The warning names the number of lost source columns, rows, and
+slices and the actually retained source bounds. The requested input bounds
+remain unchanged; no silent snapping or padding occurs. A box smaller than one
+coarse voxel on any axis cannot produce output and is rejected. Non-default
+factor triples remain gated; unequal X/Y factors lost material in the installed
+tool. The user must judge whether the retained box contains all intended
+anatomy and PTV, since no semantic segmentation is performed.
+
+The clipped conversion warning is a modal child window using the main GUI's
+navy, surface, text, and warning colors. Continue starts conversion; Cancel
+or closing the window leaves the case unchanged. The CT preview child window
+also uses the main GUI's colors. No system-native warning box is used for this
+new path.
 
 ## Acceptance and validation
 

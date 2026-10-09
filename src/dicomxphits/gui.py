@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Callable, Mapping, MutableMapping, Sequence
-from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError
+from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, coarse_coverage
 from dicomxphits.run_ct2phits import CT2PHITS_COARSE_GRAINING
 
 from dicomxphits import __version__
@@ -2373,6 +2373,23 @@ def _build_gui() -> int:
         focuscolor=colors["cyan"],
     )
     style.map("TCheckbutton", background=[("active", colors["surface"])])
+    style.configure(
+        "CTPreview.TLabel", background=colors["navy"],
+        foreground=colors["text"], font=("Segoe UI", 10),
+    )
+    style.configure(
+        "CTPreview.TCheckbutton", background=colors["navy"],
+        foreground=colors["text"], font=("Segoe UI", 10),
+    )
+    style.map("CTPreview.TCheckbutton", background=[("active", colors["navy"])])
+    style.configure(
+        "CTPreview.TLabelframe", background=colors["surface"],
+        bordercolor=colors["line"],
+    )
+    style.configure(
+        "CTPreview.TLabelframe.Label", background=colors["surface"],
+        foreground=colors["cyan"], font=("Segoe UI Semibold", 11),
+    )
 
     defaults = _default_values()
     values = {name: tk.StringVar(value=value) for name, value in defaults.items()}
@@ -3644,8 +3661,6 @@ def _build_gui() -> int:
                 f"Clipping: Nx {bounds.nx_min}–{bounds.nx_max}, "
                 f"Ny {bounds.ny_min}–{bounds.ny_max}, "
                 f"slices {bounds.first}–{bounds.last}"
-                + (" (conversion unavailable pending CT2PHITS crop geometry evidence)"
-                   if not bounds.is_full(volume.shape) else "")
             )
 
         selected_uid = values["ct_series_instance_uid"].get().strip()
@@ -3656,6 +3671,53 @@ def _build_gui() -> int:
                 and values["ct_series_instance_uid"].get().strip() == selected_uid
             ),
         )
+
+    def show_ct_clipping_warning(message: str) -> bool:
+        proceed = False
+        dialog = tk.Toplevel(root)
+        dialog.title("CT clipping / coarse graining")
+        dialog.configure(background=colors["navy"])
+        dialog.transient(root)
+        dialog.resizable(False, False)
+        panel = tk.Frame(
+            dialog, background=colors["surface"],
+            highlightbackground=colors["line"], highlightthickness=1,
+        )
+        panel.pack(fill="both", expand=True, padx=12, pady=12)
+        tk.Label(
+            panel, text="CT clipping warning", background=colors["surface"],
+            foreground=colors["warning"], font=("Segoe UI Semibold", 15),
+            anchor="w",
+        ).pack(fill="x", padx=20, pady=(18, 8))
+        tk.Label(
+            panel, text=message, background=colors["surface"],
+            foreground=colors["text"], font=("Segoe UI", 10),
+            justify="left", wraplength=560, anchor="w",
+        ).pack(fill="x", padx=20, pady=(0, 16))
+        def continue_conversion() -> None:
+            nonlocal proceed
+            proceed = True
+            dialog.destroy()
+
+        actions = tk.Frame(panel, background=colors["surface"])
+        actions.pack(anchor="e", padx=20, pady=(0, 18))
+        ttk.Button(actions, text="Cancel", command=dialog.destroy).pack(
+            side="left", padx=(0, 10)
+        )
+        ttk.Button(
+            actions, text="Continue conversion", style="Primary.TButton",
+            command=continue_conversion,
+        ).pack(side="left")
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.update_idletasks()
+        dialog.geometry(
+            f"+{root.winfo_rootx() + max(0, (root.winfo_width() - dialog.winfo_width()) // 2)}"
+            f"+{root.winfo_rooty() + max(0, (root.winfo_height() - dialog.winfo_height()) // 2)}"
+        )
+        dialog.grab_set()
+        dialog.focus_set()
+        root.wait_window(dialog)
+        return proceed
 
     ttk.Button(ct2_actions, text="CT images / Clipping range…", command=open_ct_preview).grid(
         row=2, column=0, sticky="w", pady=(5, 0)
@@ -4335,13 +4397,17 @@ def _build_gui() -> int:
                 finish_stage_error(spec, "CT source changed; reopen the preview", validation=True)
                 return
             if config.ct_clipping_bounds is not None:
-                finish_stage_error(
-                    spec,
-                    "Non-default clipping conversion is unavailable pending CT2PHITS "
-                    "endpoint, coarse-graining, and coordinate evidence.",
-                    validation=True,
-                )
-                return
+                try:
+                    coverage = coarse_coverage(applied_ct_bounds, coarse)
+                except ClipError as exc:
+                    finish_stage_error(spec, str(exc), validation=True)
+                    return
+                if coverage.has_discarded_source:
+                    warning = coverage.warning()
+                    append(warning, "warning")
+                    if not show_ct_clipping_warning(warning):
+                        append("CT2PHITS conversion cancelled after clipping warning.", "info")
+                        return
         if retry_plan is not None:
             if Path(config.workspace_root).expanduser().resolve() != Path(retry_plan["workspace_root"]):
                 messagebox.showerror("Run incomplete segments", "Workspace selection changed; create a new preview.")

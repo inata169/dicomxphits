@@ -10,10 +10,17 @@ The input SHALL default to the full source slice count and Rows and Columns.
 It MAY use explicitly supplied, validated one-based inclusive pixel and slice
 ranges under the `ct-pixel-clipping` contract. It SHALL use coarse graining
 `8 8 2` by default, accept an explicit positive integer X/Y/Z factor triple,
-and retain DICOM coordinate mode `1`. Effective ranges and factors SHALL be
+and retain DICOM coordinate mode `1`. Requested ranges and factors SHALL be
 recorded in `ct2phits_input.clipping`, `ct2phits_input.slice_range`, and
 `ct2phits_input.coarse_graining` without changing the
 original snapshot numbering, source dimensions, slice count, or origin.
+For clipped `8 8 2` conversion, the manifest SHALL also record retained source
+bounds, discarded high-end source counts, expected voxel counts, and the frozen
+placement reference slice. The frontend SHALL reject zero-voxel selections,
+check the raw tool's DICOM origin against that slice, and check the generated
+voxel counts against complete coarse groups before accepting the handoff.
+The execution summary SHALL record the placement origin separately from the
+full-series source origin.
 The frontend SHALL record the source RT Plan SHA-256,
 copy it into the isolated workspace without modification, verify the snapshot
 hash, and use only that stable snapshot for the downstream handoff. It SHALL
