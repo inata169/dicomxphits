@@ -18,9 +18,10 @@ from dicomxphits.ct_pixel_clipping import ClipBounds, ClipError, PlaneTransform,
 from dicomxphits.run_ct2phits import SelectedCtSeries, select_ct_series
 
 
-# Includes the int32 stack, one decoded slice, one float display plane and
-# temporary raster arrays. The estimate is deliberately conservative.
+# Budget for the preview stack, one full decoded source slice, and display
+# temporaries. Source dimensions and clipping coordinates are never reduced.
 PREVIEW_MEMORY_LIMIT = 128 * 1024 * 1024
+_PREVIEW_DISPLAY_RESERVE = 24 * 1024 * 1024
 
 
 class PreviewError(ValueError):
@@ -35,14 +36,25 @@ class PreviewVolume:
     slopes: tuple[float, ...]
     intercepts: tuple[float, ...]
     hashes: tuple[str, ...]
+    sample_stride: int
+    sampled_rows: np.ndarray
+    sampled_columns: np.ndarray
+
+    def displayed_plane_index(self, name: str, index: int) -> int:
+        if name == "Axial":
+            return index
+        if name not in ("Coronal", "Sagittal"):
+            raise PreviewError("unknown preview plane")
+        samples = self.sampled_rows if name == "Coronal" else self.sampled_columns
+        return int(samples[_nearest_sample(samples, index - 1)]) + 1
 
     def plane(self, name: str, index: int) -> np.ndarray:
         if name == "Axial":
             return self.pixels[index - 1].astype(np.float32) * self.slopes[index - 1] + self.intercepts[index - 1]
         if name == "Coronal":
-            raw = self.pixels[::-1, index - 1, :]
+            raw = self.pixels[::-1, _nearest_sample(self.sampled_rows, index - 1), :]
         elif name == "Sagittal":
-            raw = self.pixels[::-1, :, index - 1]
+            raw = self.pixels[::-1, :, _nearest_sample(self.sampled_columns, index - 1)]
         else:
             raise PreviewError("unknown preview plane")
         slopes = np.asarray(self.slopes[::-1], dtype=np.float32)[:, None]
@@ -70,6 +82,33 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _nearest_sample(samples: np.ndarray, source_index: int) -> int:
+    position = int(np.searchsorted(samples, source_index))
+    if position >= len(samples):
+        return len(samples) - 1
+    if position and source_index - samples[position - 1] <= samples[position] - source_index:
+        return position - 1
+    return position
+
+
+def _sampled_indices(length: int, stride: int) -> np.ndarray:
+    count = (length + stride - 1) // stride
+    return np.rint(np.linspace(0, length - 1, count)).astype(np.intp)
+
+
+def _preview_stride(rows: int, columns: int, slices: int) -> int:
+    # PixelData and the decoded full source slice can coexist during pydicom
+    # decoding. Keep those plus display arrays within the same bounded budget.
+    fixed_bytes = _PREVIEW_DISPLAY_RESERVE + 8 * rows * columns
+    for stride in range(1, max(rows, columns) + 1):
+        sampled_rows = (rows + stride - 1) // stride
+        sampled_columns = (columns + stride - 1) // stride
+        stack_bytes = 4 * slices * sampled_rows * sampled_columns
+        if fixed_bytes + stack_bytes <= PREVIEW_MEMORY_LIMIT:
+            return stride
+    raise PreviewError("CT preview exceeds the 128 MiB memory budget")
+
+
 def load_preview(
     root: Path,
     series_uid: str | None,
@@ -79,12 +118,12 @@ def load_preview(
 ) -> PreviewVolume:
     selected = select_ct_series(root, series_instance_uid=series_uid)
     count = len(selected.files)
-    voxels = count * selected.rows * selected.columns
-    if voxels * 16 + 4 * 1024 * 1024 > PREVIEW_MEMORY_LIMIT:
-        raise PreviewError("CT preview exceeds the 128 MiB memory budget")
+    stride = _preview_stride(selected.rows, selected.columns, count)
     if cancelled():
         raise PreviewError("preview loading cancelled")
-    pixels = np.empty((count, selected.rows, selected.columns), dtype=np.int32)
+    sampled_rows = _sampled_indices(selected.rows, stride)
+    sampled_columns = _sampled_indices(selected.columns, stride)
+    pixels = np.empty((count, len(sampled_rows), len(sampled_columns)), dtype=np.int32)
     slopes: list[float] = []
     intercepts: list[float] = []
     hashes: list[str] = []
@@ -107,7 +146,7 @@ def load_preview(
             intercept = float(getattr(dataset, "RescaleIntercept", 0))
             if not np.isfinite(slope) or not np.isfinite(intercept):
                 raise PreviewError("CT rescale values must be finite")
-            pixels[number] = decoded
+            pixels[number] = decoded[np.ix_(sampled_rows, sampled_columns)]
             slopes.append(slope)
             intercepts.append(intercept)
             z_positions.append(float(dataset.ImagePositionPatient[2]))
@@ -126,7 +165,8 @@ def load_preview(
     z_mm = z_positions[1] - z_positions[0] if count > 1 else None
     shape = VolumeShape(selected.columns, selected.rows, count,
                         selected.pixel_spacing_mm[1], selected.pixel_spacing_mm[0], z_mm)
-    return PreviewVolume(selected, shape, pixels, tuple(slopes), tuple(intercepts), tuple(hashes))
+    return PreviewVolume(selected, shape, pixels, tuple(slopes), tuple(intercepts),
+                         tuple(hashes), stride, sampled_rows, sampled_columns)
 
 
 def _photo(plane: np.ndarray, width: int, height: int, low: float, high: float) -> tk.PhotoImage:
@@ -222,7 +262,7 @@ class CtPreviewDialog:
                        command=lambda n=name: self._step(n, -1)).pack(side="left")
             position = tk.StringVar(value="—")
             self.position_labels[name] = position
-            ttk.Label(controls, textvariable=position, width=12, anchor="center",
+            ttk.Label(controls, textvariable=position, width=17, anchor="center",
                       style="Surface.TLabel").pack(side="left")
             ttk.Button(controls, text="+", width=3,
                        command=lambda n=name: self._step(n, 1)).pack(side="left")
@@ -401,6 +441,11 @@ class CtPreviewDialog:
                 )
             except ClipError:
                 self.retained.set("Retained source voxels: invalid bounds")
+            if self.volume.sample_stride > 1:
+                self.retained.set(
+                    self.retained.get()
+                    + f" | Display samples X/Y about 1 in {self.volume.sample_stride}; bounds use source indices"
+                )
         for name in self.canvases:
             self._draw(name)
 
@@ -416,7 +461,10 @@ class CtPreviewDialog:
             return
         limit = {"Axial": shape.slices, "Coronal": shape.rows, "Sagittal": shape.columns}[name]
         index = max(1, min(limit, round(self.nav[name].get())))
-        self.position_labels[name].set(f"{index} / {limit}")
+        displayed = self.volume.displayed_plane_index(name, index)
+        self.position_labels[name].set(
+            f"{index} / {limit}" if displayed == index else f"{index}/{limit} (shown {displayed})"
+        )
         transform = PlaneTransform(name, shape, max(1, canvas.winfo_width()), max(1, canvas.winfo_height()))
         left, top, width, height = transform.frame
         try:
