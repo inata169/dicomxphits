@@ -767,3 +767,8 @@ configuration, PHITS and RTphits distributions, credentials, and generated
 outputs. The only tracked DICOM file is the sanitized, zero-dose public RTDOSE
 template at `templates/phits2dicom_rtdose_template.dcm`; synthetic test data are
 generated in code, and no patient DICOM or real-tool result is included.
+
+## AI Disclosure / 生成AIの活用について
+
+**English:**
+Generative AI tools (e.g., Gemini, ChatGPT, Codex, Claude, GitHub Copilot) were utilized during the development of `dicomxphits` to assist with code refactoring, script generation, and documentation formatting. All core algorithms—including DICOM CT and RT Plan parsing, PHITS Monte Carlo input generation, 3D DICOM RT Dose reconstruction, and physical/dosimetric validations—were independently designed, verified, and tested by the author(s), who take full responsibility for the integrity and accuracy of this software.
