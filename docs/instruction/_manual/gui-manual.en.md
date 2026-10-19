@@ -299,8 +299,9 @@ Before discarding an unwanted case, verify execution has ended, ownership is rel
 | Recovery `Blocked` | Read the explanation/log. For unfinished PHITS use Chapter 7; for inconsistent evidence preserve the case and investigate. |
 | CT2PHITS timeout | Inspect its summary. If `process_tree_termination_error` is present, check surviving children before reusing the location. |
 | Geometry/model/dose-factor rejection | Inputs may be outside scope or evidence stale. Prepare a new case with suitable inputs/settings rather than changing guards to pass. |
+| PHITS exited `0` but stopped on `nonzero geometry diagnostics` | Any nonzero `lost_particles`, `geometry_recovering`, or `unrecovered_errors` count rejects tally promotion fail-closed. Do not manually copy staging files or edit `phits.out` or summaries; inspect `phits_outputs\...\phits.out` and `analysis\segment_execution_summary.json`, and when other segments succeeded with intact evidence, keep the GUI open and use `Run incomplete segments…` (Chapter 7) to rerun only the failed segment. |
 
-`Allow overwrite of downstream stage summaries` is not a universal recovery switch. Review preservation conditions and prefer Chapter 8 for existing cases. If relative error alone is unavailable, read its reason rather than immediately treating the whole PHITS calculation as failed.
+`Allow overwrite of downstream stage summaries` is not a universal recovery switch (though toggling it on and then off in an open GUI re-evaluates action-button readiness without leaving overwrite enabled). Review preservation conditions and prefer Chapter 8 for existing cases. If relative error alone is unavailable, read its reason rather than immediately treating the whole PHITS calculation as failed.
 
 ## 11. Special procedures
 

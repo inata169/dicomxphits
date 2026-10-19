@@ -374,6 +374,16 @@ evidence still validates.
 - Review `failure_reason`, `return_code`, the recorded stdout/stderr log paths (for example, `stdout_path` and `stderr_path`), and the recorded input and output paths. Field names vary slightly by stage.
 - If CT2PHITS timed out and `process_tree_termination_error` is not null, a human must confirm that no child process remains before reusing the external workspace.
 
+### PHITS finished with `return_code: 0` but failed with `PHITS reported nonzero geometry diagnostics`
+
+`dicomxphits` checks the three PHITS Category-I geometry diagnostic counters (`lost_particles`, `geometry_recovering`, and `unrecovered_errors`) in `phits.out` fail-closed. Even when PHITS exits with `return_code: 0`, any nonzero counter (including `geometry_recovering > 0`) causes the runner to reject the segment rather than publishing its tally output for Sumtally, while preserving the collected `phits_outputs\beam_XXXX_segment_YYYY\phits.out` and `analysis\segment_execution_summary.json` for inspection.
+
+Do not manually copy files from temporary staging directories or edit `phits.out`, `segment_execution_summary.json`, or `segment_preflight.json` to bypass this gate:
+
+1. Inspect `geometry_diagnostics` in `analysis\segment_execution_summary.json` and the `Geometry error summary` section in `phits_outputs\beam_XXXX_segment_YYYY\phits.out` to identify the reported region numbers and counters.
+2. When other segments in the same v4/v5 run succeeded and retry evidence is intact, keep the GUI open (so the process environment matches the recorded `environment_sha256`) and select **Run incomplete segments…** on the **3 PHITS** page to retain verified completed segments and rerun only the failed segment.
+3. If an open GUI does not immediately reflect updated workspace summary readiness on its action buttons, toggling **Allow overwrite of downstream stage summaries** at the bottom of the Workspace page on and then off refreshes the button states without enabling overwrite.
+
 ## 9. Using an existing CT2PHITS handoff
 
 Normally, begin at Step 1. Use **Use an existing validated CT2PHITS handoff (advanced)** on the Workspace page only when you already have a validated handoff. Provide:

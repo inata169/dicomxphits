@@ -299,8 +299,9 @@ CT2PHITSは空でも既存フォルダを拒否します。3D-CRT Prepareの非�
 | 復旧が`Blocked` | メッセージとActivity logを確認。PHITS未完了なら7章、証拠不一致ならケースを保存して原因確認。 |
 | CT2PHITS timeout | summaryを確認。`process_tree_termination_error`があれば、残存子プロセスの確認前に同じ場所を再利用しません。 |
 | geometry・モデル・dose factorの拒否 | 許容範囲外や古い証拠の可能性があります。ガード値を変えて通さず、適合する入力・設定で新規準備します。 |
+| PHITS終了コードは`0`だが`nonzero geometry diagnostics`で停止 | `lost_particles`・`geometry_recovering`・`unrecovered_errors`のいずれかが非ゼロの場合、フェイルクローズ契約によりタリ出力は昇格されず失敗となります。一時stagingからの手動コピーや`phits.out`・summaryの手修正は行わず、`phits_outputs\...\phits.out`と`analysis\segment_execution_summary.json`を確認し、他セグメントが検証済み成功ならGUIを閉じずに7章の`Run incomplete segments…`で未完了分のみを再実行します。 |
 
-`Allow overwrite of downstream stage summaries`は万能な復旧スイッチではありません。過去結果の保護条件を確認し、既存ケースの継続は8章を優先します。相対誤差だけが利用不能な場合にPHITS全体の失敗と即断せず、表示理由を確認します。
+`Allow overwrite of downstream stage summaries`は万能な復旧スイッチではありません（なお、開いたままのGUIでボタンの有効・無効表示を再評価させたい場合は、このチェックボックスを一度オン→オフに切り替えると状態が再読込されます）。過去結果の保護条件を確認し、既存ケースの継続は8章を優先します。相対誤差だけが利用不能な場合にPHITS全体の失敗と即断せず、表示理由を確認します。
 
 ## 11. 特別な操作
 
