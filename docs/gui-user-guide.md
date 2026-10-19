@@ -374,15 +374,15 @@ evidence still validates.
 - Review `failure_reason`, `return_code`, the recorded stdout/stderr log paths (for example, `stdout_path` and `stderr_path`), and the recorded input and output paths. Field names vary slightly by stage.
 - If CT2PHITS timed out and `process_tree_termination_error` is not null, a human must confirm that no child process remains before reusing the external workspace.
 
-### PHITS finished all batches (`return_code: 0`) but failed with `PHITS reported nonzero geometry diagnostics` (`geometry_recovering`)
+### PHITS finished with `return_code: 0` but failed with `PHITS reported nonzero geometry diagnostics`
 
-If a segment completes all scheduled batches with `return_code: 0`, `lost_particles: 0`, and `unrecovered_errors: 0`, but fails solely because PHITS recorded a recovered boundary-grazing event (`geometry_recovering > 0`, such as `region1 1200 / region2 1200`), the fail-closed runner leaves the completed tally outputs inside the staging directory (`<workspace>\analysis\.phits-segment-run-<id>\phits_outputs\beam_XXXX_segment_YYYY\`) rather than promoting them automatically.
+`dicomxphits` checks the three PHITS Category-I geometry diagnostic counters (`lost_particles`, `geometry_recovering`, and `unrecovered_errors`) in `phits.out` fail-closed. Even when PHITS exits with `return_code: 0`, any nonzero counter (including `geometry_recovering > 0`) causes the runner to reject the segment rather than publishing its tally output for Sumtally, while preserving the collected `phits_outputs\beam_XXXX_segment_YYYY\phits.out` and `analysis\segment_execution_summary.json` for inspection.
 
-After a human verifies that the staged tally files (`deposit-target-3D.out`, `deposit-target-3D_err.out`, `deposit-pdd.out`) completed all batches and backs up the workspace, you can proceed to Sumtally without rerunning the multi-hour PHITS calculation:
+Do not manually copy files from temporary staging directories or edit `phits.out`, `segment_execution_summary.json`, or `segment_preflight.json` to bypass this gate:
 
-1. Copy `deposit-target-3D.out`, `deposit-target-3D_err.out`, and `deposit-pdd.out` from `<workspace>\analysis\.phits-segment-run-<id>\phits_outputs\beam_XXXX_segment_YYYY\` into `<workspace>\phits_outputs\beam_XXXX_segment_YYYY\`.
-2. Reconcile the segment's `phits.out` (`Number of geometry recovering = 0`), `analysis\segment_execution_summary.json` (`status: "success"`, `stage_status: "success"`, clean `geometry_diagnostics`, and matching SHA-256 digests in `expected_output_sha256`, `phits_out_sha256`, and `output_evidence`), and `analysis\segment_preflight.json` (`summary_sha256` matching the updated `segment_execution_summary.json`).
-3. In the open GUI, toggle the **`Allow overwrite of downstream stage summaries`** checkbox at the bottom of the Workspace page **on and then off**. This triggers `refresh_action_button_states()` to re-read the updated summary and enables **Generate Sumtally** so you can continue directly to Sumtally and RTDOSE.
+1. Inspect `geometry_diagnostics` in `analysis\segment_execution_summary.json` and the `Geometry error summary` section in `phits_outputs\beam_XXXX_segment_YYYY\phits.out` to identify the reported region numbers and counters.
+2. When other segments in the same v4/v5 run succeeded and retry evidence is intact, keep the GUI open (so the process environment matches the recorded `environment_sha256`) and select **Run incomplete segments…** on the **3 PHITS** page to retain verified completed segments and rerun only the failed segment.
+3. If an open GUI does not immediately reflect updated workspace summary readiness on its action buttons, toggling **Allow overwrite of downstream stage summaries** at the bottom of the Workspace page on and then off refreshes the button states without enabling overwrite.
 
 ## 9. Using an existing CT2PHITS handoff
 
