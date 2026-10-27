@@ -19,11 +19,16 @@ from test_segment_retry import runner_for, workspace_fixture
 FORMAT = (Path(__file__).parent / "fixtures/phits_geometry_recovery_summary.synthetic.txt").read_text()
 
 
-def eligible(tmp_path, *, text=FORMAT, damage=None, count=1, preflight=False, secondary=False, fail_all=False):
+def eligible(tmp_path, *, text=FORMAT, damage=None, count=1, preflight=False, secondary=False, fail_all=False,
+             large_include=False):
     root, manifest, paths = workspace_fixture(tmp_path, segment_count=count)
+    if large_include:
+        (root / "CTvoxel.inp").write_text("$ Synthetic voxel dependency\n$ " + "1 0 -2 " * 700000 + "\n")
     for segment in manifest["segments"]:
         path = root / segment["phits_input_path"]
         path.write_text(path.read_text().replace("icntl = 0", "icntl = 0\n maxbch = 3"))
+        if large_include:
+            path.write_text("infl:{CTvoxel.inp}\n" + path.read_text())
         if secondary:
             path.write_text(path.read_text().replace("[ E N D ]", "[ T-Deposit ]\n file = "
                 + str(Path(segment["expected_output_path"]).with_name("deposit-pdd.out")).replace("\\", "/")
@@ -486,3 +491,58 @@ def test_receipt_rejects_absolute_path_in_version_even_with_recomputed_checksum(
         guard.write_json(root / RECEIPT_PATH, receipt)
     with pytest.raises(ValueError):
         validate_segment_execution_for_downstream(root, manifest, summary)
+
+
+def test_large_transitive_ct_input_is_scanned_with_bounded_reads(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    import dicomxphits.research_geometry_recovery as backend
+    root, manifest, _, summary = eligible(tmp_path, large_include=True)
+    assert (root / "CTvoxel.inp").stat().st_size > 4 * 1024**2
+    original = backend.checked_text_lines
+    reads = []
+
+    class BoundedReader:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def readline(self, size):
+            assert 0 < size <= 4096
+            reads.append(size)
+            return self.stream.readline(size)
+
+    @contextmanager
+    def checked(path, **kwargs):
+        with original(path, **kwargs) as stream:
+            yield BoundedReader(stream) if path.name == "CTvoxel.inp" else stream
+
+    monkeypatch.setattr(backend, "checked_text_lines", checked)
+    before = snapshot(root)
+    accept(root, summary)
+    assert reads
+    assert validate_segment_execution_for_downstream(root, manifest, summary)
+    assert all((root / path).read_bytes() == data for path, data in before.items())
+
+
+@pytest.mark.parametrize("text,expected", [
+    (" " * 4094 + "maxbch = 3\n", ["3"]),
+    ("$ " + "x" * 9000 + "\nmaxbch = 3", ["3"]),
+    ("maxbch = 3\nmaxbch = 4\n", ["3", "4"]),
+])
+def test_streamed_batch_scan_preserves_line_boundaries_and_duplicate_evidence(tmp_path, text, expected):
+    from dicomxphits.research_geometry_recovery import _prepared_batch_limits
+    from dicomxphits.safe_output import WorkspaceOutputGuard
+    path = tmp_path / "input.inp"
+    path.write_text(text)
+    with WorkspaceOutputGuard(tmp_path, read_only=True) as guard:
+        assert _prepared_batch_limits(tmp_path, [path], guard) == expected
+
+
+@pytest.mark.parametrize("text", ["maxbch = 3x\n", "maxbch = 3 #" + "x" * 5000])
+def test_streamed_batch_scan_rejects_malformed_or_oversized_parameter_lines(tmp_path, text):
+    from dicomxphits.research_geometry_recovery import _prepared_batch_limits
+    from dicomxphits.safe_output import WorkspaceOutputGuard
+    path = tmp_path / "input.inp"
+    path.write_text(text)
+    with WorkspaceOutputGuard(tmp_path, read_only=True) as guard:
+        with pytest.raises(ValueError, match="maxbch line"):
+            _prepared_batch_limits(tmp_path, [path], guard)

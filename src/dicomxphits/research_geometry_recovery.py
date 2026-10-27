@@ -63,6 +63,39 @@ def _operator_reason(reason):
     return reason.strip()
 
 
+def _prepared_batch_limits(root, inputs, guard):
+    """Scan transitive inputs without a voxel-file size cap or whole-line read."""
+    limits = []
+
+    def inspect(prefix, truncated):
+        if not re.match(r"maxbch\b", prefix, re.I):
+            return
+        if truncated:
+            raise ValueError("Prepared maxbch line exceeds its size limit")
+        match = re.fullmatch(r"maxbch\s*=\s*([0-9]{1,20})\s*(?:#.*)?", prefix.strip(), re.I)
+        if match is None:
+            raise ValueError("Prepared maxbch line is malformed")
+        limits.append(match.group(1))
+
+    for path in inputs:
+        before = _record(root, path, guard)
+        with checked_text_lines(path) as stream:
+            prefix, truncated = "", False
+            while chunk := stream.readline(4096):
+                # Leading indentation may span chunks. Retain only a bounded
+                # prefix after it; unrelated long voxel lines are drained.
+                part = chunk if prefix else chunk.lstrip()
+                truncated = truncated or len(prefix) + len(part) > 4096
+                prefix = (prefix + part)[:4096]
+                if chunk.endswith("\n"):
+                    inspect(prefix, truncated)
+                    prefix, truncated = "", False
+            inspect(prefix, truncated)
+        if _record(root, path, guard) != before:
+            raise ValueError("Prepared input changed while maxbch was scanned")
+    return limits
+
+
 def _context(root, staging_directory, guard, *, destinations=None):
     from dicomxphits.run_segments import (
         phits_staging_contract, phits_error_output_path,
@@ -158,10 +191,7 @@ def _context(root, staging_directory, guard, *, destinations=None):
             or ("region_pair_counts" in recorded
                 and recorded["region_pair_counts"] != completion["region_pair_counts"])):
         raise ValueError("Recorded geometry counts or pair distribution are invalid")
-    limits = []
-    for input_path in inputs:
-        raw, _ = _stable_bytes(input_path, guard=guard, label="prepared input", maximum_bytes=4 * 1024**2)
-        limits.extend(re.findall(r"(?im)^\s*maxbch\s*=\s*([0-9]{1,20})\s*(?:#.*)?$", raw.decode("utf-8")))
+    limits = _prepared_batch_limits(root, inputs, guard)
     if len(limits) != 1 or int(limits[0]) <= 0 or completion["completed_batches"] != int(limits[0]):
         raise ValueError("PHITS final batch does not equal prepared maxbch")
     required = set(declared + [phits_error_output_path(expected)])

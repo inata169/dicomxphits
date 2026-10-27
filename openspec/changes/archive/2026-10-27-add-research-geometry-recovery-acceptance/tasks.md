@@ -406,3 +406,30 @@ execution, real-data writes, physics/DICOM changes, scope expansion or merging.
 The existing branch and PR will be used throughout; unrelated local files are
 excluded. Review findings and corrections will be recorded with their evidence
 and validation results.
+
+
+## GitHub review round 1: large transitive CT inputs
+
+- Draft PR: https://github.com/inata169/dicomxphits/pull/102
+- Plugin-created implementation commit: `866a2a17c9c081e520f8cc558edf0b1a3494f42d`.
+  All 30 published blobs and the complete tree matched the audited local index.
+  GitHub plugin operations created the commit, branch, draft PR and review
+  request; native Git fetch was used only to synchronize the local object
+  database because the plugin does not expose raw commit objects.
+- Initial public CI passed on both Ubuntu and Windows.
+- Codex finding: inline comment `4384730595` identified rejection of valid
+  transitive `CTvoxel.inp` files above 4 MiB during prepared-maxbch scanning.
+  The renderer includes these assets and its contract has no such file cap.
+- A wholly synthetic include larger than 4 MiB reproduced the exact failure:
+  `prepared input exceeds its size limit` (one failing regression).
+- Replace whole-file reads with at-most-4096-character streaming reads. Keep
+  only a bounded logical-line prefix after leading whitespace, drain unrelated
+  long voxel lines, and preserve before/after SHA-256 and size validation.
+  Parameter numeric width, uniqueness, completion equality, and all ordinary
+  gates remain unchanged. Malformed or oversized parameter lines fail closed.
+- The same regression passed after correction attempt 1. Expanded focused
+  validation: 85 passed, one privilege-dependent symlink test skipped. Tests
+  include split line boundaries, unrelated long lines, duplicate evidence,
+  malformed parameters, immutable original/staged evidence and no real tools.
+- A full synthetic suite and GitHub re-review are pending at this checkpoint.
+  No physics, DICOM meaning, or accepted diagnostic threshold changed.
