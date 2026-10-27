@@ -1386,6 +1386,12 @@ def _current_sumtally_binding(
         return None
     if generation.get("manifest_sha256") != manifest_sha256(current_manifest):
         return None
+    try:
+        from dicomxphits.workspace_recovery import validate_research_exception_marker
+        validate_research_exception_marker(workspace_root, generation.get("research_exception"))
+        validate_research_exception_marker(workspace_root, execution.get("research_exception"))
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
     matching_fields = (
         "manifest_sha256",
         "sum_input_sha256",
@@ -1545,7 +1551,16 @@ def _execution_output_is_current(
 def rtdose_stage_state(workspace_root: Path) -> str:
     from dicomxphits.segment_preflight import require_finished_preflight
     try:
-        require_finished_preflight(workspace_root)
+        from dicomxphits.research_geometry_recovery import RECEIPT_PATH
+        if (os.path.lexists(workspace_root / RECEIPT_PATH)
+                or os.path.lexists(workspace_root / "analysis/segment_execution_summary.json")):
+            validate_segment_execution_for_downstream(
+                workspace_root,
+                read_summary(workspace_root / "segments/segment_manifest.json") or {},
+                read_summary(workspace_root / "analysis/segment_execution_summary.json"),
+            )
+        else:
+            require_finished_preflight(workspace_root)
     except (OSError, TypeError, ValueError):
         return RTDOSE_PHITS_INCOMPLETE
     prepare_path = (
@@ -2174,7 +2189,7 @@ def _friendly_stage_failure(spec: StageSpec, message: str) -> str:
 
 def _build_gui() -> int:
     import tkinter as tk
-    from tkinter import filedialog, scrolledtext, ttk
+    from tkinter import filedialog, scrolledtext, simpledialog, ttk
     from dicomxphits.gui_dialogs import GuiMessages
 
     colors = {
@@ -2415,6 +2430,12 @@ def _build_gui() -> int:
     final_rtdose_output = tk.StringVar(value="")
     tool_profile_status = tk.StringVar(value="Not validated")
     phits_progress_status = tk.StringVar(value="Not running")
+    from dicomxphits.research_geometry_gui import RESEARCH_NOTICE, ResearchGeometryReview
+    from dicomxphits.research_geometry_recovery import RECEIPT_PATH as GEOMETRY_RECEIPT_PATH
+    research_status = tk.StringVar(value="Research geometry acceptance has not been requested.")
+    research_generation = 0
+    research_verified_workspace = None
+    research_rtdose_state = RTDOSE_PHITS_INCOMPLETE
     from dicomxphits.phits_observation import Presentation
     observation_presentation = Presentation()
     phits_observation_status = tk.StringVar(value="Observation unavailable: no owned active segment.")
@@ -2463,6 +2484,9 @@ def _build_gui() -> int:
         workspace = values["workspace_root"].get().strip()
         if not workspace:
             return RTDOSE_NOT_PREPARED
+        selected = Path(workspace).expanduser().resolve()
+        if os.path.lexists(selected / GEOMETRY_RECEIPT_PATH):
+            return research_rtdose_state if research_verified_workspace == selected else RTDOSE_PHITS_INCOMPLETE
         return rtdose_stage_state(Path(workspace).expanduser())
 
     def current_structure_evaluation_inputs() -> tuple[str, ...]:
@@ -2599,7 +2623,12 @@ def _build_gui() -> int:
         if rtdose_state == RTDOSE_PHITS_INCOMPLETE or nav_status["rtdose"].get() == "PHITS incomplete":
             nav_status["rtdose"].set(rtdose_nav_status(rtdose_state))
         for stage_key, button in action_buttons.items():
-            if stage_key == "stop_segments":
+            receipt_present = os.path.lexists(Path(values["workspace_root"].get()).expanduser() / GEOMETRY_RECEIPT_PATH)
+            if stage_key in {"accept_geometry", "reread_geometry"}:
+                enabled = not busy and bool(values["workspace_root"].get().strip())
+                if stage_key == "accept_geometry":
+                    enabled = enabled and not receipt_present
+            elif stage_key == "stop_segments":
                 enabled = stop_button_ready()
             elif stage_key == "cancel_preparation":
                 enabled = cancel_button_ready()
@@ -2610,7 +2639,7 @@ def _build_gui() -> int:
                     and candidate.get("schema_version") in {SEGMENT_EXECUTION_SCHEMA_V4, SEGMENT_EXECUTION_SCHEMA_V5}
                     and isinstance(candidate.get("execution_binding"), Mapping)
                     and not candidate["execution_binding"].get("retry_unavailable", ["missing"])
-                    and candidate.get("stage_status") != "success")
+                    and candidate.get("stage_status") != "success" and not receipt_present)
             elif stage_key == "recover_rtdose":
                 sequence = (
                     recovery_inspection.stage_sequence
@@ -2656,7 +2685,7 @@ def _build_gui() -> int:
                     )
                 )
                 if stage_key == "run_segments":
-                    enabled = enabled and run_action_ready(config_from_entries(), stage_key)
+                    enabled = enabled and not receipt_present and run_action_ready(config_from_entries(), stage_key)
                 elif stage_key == "run_sumtally":
                     if enabled and not existing_case_mode.get():
                         sumtally_readiness_pending = (sumtally_readiness_generation, config_from_entries())
@@ -2685,9 +2714,9 @@ def _build_gui() -> int:
                             )
                     enabled = enabled and bool(
                         workspace_text
-                        and segment_execution_authorizes_sumtally(
-                            Path(workspace_text).expanduser()
-                        )
+                        and (research_verified_workspace == Path(workspace_text).expanduser().resolve()
+                             if receipt_present else segment_execution_authorizes_sumtally(
+                                 Path(workspace_text).expanduser()))
                         and invocation_is_current
                     )
                 if existing_case_mode.get() and stage_key in {
@@ -3176,6 +3205,9 @@ def _build_gui() -> int:
             f"Existing workspace inspection: {inspection.message}",
             "success" if inspection.state != "invalid" else "error",
         )
+        if os.path.lexists(inspection.workspace_root / GEOMETRY_RECEIPT_PATH):
+            nav_status["phits"].set("Failed — research exception")
+            research_status.set(RESEARCH_NOTICE + " Re-read acceptance to verify this workspace.")
         refresh_action_button_states()
 
     def browse_existing_workspace() -> None:
@@ -4044,7 +4076,9 @@ def _build_gui() -> int:
             control.state(["disabled"] if stage_key else ["!disabled"])
         refresh_action_button_states()
         busy_label = (
-            "Structure relative-error evaluation"
+            "Research geometry evidence verification"
+            if stage_key == "research_geometry"
+            else "Structure relative-error evaluation"
             if stage_key == "evaluate_structure_rerr"
             else stage_by_key(stage_key).label
             if stage_key
@@ -4325,6 +4359,8 @@ def _build_gui() -> int:
         if spec.key == "prepare_rtdose":
             append("RTDOSE is prepared. Next: click Run RTDOSE.", "info")
             rtdose_run_button.focus_set()
+        if os.path.lexists(Path(values["workspace_root"].get()).expanduser() / GEOMETRY_RECEIPT_PATH):
+            root.after(0, reread_research_acceptance)
 
     def start_stage(stage_key: str, *, retry_plan: dict | None = None) -> None:
         nonlocal phits_control, phits_stop_sent
@@ -4503,6 +4539,104 @@ def _build_gui() -> int:
                 message = f"Stop request delivery failed; no safe stop confirmed: {exc}"
             root.after(0, lambda: delivery(message))
         threading.Thread(target=send, daemon=True).start()
+
+    def invalidate_research_selection(*_args):
+        nonlocal research_generation, research_verified_workspace, research_rtdose_state
+        research_generation += 1
+        research_verified_workspace = None
+        research_rtdose_state = RTDOSE_PHITS_INCOMPLETE
+        workspace = Path(values["workspace_root"].get()).expanduser()
+        research_status.set(
+            RESEARCH_NOTICE + " Re-read acceptance to verify this workspace."
+            if os.path.lexists(workspace / GEOMETRY_RECEIPT_PATH)
+            else "Research geometry acceptance has not been requested."
+        )
+        refresh_action_button_states()
+
+    def research_job(work, finish):
+        if execution_guard.active_stage is not None:
+            return
+        selected = Path(values["workspace_root"].get()).expanduser().resolve()
+        generation = research_generation
+        set_busy("research_geometry")
+
+        def deliver(value=None, error=None):
+            nonlocal research_verified_workspace
+            set_busy(None)
+            if generation != research_generation or selected != Path(values["workspace_root"].get()).expanduser().resolve():
+                return
+            if error is not None:
+                research_verified_workspace = None
+                research_status.set(f"Research acceptance unavailable: {error}")
+                append(f"Research acceptance unavailable: {error}", "warning")
+                messagebox.showerror("Research geometry acceptance", error)
+                refresh_action_button_states()
+                return
+            finish(value)
+
+        def worker():
+            try:
+                value = work(selected, generation)
+            except Exception as exc:
+                detail = str(exc)
+                root.after(0, lambda: deliver(error=detail))
+                return
+            root.after(0, lambda: deliver(value=value))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def reread_research_acceptance():
+        def read(selected, _generation):
+            # All potentially large hash/parse work stays off the Tk thread.
+            if not segment_execution_authorizes_sumtally(selected):
+                raise ValueError("Saved PHITS evidence or research receipt is not valid")
+            return rtdose_stage_state(selected), inspect_existing_workspace(selected)
+
+        def finished(result):
+            nonlocal research_verified_workspace, research_rtdose_state, recovery_inspection
+            selected = Path(values["workspace_root"].get()).expanduser().resolve()
+            research_rtdose_state, recovery_inspection = result
+            if os.path.lexists(selected / GEOMETRY_RECEIPT_PATH):
+                research_verified_workspace = selected
+                research_status.set(RESEARCH_NOTICE + " Receipt revalidated.")
+                nav_status["phits"].set("Failed — research accepted")
+                phits_progress_status.set("PHITS failed with geometry recovery. Existing tallies accepted for research only.")
+                append(RESEARCH_NOTICE + " Receipt revalidated; downstream actions remain separate.", "warning")
+            else:
+                research_status.set("No research receipt. Ordinary PHITS success checks apply.")
+            refresh_rtdose_workflow_state()
+        research_job(read, finished)
+
+    def start_research_geometry_preview():
+        if execution_guard.active_stage is not None:
+            return
+        workspace = Path(values["workspace_root"].get()).expanduser().resolve()
+        selected = filedialog.askdirectory(title="Select the exact retained PHITS staging directory",
+                                           initialdir=str(workspace / "analysis"))
+        if not selected:
+            return
+        try:
+            staging = Path(selected).resolve().relative_to(workspace).as_posix()
+        except ValueError:
+            messagebox.showerror("Research geometry acceptance", "Select staging within the current workspace.")
+            return
+
+        def review_ready(review):
+            if not review.current(Path(values["workspace_root"].get()), research_generation):
+                return
+            messagebox.showinfo("Research geometry evidence", review.text())
+            reason = simpledialog.askstring("Research acceptance reason",
+                "Record a research-only reason. Do not include names, identifiers, or absolute paths.", parent=root)
+            if reason is None or not reason.strip():
+                return
+            if not messagebox.askyesno("Research geometry acceptance",
+                    review.text() + f"\n\nReason: {reason}\n\n既存タリを研究用途で受け入れて続けますか？ yes/no"):
+                return
+            research_job(lambda current, generation: review.confirm(workspace_root=current,
+                generation=generation, reason=reason, confirmed=True),
+                lambda _receipt: reread_research_acceptance())
+
+        research_job(lambda current, generation: ResearchGeometryReview.prepare(current, staging, generation),
+                     review_ready)
 
     def start_incomplete_preview() -> None:
         if execution_guard.active_stage is not None:
@@ -4842,6 +4976,17 @@ def _build_gui() -> int:
     action_buttons["cancel_preparation"] = cancel_button
     ttk.Label(phits_frame, textvariable=phits_stop_status, wraplength=760,
         style="Surface.TLabel").grid(row=8, column=0, columnspan=3, sticky="w", pady=(8, 0))
+    research_button = ttk.Button(phits_frame, text="Review saved geometry recovery…",
+                                command=start_research_geometry_preview)
+    research_button.grid(row=9, column=1, pady=(8, 0), sticky="e")
+    action_buttons["accept_geometry"] = research_button
+    research_read_button = ttk.Button(phits_frame, text="Re-read research acceptance",
+                                     command=reread_research_acceptance)
+    research_read_button.grid(row=9, column=2, pady=(8, 0), sticky="e")
+    action_buttons["reread_geometry"] = research_read_button
+    for page, row in ((phits_frame, 10), (sumtally_page, 99), (rtdose_page, 99)):
+        ttk.Label(page, textvariable=research_status, wraplength=760,
+                  style="Surface.TLabel").grid(row=row, column=0, columnspan=3, sticky="ew", pady=(8, 0))
 
     sumtally_actions = ttk.Frame(
         sumtally_page, style="Surface.TFrame", padding=(18, 12)
@@ -4970,6 +5115,7 @@ def _build_gui() -> int:
         )
         refresh_action_button_states()
 
+    values["workspace_root"].trace_add("write", invalidate_research_selection)
     values["workspace_root"].trace_add("write", refresh_rtdose_workflow_state)
     for variable in (
         values["workspace_root"],

@@ -299,9 +299,9 @@ CT2PHITSは空でも既存フォルダを拒否します。3D-CRT Prepareの非�
 | 復旧が`Blocked` | メッセージとActivity logを確認。PHITS未完了なら7章、証拠不一致ならケースを保存して原因確認。 |
 | CT2PHITS timeout | summaryを確認。`process_tree_termination_error`があれば、残存子プロセスの確認前に同じ場所を再利用しません。 |
 | geometry・モデル・dose factorの拒否 | 許容範囲外や古い証拠の可能性があります。ガード値を変えて通さず、適合する入力・設定で新規準備します。 |
-| PHITS終了コードは`0`だが`nonzero geometry diagnostics`で停止 | `lost_particles`・`geometry_recovering`・`unrecovered_errors`のいずれかが非ゼロの場合、フェイルクローズ契約によりタリ出力は昇格されず失敗となります。一時stagingからの手動コピーや`phits.out`・summaryの手修正は行わず、`phits_outputs\...\phits.out`と`analysis\segment_execution_summary.json`を確認し、他セグメントが検証済み成功ならGUIを閉じずに7章の`Run incomplete segments…`で未完了分のみを再実行します。 |
+| PHITS終了コードは`0`だが`nonzero geometry diagnostics`で停止 | PHITSは失敗のまま保持します。lost・unrecoveredが0で、回復件数と全region pair内訳、最終バッチ、実行時に記録したstagingの対応証拠が揃う場合は、**3 PHITS**の**Review saved geometry recovery…**でstagingを明示選択し、診断を確認して研究用途の理由を入力し、継続を確認します。PHITS再計算なしでreceiptを作成し、**Re-read research acceptance**後に下流を個別実行します。対応証拠のない過去記録は後付けできません。手動コピー、件数の0への変更、失敗から成功への書換え、変更を隠すハッシュ再計算は禁止です。[詳細手順](../../gui-user-guide.md#phits-finished-with-return_code-0-but-failed-with-phits-reported-nonzero-geometry-diagnostics)を参照してください。 |
 
-`Allow overwrite of downstream stage summaries`は万能な復旧スイッチではありません（なお、開いたままのGUIでボタンの有効・無効表示を再評価させたい場合は、このチェックボックスを一度オン→オフに切り替えると状態が再読込されます）。過去結果の保護条件を確認し、既存ケースの継続は8章を優先します。相対誤差だけが利用不能な場合にPHITS全体の失敗と即断せず、表示理由を確認します。
+`Allow overwrite of downstream stage summaries`は研究例外の承認には使えません。研究受付の明示的な再検証には**Re-read research acceptance**を使います。過去結果の保護条件を確認し、既存ケースの継続は8章を優先します。相対誤差だけが利用不能な場合にPHITS全体の失敗と即断せず、表示理由を確認します。
 
 ## 11. 特別な操作
 

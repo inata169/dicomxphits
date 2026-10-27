@@ -381,10 +381,33 @@ def validate_sumtally_manifest_binding(
     generation: dict[str, Any],
     execution: dict[str, Any],
 ) -> dict[str, Any]:
+    from dicomxphits.workspace_recovery import validate_segment_execution_for_downstream
     from dicomxphits.segment_preflight import require_finished_preflight
-    require_finished_preflight(workspace_root)
+    from dicomxphits.segment_retry import RESEARCH_RECEIPT_PATH
+
+    research_context = (
+        os.path.lexists(workspace_root / RESEARCH_RECEIPT_PATH)
+        or generation.get("research_exception") is not None
+        or execution.get("research_exception") is not None
+    )
+    # Ordinary legacy Sumtally evidence did not require a separate segment
+    # summary here. Preserve that contract while keeping research contexts
+    # behind the shared gate, including when their receipt has gone missing.
+    if not research_context:
+        require_finished_preflight(workspace_root)
     manifest_path = workspace_root / "segments" / "segment_manifest.json"
     manifest = load_json_object(manifest_path)
+    research_exception = None
+    if research_context or os.path.lexists(workspace_root / "analysis/segment_execution_summary.json"):
+        segment_summary = load_json_object(
+            workspace_root / "analysis" / "segment_execution_summary.json"
+        )
+        research_exception = validate_segment_execution_for_downstream(
+            workspace_root, manifest, segment_summary,
+        )
+        if ((research_context and research_exception is None)
+                or any(s.get("research_exception") != research_exception for s in (generation, execution))):
+            raise ValueError("Sumtally research exception audit marker is missing or changed")
     expected_normalization_evidence = plan_mu_normalization_evidence(manifest)
     generation_normalization_evidence = generation.get(
         "sumtally_normalization_evidence"
@@ -619,6 +642,7 @@ def validate_sumtally_manifest_binding(
     }
     return {
         "manifest_path": str(manifest_path),
+        **({"research_exception": research_exception} if research_exception else {}),
         "manifest_sha256": current_sha256,
         "generation_manifest_sha256": generation_sha256,
         "execution_manifest_sha256": execution_sha256,
@@ -1348,6 +1372,8 @@ def _prepare_rtdose_locked(
         )
         summary = {
             "schema_version": "dicomxphits_public_rtdose_prepare_v1",
+            **({"research_exception": sumtally_manifest_binding["research_exception"]}
+               if sumtally_manifest_binding.get("research_exception") else {}),
             "stage": "prepare_rtdose",
             "stage_status": "success",
             "workspace_root": str(workspace_root),
@@ -1601,6 +1627,8 @@ def _run_rtdose_locked(
             generation=generation,
             execution=execution,
         )
+        if prepare_summary.get("research_exception") != current_sumtally_binding.get("research_exception"):
+            raise ValueError("RTDOSE research exception audit marker is missing or changed")
         if current_sumtally_binding != prepare_summary.get(
             "sumtally_manifest_binding"
         ):
@@ -1880,6 +1908,8 @@ def _run_rtdose_locked(
         )
         summary = {
             "schema_version": "dicomxphits_public_rtdose_execution_v1",
+            **({"research_exception": current_sumtally_binding["research_exception"]}
+               if current_sumtally_binding.get("research_exception") else {}),
             "stage": "run_rtdose",
             "stage_status": stage_status,
             "workspace_root": str(workspace_root),

@@ -556,7 +556,16 @@ def validate_segment_execution_for_downstream(
     segment_summary: Mapping[str, Any] | None,
     *,
     allow_external_manifest_outputs: bool = False,
-) -> None:
+) -> dict[str, str] | None:
+    from dicomxphits.research_geometry_recovery import RECEIPT_PATH, marker, validate
+    if os.path.lexists(workspace_root / RECEIPT_PATH):
+        try:
+            from dicomxphits.workspace_execution import WorkspaceExecutionLease
+            with WorkspaceExecutionLease(workspace_root, create=False):
+                receipt = validate(workspace_root, segment_summary, manifest)
+                return marker(workspace_root, receipt)
+        except (OSError, ValueError, TypeError, KeyError, StopIteration) as exc:
+            raise WorkspaceRecoveryError(f"Research acceptance is invalid: {exc}") from exc
     from dicomxphits.segment_preflight import require_current_result
     try:
         require_current_result(workspace_root, segment_summary or {})
@@ -567,14 +576,9 @@ def validate_segment_execution_for_downstream(
             "PHITS execution evidence is missing or invalid; downstream stages remain disabled."
         )
     try:
-        schema = validate_segment_execution_summary(
-            segment_summary,
-            require_success=True,
-        )
+        schema = validate_segment_execution_summary(segment_summary, require_success=True)
     except ValueError as exc:
-        raise WorkspaceRecoveryError(
-            f"PHITS execution evidence is not acceptable: {exc}"
-        ) from exc
+        raise WorkspaceRecoveryError(f"PHITS execution evidence is not acceptable: {exc}") from exc
     validated_summary = segment_summary
     recorded_root = str(segment_summary.get("workspace_root") or "").strip()
     if schema == SEGMENT_EXECUTION_SCHEMA_V2 and recorded_root:
@@ -599,6 +603,19 @@ def validate_segment_execution_for_downstream(
         validate_binding(workspace_root, manifest, segment_summary["execution_binding"], local_only=True)
         validate_results(workspace_root, segment_summary)
         validate_parent(workspace_root, segment_summary)
+
+
+def validate_research_exception_marker(workspace_root: Path, recorded: Any) -> None:
+    """Check audit propagation through the same downstream authority gate."""
+    from dicomxphits.research_geometry_recovery import RECEIPT_PATH
+    if recorded is None and not os.path.lexists(workspace_root / RECEIPT_PATH):
+        return
+    with WorkspaceOutputGuard(workspace_root, read_only=True) as guard:
+        summary = _load_object(guard.prepare(workspace_root / SUMMARY_PATHS["segments"]))
+        manifest = _load_object(guard.prepare(workspace_root / "segments/segment_manifest.json"))
+        current = validate_segment_execution_for_downstream(workspace_root, manifest or {}, summary)
+    if current is None or recorded != current:
+        raise WorkspaceRecoveryError("Research exception audit marker is missing or changed")
 
 
 def _current_sumtally_binding(workspace_root: Path) -> dict[str, Any] | None:
@@ -1054,7 +1071,7 @@ def inspect_existing_workspace(workspace_root: Path) -> WorkspaceRecoveryInspect
     try:
         manifest, outputs = _manifest_and_outputs(root)
         segment_summary = _load_object(root / SUMMARY_PATHS["segments"])
-        validate_segment_execution_for_downstream(
+        research_exception = validate_segment_execution_for_downstream(
             root,
             manifest,
             segment_summary,
@@ -1123,10 +1140,12 @@ def inspect_existing_workspace(workspace_root: Path) -> WorkspaceRecoveryInspect
     return WorkspaceRecoveryInspection(
         root,
         RECOVERY_READY,
-        "PHITS completed",
+        "PHITS failed — research accepted" if research_exception else "PHITS completed",
         "generate_sumtally",
         FULL_DOWNSTREAM_SEQUENCE,
-        "PHITS results are verified. Incomplete Sumtally and RTDOSE evidence can be rebuilt without rerunning PHITS.",
+        ("Research-only tallies accepted by receipt; PHITS remains failed. Continue downstream without rerunning PHITS."
+         if research_exception else
+         "PHITS results are verified. Incomplete Sumtally and RTDOSE evidence can be rebuilt without rerunning PHITS."),
         True,
     )
 

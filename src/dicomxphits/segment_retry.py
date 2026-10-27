@@ -18,6 +18,8 @@ from dicomxphits.sumtally_inputs import (
 from dicomxphits.workspace_execution import LOCK_NAME, WorkspaceExecutionLease
 
 BINDING_SCHEMA = "dicomxphits_segment_execution_binding_v1"
+FAILED_STAGING_SCHEMA = "dicomxphits_failed_segment_staging_v1"
+RESEARCH_RECEIPT_PATH = Path("analysis/research_geometry_recovery_acceptance.json")
 PREPARATION_FILES = (
     "analysis/phits_generation_summary.json",
     "analysis/public_preparation_workspace_summary.json",
@@ -27,6 +29,85 @@ PREPARATION_FILES = (
 def digest_object(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
         allow_nan=False).encode("utf-8")).hexdigest()
+
+
+def refuse_research_receipt(root):
+    """Refuse even malformed receipts before an execution can mutate evidence."""
+    root = Path(root).resolve()
+    with WorkspaceOutputGuard(root, read_only=True) as guard:
+        analysis = guard.prepare(root / "analysis")
+        if not os.path.lexists(analysis):
+            return  # A fresh workspace has neither an analysis tree nor a receipt.
+        receipt = guard.prepare(root / RESEARCH_RECEIPT_PATH)
+        if os.path.lexists(receipt):
+            raise ValueError(
+                "A research geometry-recovery receipt exists. Move the receipt "
+                "aside explicitly before PHITS segment execution or retry."
+            )
+
+
+def capture_failed_staging(root, staging, *, segment_id, run_id,
+                           input_binding, declared_outputs, expected_output, guard):
+    """Bind the known failed invocation's retained tree without discovering one."""
+    root, staging = Path(root).resolve(), Path(staging)
+    if staging.parent != root / "analysis" or not staging.name.startswith(".phits-segment-run-"):
+        raise ValueError("Failed staging is not directly below workspace analysis")
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ValueError("Failed staging has no producing execution identity")
+    if not isinstance(input_binding, list) or not input_binding:
+        raise ValueError("Failed staging lacks pre-execution input evidence")
+    guard.prepare(staging / ".evidence-boundary")
+
+    def record(path):
+        path = guard.prepare(path)
+        if not path.is_file():
+            raise ValueError("Retained staging evidence is not an ordinary file")
+        before = path.stat()
+        digest = file_sha256(path)
+        after = path.stat()
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, key) != getattr(after, key) for key in fields):
+            raise ValueError("Retained staging changed while evidence was captured")
+        return {"path": path.relative_to(root).as_posix(),
+                "size": after.st_size, "sha256": digest}
+
+    inputs = []
+    for item in input_binding:
+        original = _local_path(root, item["path"])
+        staged = staging / original.relative_to(root)
+        evidence = record(staged)
+        if evidence["sha256"] != item["sha256"]:
+            raise ValueError("Retained staged input differs from pre-execution binding")
+        inputs.append({"input_path": original.relative_to(root).as_posix(), **evidence})
+
+    files = []
+    def traversal_failed(error):
+        raise error
+
+    for directory, directories, names in os.walk(staging, followlinks=False, onerror=traversal_failed):
+        for name in sorted(directories):
+            guard.prepare(Path(directory) / name / ".evidence-boundary")
+        files.extend(record(Path(directory) / name) for name in sorted(names))
+    files.sort(key=lambda item: item["path"])
+    observed = {item["path"]: item for item in files}
+    expected = _local_path(root, str(expected_output))
+    outputs = []
+    required = set(Path(path).relative_to(root).as_posix() for path in declared_outputs)
+    required.add(_api().phits_error_output_path(expected).relative_to(root).as_posix())
+    required.add("phits.out")
+    missing = []
+    for relative in sorted(required):
+        staged = staging / relative
+        evidence = observed.get(staged.relative_to(root).as_posix())
+        if evidence is None:
+            missing.append(relative)
+        else:
+            outputs.append({"output_path": relative, **evidence})
+    return {"schema_version": FAILED_STAGING_SCHEMA, "run_id": run_id,
+            "segment_id": segment_id,
+            "staging_directory": staging.relative_to(root).as_posix(),
+            "inputs": inputs, "outputs": outputs, "files": files,
+            "missing_required_outputs": missing}
 
 
 def _api():
@@ -436,6 +517,7 @@ def validate_v4(summary):
 def plan_incomplete(root, paths, *, expected_summary_sha256=None):
     api = _api()
     root = root.expanduser().resolve()
+    refuse_research_receipt(root)
     # Existing lock only: planning must never create an ownership artifact.
     with WorkspaceExecutionLease(root, create=False) as lease:
         if lease.executing:

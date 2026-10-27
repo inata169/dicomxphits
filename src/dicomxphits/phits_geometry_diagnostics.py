@@ -15,7 +15,7 @@ GEOMETRY_DIAGNOSTIC_LABELS = {
 }
 _COUNT_PATTERNS = {
     key: re.compile(
-        rf"^\s*{re.escape(label)}\s*(?:=|:)?\s*"
+        rf"^\s*{re.escape(label[:-1]) + 's?' if key == 'unrecovered_errors' else re.escape(label)}\s*(?:=|:)?\s*"
         r"([0-9]{1,20})"
         + (
             r"(?:\s+/\s+nlost\s+=\s+[0-9]{1,20})?"
@@ -44,7 +44,8 @@ def parse_phits_geometry_diagnostics(
         candidate = line.rstrip("\r\n")
         folded = candidate.lstrip().casefold()
         for key, label in GEOMETRY_DIAGNOSTIC_LABELS.items():
-            if not folded.startswith(label.casefold()):
+            prefix = label[:-1] if key == "unrecovered_errors" else label
+            if not folded.startswith(prefix.casefold()):
                 continue
             if len(candidate) > _MAX_DIAGNOSTIC_LINE_LENGTH:
                 raise PhitsGeometryDiagnosticsError(
@@ -77,6 +78,69 @@ def parse_phits_geometry_diagnostics(
         "status": status,
         "counts": counts,
     }
+
+
+def parse_research_geometry_completion(lines: Iterable[str]) -> dict[str, Any]:
+    """Parse the operator-supplied table format; unknown layouts fail closed.
+
+    Numeric width and line bounds match the existing counter parser. This is
+    a format contract, not evidence of transport accuracy or dose validity.
+    """
+    counters = []
+    pairs = []
+    seen = set()
+    in_summary = False
+    table = False
+    table_done = False
+    summaries = 0
+    headers = 0
+    last_batch = None
+    for line in lines:
+        candidate = line.strip()
+        if len(line.rstrip("\r\n")) > _MAX_DIAGNOSTIC_LINE_LENGTH:
+            raise PhitsGeometryDiagnosticsError("PHITS completion line is too long")
+        if candidate.casefold() == "geometry error summary":
+            summaries += 1
+            in_summary = True
+        elif re.fullmatch(r"region1\s+region2\s+count", candidate, re.I):
+            if not in_summary or table_done:
+                raise PhitsGeometryDiagnosticsError("Misplaced geometry region-pair table")
+            headers += 1
+            table = True
+        elif table:
+            if not candidate or re.fullmatch(r"-+", candidate):
+                if pairs:
+                    table = False
+                    table_done = True
+            else:
+                match = re.fullmatch(r"([0-9]{1,20})\s+([0-9]{1,20})\s+([0-9]{1,20})", candidate)
+                if match is None:
+                    raise PhitsGeometryDiagnosticsError("Unsupported geometry region-pair row")
+                first, second, count = map(int, match.groups())
+                if count <= 0 or (first, second) in seen:
+                    raise PhitsGeometryDiagnosticsError("Ambiguous geometry region-pair counts")
+                seen.add((first, second))
+                pairs.append({"region1": first, "region2": second, "count": count})
+        if candidate.casefold().startswith("number of "):
+            counters.append(line)
+        if candidate.casefold().startswith("bat["):
+            match = re.fullmatch(r"bat\[\s*([0-9]{1,20})\s*\]\s+ncas\s*=\s*[0-9]{1,20}\.?", candidate, re.I)
+            if match is None:
+                raise PhitsGeometryDiagnosticsError("Unsupported PHITS batch completion record")
+            batch = int(match.group(1))
+            if last_batch is not None and batch <= last_batch:
+                raise PhitsGeometryDiagnosticsError("Ambiguous PHITS batch sequence")
+            last_batch = batch
+    diagnostics = parse_phits_geometry_diagnostics(counters)
+    counts = diagnostics["counts"]
+    if (summaries != 1 or headers != 1 or not pairs
+            or counts["lost_particles"] != 0 or counts["unrecovered_errors"] != 0
+            or counts["geometry_recovering"] <= 0
+            or sum(pair["count"] for pair in pairs) != counts["geometry_recovering"]
+            or last_batch is None):
+        raise PhitsGeometryDiagnosticsError("Incomplete or inconsistent research geometry evidence")
+    return {"diagnostics": diagnostics, "region_pair_counts": pairs,
+            "completed_batches": last_batch}
 
 
 def parse_phits_geometry_diagnostics_file(path: Path) -> dict[str, Any]:

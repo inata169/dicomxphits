@@ -93,7 +93,11 @@ def callbacks(names, state):
             return ast.Global(names=node.names)
 
     nodes = [SyntheticClosure().visit(node) for node in nodes]
-    namespace = {**vars(gui), **state}
+    from dicomxphits.segment_retry import RESEARCH_RECEIPT_PATH
+    namespace = {**vars(gui),
+                 "values": {"workspace_root": Value("synthetic-workspace")},
+                 "GEOMETRY_RECEIPT_PATH": RESEARCH_RECEIPT_PATH,
+                 "research_verified_workspace": None, **state}
     code = compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), "<gui-callback>", "exec")
     exec(code, namespace)
     return namespace

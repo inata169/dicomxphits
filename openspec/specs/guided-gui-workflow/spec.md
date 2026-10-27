@@ -6,7 +6,9 @@ Define the safe, usable desktop workflow that invokes the accepted CT2PHITS
 frontend, validates a local tool profile without executing it, preserves the
 frozen handoff, remembers stable local settings without persisting case or
 safety state, and keeps later fixed-field 3D-CRT stages separately gated.
+
 ## Requirements
+
 ### Requirement: Integrated CT2PHITS GUI Stage
 
 The GUI SHALL expose the accepted Windows CT2PHITS frontend as the first guided
@@ -648,8 +650,10 @@ A persisted running record whose invocation is not owned by an active GUI
 process SHALL be presented as interrupted and incomplete rather than currently
 running. A stale-invocation, malformed, path-escaping, or unknown-version record
 MUST NOT replace current progress or unlock a dependent action. Only the
-existing terminal-success evidence contract may display PHITS as completed and
-enable Sumtally.
+existing terminal-success evidence contract may display PHITS as completed.
+Ordinary Sumtally availability SHALL require terminal success; only the
+separate fully revalidated research receipt MAY authorize downstream research
+actions while PHITS remains displayed as failed.
 
 #### Scenario: First segment is running
 
@@ -677,7 +681,9 @@ enable Sumtally.
 - **WHEN** the process ends without accepted terminal success or a prior
   running record is found without its owning process
 - **THEN** the GUI identifies the run as failed or interrupted, shows only
-  durable validated completion counts, and keeps Sumtally disabled
+  durable validated completion counts, and keeps Sumtally disabled unless the
+  separate research receipt fully revalidates under its own eligibility checks;
+  a research exception never changes the PHITS failure presentation
 
 #### Scenario: Progress record is stale or invalid
 
@@ -738,7 +744,10 @@ updates. Other stage actions and repeated launch requests MUST remain disabled.
 Retry progress SHALL distinguish retained successes from newly completed results.
 Elapsed time and estimates SHALL describe the new invocation; retained durations
 MUST NOT supply its ETA. Sumtally SHALL remain disabled until fresh all-active
-terminal evidence validates.
+terminal-success evidence validates, unless the separate research-recovery
+receipt fully revalidates through the shared downstream gate. That exception
+MUST NOT bypass current workspace or invocation checks or display PHITS as
+successful.
 
 #### Scenario: Selection changes while an invocation is active
 
@@ -929,3 +938,109 @@ active execution's request.
 - **THEN** Apply, Cancel, and Reset remain visible while the image row resizes
 - **AND** application message and confirmation windows use the main GUI palette,
   with closure and Escape returning the negative confirmation result
+
+### Requirement: Research Geometry Exception Presentation
+
+The GUI SHALL enforce the research-exception presentation contract below when a fully revalidated receipt authorizes downstream work. It MUST retain failed PHITS status, show the accepted segment and research-only notice, and create receipts only through the explicit confirmed acceptance requirement.
+
+#### Scenario: Complete research presentation is shown
+
+- **WHEN** the GUI displays a selected synthetic workspace with a research receipt
+- **THEN** the following complete contract SHALL hold:
+
+When downstream authority comes from a fully revalidated research
+geometry-recovery receipt, the GUI SHALL present the PHITS stage as failed
+with an accepted research exception, never as success. It SHALL show the
+accepted segment identity. It SHALL also show a persistent research-only notice
+on the PHITS, Sumtally, and RTDOSE stages, stating that the result is not for
+clinical use, commissioning, patient QA, or vendor certification. When the
+receipt is absent or invalid, the GUI SHALL keep the existing failed
+presentation and the existing disabled downstream actions.
+
+The GUI MUST NOT create a receipt without the explicit confirmation and
+full revalidation required by Confirmed GUI Research Geometry Acceptance.
+
+#### Scenario: Valid receipt displayed
+
+- **WHEN** a selected synthetic workspace has a fully revalidating receipt
+- **THEN** the GUI shows the research-exception state and notice and enables
+  only the downstream actions that the shared gate authorizes
+
+#### Scenario: Invalid receipt displayed
+
+- **WHEN** the receipt is missing, malformed, or stale
+- **THEN** the GUI presents the ordinary failed state and keeps downstream
+  actions disabled
+
+### Requirement: Explicit Workspace Evidence Re-read
+
+The GUI SHALL provide an explicit action that re-reads the selected workspace's
+evidence and recomputes stage availability without running an external tool.
+Users MUST NOT need to toggle an unrelated option to refresh stage state.
+
+#### Scenario: Evidence changed outside the GUI
+
+- **WHEN** a receipt is created through the CLI while the GUI is open and the
+  user invokes the re-read action
+- **THEN** the GUI recomputes stage availability from current evidence
+
+### Requirement: Confirmed GUI Research Geometry Acceptance
+
+The GUI SHALL offer explicit research acceptance through the same read-only
+preview and digest-bound apply backend as the CLI. It SHALL show counts and
+all region pairs, require a reason and affirmative confirmation, and preserve
+failed PHITS status. Acceptance MUST NOT launch an external tool or recalculate
+PHITS. It MAY unlock only separately invoked downstream actions authorized by
+the shared gate. The GUI MUST remain responsive during validation.
+
+#### Scenario: Operator reviews and confirms existing results
+
+- **WHEN** one explicitly selected retained staging directory validates for
+  the currently selected workspace under the research eligibility policy
+- **THEN** the GUI shows the workspace and segment identity, all diagnostic
+  totals, every region pair and count, final-batch completion evidence, and
+  the persistent research-only notice
+- **AND** it requests a non-empty reason and asks whether to continue for
+  research use with affirmative and negative choices, stating that the saved
+  calculation is not rerun
+- **AND** only an affirmative answer supplies the explicit acknowledgement to
+  apply with that exact preview digest and reason
+- **AND** apply rechecks all evidence, publishes the validated existing tally
+  set new-only with the receipt last, and preserves every original record
+- **AND** no PHITS, Sumtally, or phits2dicom process starts during acceptance
+
+#### Scenario: Operator declines or closes the confirmation
+
+- **WHEN** the operator declines, closes or escapes the dialog, or omits the
+  reason
+- **THEN** no acknowledgement is supplied, no receipt or output is published,
+  and no downstream action is unlocked by that interaction
+
+#### Scenario: Evidence changes after the displayed preview
+
+- **WHEN** the workspace selection, invocation binding, diagnostic counts,
+  pair distribution, source digests, or destination state changes before apply
+- **THEN** confirmation cannot authorize mutation using the old preview and
+  the GUI requires a new validated preview
+
+#### Scenario: Nonzero loss or incomplete calculation
+
+- **WHEN** saved evidence reports lost or unrecovered particles, unfinished
+  final batches, unsupported parsing, or another failure reason
+- **THEN** the GUI explains the failed precondition and does not offer an
+  affirmative continuation that bypasses it
+
+#### Scenario: Historical evidence cannot prove the invocation
+
+- **WHEN** the selected saved result lacks the required authoritative staging
+  and invocation binding
+- **THEN** the GUI explains why acceptance is unavailable and creates no
+  receipt, without triggering PHITS recalculation or automatic retry
+
+#### Scenario: Research acceptance completes
+
+- **WHEN** GUI acceptance publishes and independently revalidates its receipt
+- **THEN** the GUI retains failed PHITS status with the research-exception
+  indication and refreshes the availability of Sumtally and RTDOSE actions
+- **AND** those separately invoked actions each revalidate current receipt
+  authority at their existing boundaries

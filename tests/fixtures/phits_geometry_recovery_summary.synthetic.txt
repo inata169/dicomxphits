@@ -1,0 +1,11 @@
+bat[       3] ncas = 120.
+-------------------------------------------------------------------
+ Geometry error summary
+   region1     region2       count
+      4101        4102           5
+      4103        4103           7
+-------------------------------------------------------------------
+ Number of lost particles         =            0 / nlost = 10000
+ Number of geometry recovering    =           12
+ Number of unrecovered error      =            0
+-------------------------------------------------------------------
