@@ -380,9 +380,22 @@ evidence still validates.
 
 Do not manually copy files from temporary staging directories or edit `phits.out`, `segment_execution_summary.json`, or `segment_preflight.json` to bypass this gate:
 
-1. Inspect `geometry_diagnostics` in `analysis\segment_execution_summary.json` and the `Geometry error summary` section in `phits_outputs\beam_XXXX_segment_YYYY\phits.out` to identify the reported region numbers and counters.
-2. When other segments in the same v4/v5 run succeeded and retry evidence is intact, keep the GUI open (so the process environment matches the recorded `environment_sha256`) and select **Run incomplete segments…** on the **3 PHITS** page to retain verified completed segments and rerun only the failed segment.
-3. If an open GUI does not immediately reflect updated workspace summary readiness on its action buttons, toggling **Allow overwrite of downstream stage summaries** at the bottom of the Workspace page on and then off refreshes the button states without enabling overwrite.
+1. On **3 PHITS**, select **Review saved geometry recovery…** and explicitly choose the retained directory directly under `analysis/.phits-segment-run-<id>`. The application does not search for a candidate or rerun PHITS.
+2. Review the workspace, failed segment, all diagnostic counts and region-pair counts, final batch, and exact tally set. Eligibility requires exactly one geometry-failed segment, return code zero, zero lost and unrecovered counts, a positive recovering total matching the complete pair distribution, and final batch equal to prepared `maxbch`. Recovering counts have no acceptance cap; this is not a physics-validity claim. An `nlost` value does not authorize lost particles.
+3. Enter a research-only reason without names, identifiers, or absolute paths, then explicitly confirm whether to continue. Cancel, closing the dialog, an empty reason, stale evidence, or invalid eligibility creates no receipt. Acceptance only publishes validated saved tallies and a new receipt; it launches no external tool.
+4. Use **Re-read research acceptance** to verify the saved state. The PHITS status remains failed and a research-only notice appears on PHITS, Sumtally, and RTDOSE pages. Invoke **Generate Sumtally**, **Run Sumtally**, **Prepare RTDOSE**, and **Run RTDOSE** separately. Every stage checks the receipt again and records its SHA-256 and accepted segment in `research_exception`; DICOM attributes are unchanged by acceptance.
+
+Only prospective runs with formal retained-staging invocation evidence are eligible. Historical records without it, prototype receipts, and manually edited records cannot be retrofitted. Acceptance does not recover deleted tallies. If acceptance is unavailable, no recalculation starts automatically. A separately chosen **Run incomplete segments…** action is the ordinary retry route when its existing evidence permits it. PHITS execution and retry refuse any artifact at the research-receipt path, even if malformed.
+
+The same backend is available from the CLI (use a workspace-relative staging path):
+
+```text
+dicomxphits-accept-geometry-recovery --workspace-root <workspace> --preview --staging-directory analysis/.phits-segment-run-<id>
+dicomxphits-accept-geometry-recovery --workspace-root <workspace> --apply --staging-directory analysis/.phits-segment-run-<id> --plan-digest <preview-digest> --acknowledge-research-only --reason "Reviewed saved recovery distribution for research"
+dicomxphits-accept-geometry-recovery --workspace-root <workspace> --verify-only
+```
+
+The receipt at `analysis/research_geometry_recovery_acceptance.json` supplements the original evidence. Never zero diagnostic counts, relabel a failed execution as success, recompute hashes to hide an edit, or use the overwrite checkbox to authorize an exception. Output remains research-only: not for clinical use, commissioning, patient QA, or vendor certification.
 
 ## 9. Using an existing CT2PHITS handoff
 

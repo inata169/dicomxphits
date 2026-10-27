@@ -562,6 +562,7 @@ def run_one_segment(
     input_binding: list[dict[str, str]] | None = None,
     observation_context=None,
     on_child_finished: Callable[[], None] | None = None,
+    producer_run_id: str | None = None,
 ) -> dict[str, Any]:
     from dicomxphits.segment_preflight import checkpoint
 
@@ -594,6 +595,8 @@ def run_one_segment(
             expected_output=expected_output,
             guard=guard,
         )
+        keep_staging = False
+        retained_staging = None
         try:
             if input_binding is not None:
                 for evidence in input_binding:
@@ -652,6 +655,7 @@ def run_one_segment(
             except PhitsGeometryDiagnosticsError as exc:
                 geometry_diagnostics = invalid_phits_geometry_diagnostics(str(exc))
             geometry_clean = geometry_diagnostics.get("status") == "clean"
+            keep_staging = not geometry_clean
             staged_expected_output = (
                 execution_root
                 / expected_output.resolve().relative_to(workspace_root.resolve())
@@ -698,8 +702,18 @@ def run_one_segment(
                 guard=guard,
             )
             geometry_diagnostics["source_path"] = collected["phits_out_path"]
+            if keep_staging and producer_run_id is not None:
+                from dicomxphits.segment_retry import capture_failed_staging
+                retained_staging = capture_failed_staging(
+                    workspace_root, execution_root,
+                    segment_id=str(segment.get("segment_id") or segment.get("segment_index") or "unknown"),
+                    run_id=producer_run_id, input_binding=input_binding,
+                    declared_outputs=declared_outputs, expected_output=expected_output,
+                    guard=guard,
+                )
         finally:
-            guard.rmtree(execution_root, missing_ok=True)
+            if not keep_staging:
+                guard.rmtree(execution_root, missing_ok=True)
 
     output_exists = expected_output.is_file()
     status = (
@@ -737,6 +751,7 @@ def run_one_segment(
             file_sha256(expected_output) if output_exists else None
         ),
         "geometry_diagnostics": geometry_diagnostics,
+        **({"retained_staging": retained_staging} if retained_staging is not None else {}),
         "batch_out_path": collected["batch_out_path"],
         "phits_out_path": collected["phits_out_path"],
         "phits_out_sha256": (
@@ -808,15 +823,17 @@ def run_segments(
     stop_control=None,
     preflight_nonce: str | None = None,
 ) -> dict[str, Any]:
-    from dicomxphits.segment_retry import plan_incomplete
+    from dicomxphits.segment_retry import plan_incomplete, refuse_research_receipt
     from dicomxphits.workspace_execution import WorkspaceExecutionLease
 
     root = workspace_root.expanduser().resolve()
+    refuse_research_receipt(root)
     if preflight_nonce is not None:
         from dicomxphits.segment_preflight import Session, PreparationCancelled, read_receipt
         run_id = str(run_id_factory())
         # The outer lease spans preparation, cancellation and terminal receipt.
         with WorkspaceExecutionLease(root):
+            refuse_research_receipt(root)
             with WorkspaceOutputGuard(root):
                 read_receipt(root)  # Never overwrite malformed or unknown-version evidence.
                 with Session(root, preflight_nonce, run_id, stop_control) as preparation:
@@ -869,6 +886,8 @@ def _run_segments_locked(
     )
     from dicomxphits.segment_preflight import checkpoint
     workspace_root = workspace_root.expanduser().resolve()
+    from dicomxphits.segment_retry import refuse_research_receipt
+    refuse_research_receipt(workspace_root)
     summary_file = summary_path(workspace_root)
     segment_summaries: list[dict[str, Any]] = []
     manifest_digest: str | None = None
@@ -1086,6 +1105,7 @@ def _run_segments_locked(
                 phits_executable_path=paths.phits_executable_path,
                 runner=controlled_runner if stop_control is not None or observe_native else runner,
                 input_binding=contracts[prior["segment_id"]]["inputs"],
+                producer_run_id=run_id,
                 observation_context=live_summary if observe_native else None,
                 on_child_finished=(
                     (lambda: preparation.publish("verifying", force=True))

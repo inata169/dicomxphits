@@ -497,10 +497,11 @@ def _generate_sumtally_locked(
         segment_execution_summary = load_json_object(
             workspace_root / "analysis" / "segment_execution_summary.json"
         )
-        validate_segment_execution_summary(
-            segment_execution_summary,
-            require_success=True,
-        )
+        from dicomxphits.segment_retry import RESEARCH_RECEIPT_PATH
+        if not os.path.lexists(workspace_root / RESEARCH_RECEIPT_PATH):
+            validate_segment_execution_summary(
+                segment_execution_summary, require_success=True,
+            )
         validate_segment_outputs_exist(workspace_root, manifest)
         tally_patterns = derive_tally_patterns_from_manifest(manifest, list(TARGET_TALLY_PATTERNS))
         selection = select_sumtally_base_input(
@@ -522,7 +523,7 @@ def _generate_sumtally_locked(
             validate_segment_execution_for_downstream,
         )
 
-        validate_segment_execution_for_downstream(
+        research_exception = validate_segment_execution_for_downstream(
             workspace_root,
             manifest,
             segment_execution_summary,
@@ -599,6 +600,7 @@ def _generate_sumtally_locked(
 
         summary = {
             "schema_version": "dicomxphits_public_sumtally_generation_v1",
+            **({"research_exception": research_exception} if research_exception else {}),
             "stage": "generate_sumtally",
             "stage_status": "success",
             "workspace_root": str(workspace_root),
@@ -672,7 +674,16 @@ def expected_segment_outputs(workspace_root: Path, manifest: dict[str, Any]) -> 
 
 def validate_segment_outputs_exist(workspace_root: Path, manifest: dict[str, Any]) -> None:
     from dicomxphits.segment_preflight import require_finished_preflight
-    require_finished_preflight(workspace_root)
+    from dicomxphits.segment_retry import RESEARCH_RECEIPT_PATH
+    if os.path.lexists(workspace_root / RESEARCH_RECEIPT_PATH):
+        from dicomxphits.workspace_recovery import validate_segment_execution_for_downstream
+        validate_segment_execution_for_downstream(
+            workspace_root, manifest,
+            load_json_object(workspace_root / "analysis/segment_execution_summary.json"),
+            allow_external_manifest_outputs=True,
+        )
+    else:
+        require_finished_preflight(workspace_root)
     missing = [path for path in expected_segment_outputs(workspace_root, manifest) if not path.is_file()]
     if missing:
         joined = ", ".join(str(path) for path in missing)
@@ -903,6 +914,8 @@ def validate_sumtally_run_inputs(
 
     generation_summary_path = workspace_root / "analysis" / "sumtally_generation_summary.json"
     generation_summary = load_json_object(generation_summary_path)
+    from dicomxphits.workspace_recovery import validate_research_exception_marker
+    validate_research_exception_marker(workspace_root, generation_summary.get("research_exception"))
     if generation_summary.get("stage_status") != "success":
         raise ValueError("Sumtally generation summary is not successful")
     current_manifest_sha256 = manifest_sha256(manifest)
@@ -1034,6 +1047,15 @@ def validate_sumtally_run_inputs(
             )
         )
     )
+    # Preserve ordinary validation order and messages. This additional authority
+    # check still precedes staging, summary mutation, and any external launch.
+    segment_summary_path = workspace_root / "analysis/segment_execution_summary.json"
+    if os.path.lexists(segment_summary_path):
+        from dicomxphits.workspace_recovery import validate_segment_execution_for_downstream
+        validate_segment_execution_for_downstream(
+            workspace_root, manifest, load_json_object(segment_summary_path),
+            allow_external_manifest_outputs=True,
+        )
     return SumtallyRunInputs(
         generation_summary=generation_summary,
         current_manifest_sha256=current_manifest_sha256,
@@ -1121,6 +1143,8 @@ def _run_sumtally_locked(
         )
         summary = {
             "schema_version": "dicomxphits_public_sumtally_execution_v1",
+            **({"research_exception": generation_summary["research_exception"]}
+               if generation_summary.get("research_exception") else {}),
             "stage": "run_sumtally",
             "stage_status": (
                 "success"
