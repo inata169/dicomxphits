@@ -1,8 +1,9 @@
 # dicomxphits v1.1.3 Release Notes
 
-Status: source candidate prepared on 2026-10-27. The maintainer publishes
-the GitHub Release after candidate checks pass; this document does not
-assert that publication has already occurred.
+Status: published on 2026-10-27 as an experimental source release for
+education and research evaluation.
+Release: [v1.1.3](https://github.com/inata169/dicomxphits/releases/tag/v1.1.3).
+Tag commit: `039666d85926707a8476ec142e417bbac84510e4`.
 
 This is experimental education and research software for authorized
 non-patient phantom evaluation. It is not clinical commissioning, patient
@@ -32,8 +33,13 @@ QA, vendor certification, or a claim of physical dose accuracy.
 
 ## Verification and limits
 
-Candidate verification is recorded in the release-preparation pull request.
-It uses Python 3.12, synthetic fixtures and fake external-tool runners.
+Release verification is recorded in [PR #103](https://github.com/inata169/dicomxphits/pull/103).
+The Windows/Python 3.12 suite passed with **1654 passed, 16 skipped** and one
+existing duplicate ZIP-member warning. Windows and Ubuntu PR CI passed,
+and Codex review reported no findings. Compilation, the 475-file public-tree
+audit and whitespace checks passed. A clean temporary virtual environment
+passed installation/version checks and seven installed CLI/GUI help launches.
+These checks use synthetic fixtures and fake external-tool runners.
 Hidden Tk tests use their own interpreter and temporary settings; they do
 not control an already running user GUI. No real PHITS, Sumtally,
 CT2PHITS, phits2dicom or GPR execution is part of this release verification.
