@@ -34,7 +34,14 @@ post-merge stopping boundary, see the
 For the v1.0.3 publication boundary and the decision to publish without a
 Windows offline ZIP, see the
 [`v1.0.3 release notes`](release-notes-v1.0.3.md).
-For the current experimental release and its validation limits, see the
+For the pending v1.1.3 source candidate and its validation limits, see the
+[v1.1.3 release notes](release-notes-v1.1.3.md). Publication remains a manual
+maintainer action after candidate validation. The candidate contains the
+research geometry recovery acceptance from merged PR #102; the original
+failed PHITS records remain unchanged and acceptance does not recalculate PHITS.
+This release preparation changes package/version metadata and documentation,
+without changing physics, DICOM meaning or normative specifications.
+For the currently published experimental release and its validation limits, see the
 [v1.1.2 release notes](release-notes-v1.1.2.md).
 
 ## Current published baseline — v1.1.2

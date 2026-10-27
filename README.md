@@ -5,11 +5,11 @@ fixed-field 3D-CRT PHITS inputs from DICOM RT Plans and for controlling the
 explicit PHITS, Sumtally, RTDOSE, coordinate-correction, and external GPR
 handoff stages.
 
-> **Status: Experimental — v1.1.2 published**
+> **Status: Experimental — v1.1.3 release candidate**
 >
-> The v1.1.2 source release is available for education and research evaluation.
-> Automated tests and public CI passed. CT clipping and large-volume preview
-> are included. Stable operation across the complete external-tool workflow
+> The v1.1.3 candidate adds explicit research review of saved PHITS geometry
+> recoveries without recalculation. Publication follows candidate validation
+> and the maintainer's GitHub Release action. The complete external-tool workflow
 > and physical dose accuracy remain unverified for this release.
 >
 > Preserve existing inputs and results, and evaluate this version in a
@@ -65,11 +65,13 @@ All paths retain the same education-and-research-only boundary stated above.
 
 ## Status
 
-Version 1.1.2 includes the independent PHITS ROI statistics GUI, manual CT
-clipping in the guided GUI, and bounded previews for several-hundred-slice CT
-series. Package metadata and GUI About report **Version 1.1.2**. See the
-[v1.1.2 release notes](docs/release-notes-v1.1.2.md) for the changes, checks,
-and limits. These additions are absent from the historical `v1.1.1` tag.
+Version 1.1.3 adds a separate CLI and GUI review for eligible saved PHITS
+geometry recoveries, with an operator reason and confirmation, portable
+acceptance evidence, and downstream audit records. Original failed records
+remain unchanged. Package metadata and GUI About report **Version 1.1.3**.
+See the [v1.1.3 release notes](docs/release-notes-v1.1.3.md) for the release
+boundary and verification limits. Publication is pending the maintainer's
+GitHub Release action; the published baseline below remains historical.
 
 The current public release is
 [`v1.1.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.2). It is

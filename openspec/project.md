@@ -9,6 +9,12 @@ certification software.
 
 ## Current Public Release
 
+- The `v1.1.3` source candidate adds the accepted research geometry recovery
+  workflow from PR #102. Publication is pending candidate verification and
+  the maintainer's GitHub Release action. See the
+  [candidate release notes](../docs/release-notes-v1.1.3.md). This release
+  preparation changes version metadata and documentation only; the accepted
+  contracts remain under `openspec/specs/`.
 - The current public release is `v1.1.2` (2026-10-09). It includes the
   independent PHITS ROI statistics GUI, manually selected CT clipping, and
   bounded previews for several-hundred-slice CT series. See the
