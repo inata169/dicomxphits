@@ -34,17 +34,33 @@ post-merge stopping boundary, see the
 For the v1.0.3 publication boundary and the decision to publish without a
 Windows offline ZIP, see the
 [`v1.0.3 release notes`](release-notes-v1.0.3.md).
-For the pending v1.1.3 source candidate and its validation limits, see the
-[v1.1.3 release notes](release-notes-v1.1.3.md). Publication remains a manual
-maintainer action after candidate validation. The candidate contains the
-research geometry recovery acceptance from merged PR #102; the original
-failed PHITS records remain unchanged and acceptance does not recalculate PHITS.
-This release preparation changes package/version metadata and documentation,
-without changing physics, DICOM meaning or normative specifications.
-For the currently published experimental release and its validation limits, see the
-[v1.1.2 release notes](release-notes-v1.1.2.md).
+For the current experimental release and its validation limits, see the
+[v1.1.3 release notes](release-notes-v1.1.3.md).
 
-## Current published baseline — v1.1.2
+## Current published baseline — v1.1.3
+
+- Public release: [`v1.1.3`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.3)
+- Previous public release: `v1.1.2`
+- Published: 2026-10-27, experimental education/research source release
+- Release tag and commit: `v1.1.3` at
+  `039666d85926707a8476ec142e417bbac84510e4`
+- Research geometry recovery implementation: PR #102; release preparation:
+  PR #103. Acceptance preserves original failed PHITS records and does not
+  recalculate PHITS.
+- Automated validation: 1654 passed, 16 skipped and one existing duplicate
+  ZIP-member warning on Windows/Python 3.12. Compilation, the 475-file
+  public-tree audit and whitespace checks passed. Windows and Ubuntu PR CI
+  passed; Codex review reported no findings. Isolated installation/version
+  checks and seven installed CLI/GUI help launches passed.
+- Real-tool boundary: release verification used synthetic fixtures and fake
+  runners. End-to-end real-tool operation, dose accuracy, convergence and
+  clinical suitability remain unverified for this release.
+- Public workflow scope: documented fixed-field 3D-CRT; custom offline asset:
+  none. Package metadata and GUI About report 1.1.3.
+- This publication-status update changes documentation only; runtime behavior,
+  physics, DICOM meaning and normative specifications are unchanged.
+
+## Previous published baseline — v1.1.2
 
 - Public release: [`v1.1.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.2)
 - Previous public release: `v1.1.1`
@@ -89,7 +105,7 @@ release preparation. Historical demonstrations retain only their stated bounds.
 ## Historical release records
 
 The v1.0.2 and v1.0.3 records below remain historical evidence; they do not
-establish v1.1.2 stability or external-tool acceptance. The prior v1.1.1 release
+establish v1.1.3 stability or external-tool acceptance. The prior v1.1.1 release
 baseline above was confirmed on 2026-09-28. The previous v1.1.0 release is
 recorded in its [historical release notes](release-notes-v1.1.0.md).
 

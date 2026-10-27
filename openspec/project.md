@@ -9,27 +9,25 @@ certification software.
 
 ## Current Public Release
 
-- The `v1.1.3` source candidate adds the accepted research geometry recovery
-  workflow from PR #102. Publication is pending candidate verification and
-  the maintainer's GitHub Release action. See the
-  [candidate release notes](../docs/release-notes-v1.1.3.md). This release
-  preparation changes version metadata and documentation only; the accepted
-  contracts remain under `openspec/specs/`.
-- The current public release is `v1.1.2` (2026-10-09). It includes the
-  independent PHITS ROI statistics GUI, manually selected CT clipping, and
-  bounded previews for several-hundred-slice CT series. See the
-  [release notes](../docs/release-notes-v1.1.2.md).
-- v1.1.2 is experimental education-and-research software. Automated tests and
-  Windows/Ubuntu public CI passed. Geometry-only previews reviewed in a
-  separately authorized non-patient case do not establish completed PHITS
-  transport, end-to-end acceptance, dose accuracy or clinical suitability.
-- No custom Windows offline asset is published for v1.1.2. The v1.0.2 custom
+- The current public release is `v1.1.3` (2026-10-27), an experimental
+  education-and-research source release. It adds the accepted research
+  geometry recovery workflow from PR #102 and retains the CT clipping,
+  bounded CT previews and independent ROI statistics GUI from v1.1.2. See the
+  [release notes](../docs/release-notes-v1.1.3.md).
+- The published tag points to `039666d85926707a8476ec142e417bbac84510e4`.
+  Release preparation was merged in PR #103. The full Windows/Python 3.12
+  synthetic suite passed with 1654 tests and 16 skips; Windows and Ubuntu
+  PR CI passed, and Codex review reported no findings. Real-tool end-to-end
+  operation, dose accuracy, convergence and clinical suitability remain
+  unverified for this release.
+- No custom Windows offline asset is published for v1.1.3. The v1.0.2 custom
   offline asset was withdrawn and removed; its historical identity remains
   documented in `docs/release-notes-v1.0.2.md`.
 - Publication does not expand the normative public scope below. Accepted
-  contracts remain under `openspec/specs/`. Historical v1.1.1 real-tool
-  evidence is not v1.1.2 end-to-end validation. This release-status alignment
-  adds no capability, normative specification or physical-validation claim.
+  contracts remain under `openspec/specs/`. Historical real-tool evidence is
+  not v1.1.3 end-to-end validation. This release-status alignment changes
+  documentation only and adds no capability, normative specification or
+  physical-validation claim.
 
 ## Technology
 

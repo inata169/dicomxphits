@@ -5,11 +5,11 @@ fixed-field 3D-CRT PHITS inputs from DICOM RT Plans and for controlling the
 explicit PHITS, Sumtally, RTDOSE, coordinate-correction, and external GPR
 handoff stages.
 
-> **Status: Experimental — v1.1.3 release candidate**
+> **Status: Experimental — v1.1.3 published**
 >
-> The v1.1.3 candidate adds explicit research review of saved PHITS geometry
-> recoveries without recalculation. Publication follows candidate validation
-> and the maintainer's GitHub Release action. The complete external-tool workflow
+> The v1.1.3 source release was published on 2026-10-27. It adds explicit
+> research review of saved PHITS geometry recoveries without recalculation.
+> The complete external-tool workflow
 > and physical dose accuracy remain unverified for this release.
 >
 > Preserve existing inputs and results, and evaluate this version in a
@@ -70,11 +70,11 @@ geometry recoveries, with an operator reason and confirmation, portable
 acceptance evidence, and downstream audit records. Original failed records
 remain unchanged. Package metadata and GUI About report **Version 1.1.3**.
 See the [v1.1.3 release notes](docs/release-notes-v1.1.3.md) for the release
-boundary and verification limits. Publication is pending the maintainer's
-GitHub Release action; the published baseline below remains historical.
+boundary and verification limits. The release passed synthetic/mock checks
+and Windows/Ubuntu public CI; this is not real-tool end-to-end validation.
 
 The current public release is
-[`v1.1.2`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.2). It is
+[`v1.1.3`](https://github.com/inata169/dicomxphits/releases/tag/v1.1.3). It is
 published without a custom Windows offline ZIP. The v1.0.2 custom offline ZIP
 was withdrawn and removed after a later endpoint-protection compatibility
 failure and should not be used. The v1.0.2 tag, GitHub Release, source archives,
@@ -152,7 +152,7 @@ After the GUI opens:
 
 ## Windows Offline Installation
 
-The v1.1.2 GitHub Release provides source archives only, with no public Windows
+The v1.1.3 GitHub Release provides source archives only, with no public Windows
 offline ZIP. The earlier v1.0.3 release also had no public offline ZIP. A
 locally built v1.0.3 bundle passed bounded human installation and GUI-startup
 checks, but behavior-based endpoint protection blocked the verified
