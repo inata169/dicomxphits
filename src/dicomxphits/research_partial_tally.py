@@ -16,6 +16,17 @@ from dicomxphits.phits_observation_format import (
     parse_restart_metadata,
     prepared_contract,
 )
+from dicomxphits.phits_terminal_evidence import (
+    MAX_INPUT_BYTES,
+    MAX_LOG_BYTES,
+    OPENMP_335,
+    PHASE,
+    SCHEMA as TERMINAL_SCHEMA,
+    is_post_batch_exit,
+    is_stack_overflow,
+    require_no_recorded_phits_error,
+    validate_finalization,
+)
 from dicomxphits.prepare_3dcrt_workspace import active_segments
 from dicomxphits.prepare_sumtally import (
     validate_calculation_tally_geometry_binding,
@@ -42,10 +53,6 @@ from dicomxphits.segment_retry import (
 from dicomxphits.sumtally_relative_error_recovery import _stable_bytes, _stable_json
 from dicomxphits.workspace_recovery import rebind_workspace_path
 
-STACK_OVERFLOW = 0xC00000FD
-OPENMP_335 = "phits335_win_openmp.exe"
-MAX_INPUT_BYTES = 4 * 1024**2
-MAX_LOG_BYTES = 32 * 1024**2
 RESTART_MARKER = "# Information for Restart Calculation\n"
 _BATCH = re.compile(r"^\s*bat\[\s*([0-9]{1,16})\s*\]\s+ncas\s*=\s*([0-9]{1,20})\.?\s*$", re.I)
 _SEED = re.compile(r"^\s*bitrseed\s*=\s*([01]{64})\s*$")
@@ -153,7 +160,62 @@ def _validate_depth_tally(raw, prepared, relative, expected_metadata, planned):
         raise ValueError("Retained depth tally does not cover its complete prepared grid")
 
 
-def inspect_snapshot(root: Path, staging: str, guard) -> RetainedSnapshot:
+def _post_batch_record(result):
+    record = result.get("terminal_evidence")
+    if (is_post_batch_exit(result.get("return_code")) and isinstance(record, dict)
+            and record.get("schema_version") == TERMINAL_SCHEMA):
+        return record
+    return None
+
+
+def has_partial_tally_candidate(summary):
+    """Check the recorded eligibility route before enabling the preview button."""
+    if not isinstance(summary, dict) or summary.get("stage_status") != "failed":
+        return False
+    segments = summary.get("segments")
+    return isinstance(segments, list) and any(
+        isinstance(result, dict) and result.get("status") == "failed"
+        and (is_stack_overflow(result.get("return_code"))
+             or (summary.get("stop_requested") is None and _post_batch_record(result) is not None))
+        for result in segments
+    )
+
+
+def _validate_terminal_record(root, primary, result, retained, log_record, log_text, runtime, guard):
+    record = _post_batch_record(result)
+    expected = {
+        "schema_version": TERMINAL_SCHEMA,
+        "run_id": retained["run_id"],
+        "segment_id": retained["segment_id"],
+        "exit_code": result["return_code"],
+        "runtime": runtime,
+        "staging_directory": retained["staging_directory"],
+    }
+    if (record is None or set(record) != {*expected, "logs"}
+            or digest_object({key: record[key] for key in expected}) != digest_object(expected)):
+        raise ValueError("PHITS terminal evidence does not match the failed invocation")
+
+    logs = record["logs"]
+    if (not isinstance(logs, dict) or set(logs) != {"stdout", "stderr", "phits_out"}
+            or digest_object(logs["phits_out"]) != digest_object({**log_record, "output_path": "phits.out"})):
+        raise ValueError("PHITS terminal logs do not match the retained invocation")
+    console = {}
+    for role in ("stdout", "stderr"):
+        path = primary.parent / f"phits_{role}.txt"
+        evidence = logs[role]
+        if (not isinstance(evidence, dict) or set(evidence) != {"path", "size", "sha256"}
+                or evidence["path"] != path.relative_to(root).as_posix()
+                or type(evidence["size"]) is not int or not 0 <= evidence["size"] <= MAX_LOG_BYTES
+                or rebind_workspace_path(result[f"{role}_log_path"], recorded_workspace_root=str(root),
+                                         current_workspace_root=root) != path):
+            raise ValueError("PHITS console log is not at its bound invocation path")
+        console[role] = _bound_bytes(root, evidence, guard, MAX_LOG_BYTES).decode("utf-8")
+    require_no_recorded_phits_error(log_text)
+    validate_finalization(console["stdout"], console["stderr"], runtime)
+    return {"route": "bound_post_batch", "phase": PHASE, "terminal_evidence": record}
+
+
+def inspect_snapshot(root: Path, staging: str, guard, *, legacy_receipt: bool = False) -> RetainedSnapshot:
     summary, summary_sha = _stable_json(root / SUMMARY, guard=guard, label="PHITS execution")
     manifest, manifest_sha = _stable_json(root / MANIFEST, guard=guard, label="segment manifest")
     validate_manifest_for_sumtally(manifest)
@@ -170,14 +232,16 @@ def inspect_snapshot(root: Path, staging: str, guard) -> RetainedSnapshot:
     segment = active[0]
     result = failed[0]
     code = result.get("return_code")
+    stack_overflow = is_stack_overflow(code)
     if (
-        type(code) is not int or code not in {STACK_OVERFLOW, STACK_OVERFLOW - 2**32}
+        (not stack_overflow and (legacy_receipt or summary.get("stop_requested") is not None
+                                 or _post_batch_record(result) is None))
         or result["status"] != "failed" or result["segment_id"] != segment["segment_id"]
         or result["reason"] != f"PHITS returned nonzero exit code {code}"
         or result.get("producer_run_id") != summary["run_id"] or result.get("retained")
         or result.get("expected_output_exists") is not False
     ):
-        raise ValueError("PHITS failure is not a supported terminal stack overflow")
+        raise ValueError("PHITS failure lacks an eligible exit and bound terminal evidence")
     diagnostics = result.get("geometry_diagnostics") or {}
     if (diagnostics.get("status") != "invalid" or diagnostics.get("counts") is not None
             or diagnostics.get("reason") != "missing PHITS geometry diagnostics: "
@@ -255,8 +319,12 @@ def inspect_snapshot(root: Path, staging: str, guard) -> RetainedSnapshot:
     input_text = _bound_bytes(root, retained_inputs[source_relative], guard, MAX_INPUT_BYTES).decode("utf-8")
     mesh, runtime = prepared_contract(input_text, primary_relative)
     maxcas, planned = runtime["maxcas"], runtime["maxbch"]
-    batch_seed = _last_batch_seed(_bound_bytes(root, log, guard, MAX_LOG_BYTES).decode("utf-8", "replace"),
-                                 planned, maxcas)
+    log_text = _bound_bytes(root, log, guard, MAX_LOG_BYTES).decode("utf-8", "replace")
+    batch_seed = _last_batch_seed(log_text, planned, maxcas)
+    if stack_overflow:
+        failure_evidence = {"route": "recorded_stack_overflow", "phase": "unavailable"}
+    else:
+        failure_evidence = _validate_terminal_record(root, primary, result, retained, log, log_text, runtime, guard)
     _, _, metadata = paired_tally_values(
         _bound_bytes(root, retained_outputs[primary_relative], guard, MAX_TALLY_BYTES),
         _bound_bytes(root, retained_outputs[error_relative], guard, MAX_TALLY_BYTES),
@@ -289,5 +357,7 @@ def inspect_snapshot(root: Path, staging: str, guard) -> RetainedSnapshot:
         "retained_inputs": retained_inputs, "tallies": retained_outputs,
         "mesh_geometry": mesh_geometry,
     }
+    if not legacy_receipt:
+        evidence["failure_evidence"] = failure_evidence
     return RetainedSnapshot(manifest, binding, primary_relative, source_relative,
                             retained_inputs, retained_outputs, mesh_geometry, evidence)

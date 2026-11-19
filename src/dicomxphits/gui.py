@@ -2433,7 +2433,7 @@ def _build_gui() -> int:
     from dicomxphits.research_geometry_gui import RESEARCH_NOTICE, ResearchGeometryReview
     from dicomxphits.research_geometry_recovery import RECEIPT_PATH as GEOMETRY_RECEIPT_PATH
     from dicomxphits import research_partial_rtdose as partial_export
-    from dicomxphits.research_partial_tally import STACK_OVERFLOW
+    from dicomxphits.research_partial_tally import has_partial_tally_candidate
     research_status = tk.StringVar(value="Research geometry acceptance has not been requested.")
     partial_export_status = tk.StringVar(value="")
     research_generation = 0
@@ -2635,7 +2635,6 @@ def _build_gui() -> int:
                 workspace_text = values["workspace_root"].get().strip()
                 workspace = Path(workspace_text).expanduser()
                 candidate = read_summary(workspace / "analysis/segment_execution_summary.json") if workspace_text else None
-                failed = candidate.get("segments", ()) if isinstance(candidate, Mapping) else ()
                 existing_export = bool(workspace_text and os.path.lexists(workspace / partial_export.RECEIPT))
                 button.configure(text="Verify saved research RT Dose…" if existing_export
                                  else "Export partial tally as research RT Dose…")
@@ -2643,10 +2642,7 @@ def _build_gui() -> int:
                     not busy and workspace_text and values["rtplan_path"].get().strip()
                     and values["ct_reference_dicom"].get().strip()
                     and (existing_export or (
-                        isinstance(failed, list)
-                        and any(isinstance(item, Mapping) and item.get("status") == "failed"
-                                and item.get("return_code") in (STACK_OVERFLOW, STACK_OVERFLOW - 2**32)
-                                for item in failed)
+                        has_partial_tally_candidate(candidate)
                         and all(tool_profile_resolution.ready_for_stage(key)
                                 for key in ("run_sumtally", "run_rtdose"))
                     ))
@@ -4711,9 +4707,14 @@ def _build_gui() -> int:
 
         def review_ready(preview):
             saved = preview["plan"]["snapshot"]
+            if saved["failure_evidence"]["route"] == "bound_post_batch":
+                failure = "OpenMP finalization was observed after the last planned batch.\n"
+            else:
+                failure = "Recorded stack overflow. The finalization phase is unavailable.\n"
             accepted = messagebox.askyesno(
                 title,
                 f"PHITS failed in segment {saved['segment_id']} (exit {saved['exit_code']}).\n"
+                f"{failure}"
                 f"Saved tally: {saved['saved_batches']}/{saved['planned_batches']} batches.\n"
                 "Final geometry diagnostics are unavailable.\n"
                 "The DICOM will be labelled for research use only.\n\n"

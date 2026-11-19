@@ -62,7 +62,8 @@ from dicomxphits.workspace_execution import WorkspaceExecutionLease
 OUTPUT_DIRECTORY = Path("research_partial_rtdose")
 RECEIPT = OUTPUT_DIRECTORY / "receipt.json"
 DOSE_NAME = "research-partial.dcm"
-SCHEMA = "dicomxphits_research_partial_tally_rtdose_v1"
+LEGACY_SCHEMA = "dicomxphits_research_partial_tally_rtdose_v1"
+SCHEMA = "dicomxphits_research_partial_tally_rtdose_v2"
 
 
 @dataclass(frozen=True)
@@ -336,7 +337,7 @@ def verify(root: Path, *, rtplan: Path, ct_reference: Path) -> dict:
         keys = {"schema_version", "research_only", "operator_acknowledgement", "plan", "plan_digest",
                 "rtdose", "receipt_content_sha256"}
         if (
-            not isinstance(receipt, dict) or set(receipt) != keys or receipt["schema_version"] != SCHEMA
+            not isinstance(receipt, dict) or set(receipt) != keys or receipt["schema_version"] not in (SCHEMA, LEGACY_SCHEMA)
             or receipt["research_only"] is not True or receipt["operator_acknowledgement"] is not True
             or raw not in (canonical, canonical.replace(b"\n", b"\r\n"))
             or digest_object({k: v for k, v in receipt.items() if k != "receipt_content_sha256"})
@@ -345,7 +346,10 @@ def verify(root: Path, *, rtplan: Path, ct_reference: Path) -> dict:
         ):
             raise ValueError("Research RT Dose receipt is malformed or changed")
         plan = receipt["plan"]
-        snapshot = inspect_snapshot(root, plan["snapshot"]["staging_directory"], guard)
+        snapshot = inspect_snapshot(
+            root, plan["snapshot"]["staging_directory"], guard,
+            legacy_receipt=receipt["schema_version"] == LEGACY_SCHEMA,
+        )
         if snapshot.evidence != plan["snapshot"] or plan["receipt_path"] != RECEIPT.as_posix():
             raise ValueError("Research receipt no longer matches the saved tally evidence")
         current, semantics, course, placement = _semantics(root, snapshot, rtplan, ct_reference)

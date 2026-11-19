@@ -597,6 +597,7 @@ def run_one_segment(
         )
         keep_staging = False
         retained_staging = None
+        terminal_evidence = None
         try:
             if input_binding is not None:
                 for evidence in input_binding:
@@ -711,6 +712,16 @@ def run_one_segment(
                     declared_outputs=declared_outputs, expected_output=expected_output,
                     guard=guard,
                 )
+                from dicomxphits.phits_terminal_evidence import capture_terminal_evidence
+                try:
+                    terminal_evidence = capture_terminal_evidence(
+                        workspace_root, staged_input, expected_output.relative_to(workspace_root).as_posix(),
+                        phits_executable_path, environment, result, retained_staging,
+                        stdout_path, stderr_path, guard,
+                    )
+                except (OSError, ValueError):
+                    # Unsupported or unavailable evidence leaves the ordinary failure intact.
+                    pass
         finally:
             if not keep_staging:
                 guard.rmtree(execution_root, missing_ok=True)
@@ -752,6 +763,7 @@ def run_one_segment(
         ),
         "geometry_diagnostics": geometry_diagnostics,
         **({"retained_staging": retained_staging} if retained_staging is not None else {}),
+        **({"terminal_evidence": terminal_evidence} if terminal_evidence is not None else {}),
         "batch_out_path": collected["batch_out_path"],
         "phits_out_path": collected["phits_out_path"],
         "phits_out_sha256": (
