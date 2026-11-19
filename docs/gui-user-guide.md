@@ -397,6 +397,23 @@ dicomxphits-accept-geometry-recovery --workspace-root <workspace> --verify-only
 
 The receipt at `analysis/research_geometry_recovery_acceptance.json` supplements the original evidence. Never zero diagnostic counts, relabel a failed execution as success, recompute hashes to hide an edit, or use the overwrite checkbox to authorize an exception. Output remains research-only: not for clinical use, commissioning, patient QA, or vendor certification.
 
+### PHITS OpenMP reported the last batch and stopped with a stack overflow
+
+For an eligible single-segment fixed-field 3D-CRT case, the **3 PHITS** page
+offers **Export partial tally as research RT Dose…**. Select the retained
+staging directory for that invocation directly below `analysis`. The preview
+shows the number of batches saved in the tallies, the planned number, the
+failure, and the unavailable final geometry diagnostics. This path requires
+a complete matching tally snapshot of the preceding batch and bound PHITS
+3.35 Windows OpenMP stack-overflow evidence.
+
+Confirm the preview to aggregate the saved tally and create a research-only
+DICOM RT Dose. The export runs Sumtally and phits2dicom and performs no new
+particle transport. The PHITS stage stays failed. The ordinary output status
+and files are preserved. The research DICOM and its provenance receipt are
+under `research_partial_rtdose/`. On a reopened workspace, use
+**Verify saved research RT Dose…** to validate the pair and show its location.
+
 ## 9. Using an existing CT2PHITS handoff
 
 Normally, begin at Step 1. Use **Use an existing validated CT2PHITS handoff (advanced)** on the Workspace page only when you already have a validated handoff. Provide:

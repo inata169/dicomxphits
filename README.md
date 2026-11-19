@@ -567,6 +567,37 @@ the new evidence and fails closed if it is inconsistent. The GUI reports
 evidence and the Run summary records the exact current Prepare-summary digest.
 Stale success summaries are retained for audit but do not enable **Run RTDOSE**.
 
+### Export research RT Dose from a saved partial PHITS tally
+
+Use this workflow for a non-patient phantom when PHITS 3.35 Windows OpenMP
+reports the last planned batch and then exits with a stack overflow. The
+case must have one active fixed-field 3D-CRT segment covering the full plan.
+The retained staging must contain a matching dose and error tally snapshot
+from one batch before the planned total.
+
+1. On **2 Workspace**, select **Open existing case…** and open the original
+   3D-CRT workspace. If the frozen CT2PHITS handoff is unavailable, use
+   **Select CT2PHITS workspace…** to restore the matching frozen RT Plan and
+   CT reference. The ordinary recovery inspection can report a missing
+   PHITS output because it expects a completed segment.
+2. On **3 PHITS**, select **Export partial tally as research RT Dose…**.
+   Choose the directory named by `retained_staging.staging_directory`
+   for the failed segment in `analysis/segment_execution_summary.json`.
+3. Check the saved and planned batch counts and the notice that the final
+   geometry diagnostics are unavailable. Select **Yes** to run tally
+   aggregation and DICOM conversion without new particle transport.
+4. Find the DICOM at `research_partial_rtdose/export-*/research-partial.dcm`
+   and its provenance at `research_partial_rtdose/receipt.json`. The
+   DICOM `DoseComment` records `RESEARCH ONLY - PARTIAL PHITS` and the saved
+   and planned batch counts. Use **Verify saved research RT Dose…** to
+   recheck the DICOM and receipt after reopening the workspace.
+
+The original PHITS execution stays failed. The export uses the saved tally
+normalization and preserves the ordinary output files. Keep the receipt
+with the research RT Dose so the batch count, exit status, and unavailable
+geometry diagnostics remain traceable. See the
+[GUI User Guide](docs/gui-user-guide.md#phits-openmp-reported-the-last-batch-and-stopped-with-a-stack-overflow).
+
 For first-time standard setup, open **Tool settings**, select the licensed
 **PHITS installation folder**, and choose **Validate and save setup**. After
 that, a normal case requires only the source RT Plan and CT DICOM folder. The

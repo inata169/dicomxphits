@@ -703,6 +703,7 @@ def run_phits_sumtally(
     environment: dict[str, str] | None = None,
     runner=subprocess.run,
     on_start: Callable[[], None] | None = None,
+    validate_staged: Callable[[list[tuple[Path, Path]]], None] | None = None,
 ) -> tuple[
     subprocess.CompletedProcess[str],
     dict[str, Any] | None,
@@ -731,6 +732,7 @@ def run_phits_sumtally(
         try:
             staged_sum_input = execution_root / sum_input.name
             guard.copy_file(sum_input, staged_sum_input, overwrite=False)
+            staged_files = [(sum_input, staged_sum_input)]
             for dependency in transitive_phits_include_paths(
                 sum_input,
                 execution_cwd=sum_input.parent,
@@ -746,6 +748,7 @@ def run_phits_sumtally(
                     execution_root / relative,
                     overwrite=False,
                 )
+                staged_files.append((dependency, execution_root / relative))
             try:
                 output_relative = expected_output.resolve().relative_to(
                     sum_input.parent.resolve()
@@ -759,6 +762,8 @@ def run_phits_sumtally(
             with staged_sum_input.open(
                 "r", encoding="utf-8", errors="replace"
             ) as stdin:
+                if validate_staged is not None:
+                    validate_staged(staged_files)
                 if on_start is not None:
                     on_start()
                 result = runner(
