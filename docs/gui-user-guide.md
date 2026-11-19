@@ -397,15 +397,27 @@ dicomxphits-accept-geometry-recovery --workspace-root <workspace> --verify-only
 
 The receipt at `analysis/research_geometry_recovery_acceptance.json` supplements the original evidence. Never zero diagnostic counts, relabel a failed execution as success, recompute hashes to hide an edit, or use the overwrite checkbox to authorize an exception. Output remains research-only: not for clinical use, commissioning, patient QA, or vendor certification.
 
-### PHITS OpenMP reported the last batch and stopped with a stack overflow
+### PHITS OpenMP failed after reporting the last batch
 
 For an eligible single-segment fixed-field 3D-CRT case, the **3 PHITS** page
 offers **Export partial tally as research RT Dose…**. Select the retained
 staging directory for that invocation directly below `analysis`. The preview
-shows the number of batches saved in the tallies, the planned number, the
-failure, and the unavailable final geometry diagnostics. This path requires
-a complete matching tally snapshot of the preceding batch and bound PHITS
-3.35 Windows OpenMP stack-overflow evidence.
+shows the saved and planned batch counts, the original exit code, the
+failure evidence, and the unavailable final geometry diagnostics. Export
+requires a complete matching tally snapshot from exactly one batch before
+the planned total, with its restart seed matching the start of the final
+batch. Two forms of PHITS 3.35 Windows OpenMP evidence qualify:
+
+- A recorded stack overflow (`0xC00000FD`) with the last batch reported.
+- Another nonzero exit from the PHITS process, with stdout, stderr and
+  `phits.out` bound to the same execution when it ended. The logs must
+  show the last planned batch followed by finalization records for every
+  configured OpenMP worker.
+
+User stops, timeouts, launcher or controller failures, geometry errors
+and contradictory or unrecognized diagnostics block the additional
+route. Earlier runs with other exit codes require the terminal evidence
+record. Existing stack-overflow receipts can still be verified.
 
 Confirm the preview to aggregate the saved tally and create a research-only
 DICOM RT Dose. The export runs Sumtally and phits2dicom and performs no new
