@@ -2432,7 +2432,10 @@ def _build_gui() -> int:
     phits_progress_status = tk.StringVar(value="Not running")
     from dicomxphits.research_geometry_gui import RESEARCH_NOTICE, ResearchGeometryReview
     from dicomxphits.research_geometry_recovery import RECEIPT_PATH as GEOMETRY_RECEIPT_PATH
+    from dicomxphits import research_partial_rtdose as partial_export
+    from dicomxphits.research_partial_tally import STACK_OVERFLOW
     research_status = tk.StringVar(value="Research geometry acceptance has not been requested.")
+    partial_export_status = tk.StringVar(value="")
     research_generation = 0
     research_verified_workspace = None
     research_rtdose_state = RTDOSE_PHITS_INCOMPLETE
@@ -2628,6 +2631,26 @@ def _build_gui() -> int:
                 enabled = not busy and bool(values["workspace_root"].get().strip())
                 if stage_key == "accept_geometry":
                     enabled = enabled and not receipt_present
+            elif stage_key == "research_partial_export":
+                workspace_text = values["workspace_root"].get().strip()
+                workspace = Path(workspace_text).expanduser()
+                candidate = read_summary(workspace / "analysis/segment_execution_summary.json") if workspace_text else None
+                failed = candidate.get("segments", ()) if isinstance(candidate, Mapping) else ()
+                existing_export = bool(workspace_text and os.path.lexists(workspace / partial_export.RECEIPT))
+                button.configure(text="Verify saved research RT Dose…" if existing_export
+                                 else "Export partial tally as research RT Dose…")
+                enabled = bool(
+                    not busy and workspace_text and values["rtplan_path"].get().strip()
+                    and values["ct_reference_dicom"].get().strip()
+                    and (existing_export or (
+                        isinstance(failed, list)
+                        and any(isinstance(item, Mapping) and item.get("status") == "failed"
+                                and item.get("return_code") in (STACK_OVERFLOW, STACK_OVERFLOW - 2**32)
+                                for item in failed)
+                        and all(tool_profile_resolution.ready_for_stage(key)
+                                for key in ("run_sumtally", "run_rtdose"))
+                    ))
+                )
             elif stage_key == "stop_segments":
                 enabled = stop_button_ready()
             elif stage_key == "cancel_preparation":
@@ -4078,6 +4101,8 @@ def _build_gui() -> int:
         busy_label = (
             "Research geometry evidence verification"
             if stage_key == "research_geometry"
+            else "Research partial tally RT Dose"
+            if stage_key == "research_partial_export"
             else "Structure relative-error evaluation"
             if stage_key == "evaluate_structure_rerr"
             else stage_by_key(stage_key).label
@@ -4546,6 +4571,7 @@ def _build_gui() -> int:
         research_verified_workspace = None
         research_rtdose_state = RTDOSE_PHITS_INCOMPLETE
         workspace = Path(values["workspace_root"].get()).expanduser()
+        partial_export_status.set("")
         research_status.set(
             RESEARCH_NOTICE + " Re-read acceptance to verify this workspace."
             if os.path.lexists(workspace / GEOMETRY_RECEIPT_PATH)
@@ -4553,12 +4579,12 @@ def _build_gui() -> int:
         )
         refresh_action_button_states()
 
-    def research_job(work, finish):
+    def research_job(work, finish, *, stage="research_geometry"):
         if execution_guard.active_stage is not None:
             return
         selected = Path(values["workspace_root"].get()).expanduser().resolve()
         generation = research_generation
-        set_busy("research_geometry")
+        set_busy(stage)
 
         def deliver(value=None, error=None):
             nonlocal research_verified_workspace
@@ -4566,10 +4592,15 @@ def _build_gui() -> int:
             if generation != research_generation or selected != Path(values["workspace_root"].get()).expanduser().resolve():
                 return
             if error is not None:
-                research_verified_workspace = None
-                research_status.set(f"Research acceptance unavailable: {error}")
-                append(f"Research acceptance unavailable: {error}", "warning")
-                messagebox.showerror("Research geometry acceptance", error)
+                if stage == "research_geometry":
+                    research_verified_workspace = None
+                    research_status.set(f"Research acceptance unavailable: {error}")
+                    title = "Research geometry acceptance"
+                else:
+                    partial_export_status.set("Research partial tally RT Dose unavailable.")
+                    title = "Research partial tally RT Dose"
+                append(f"{title}: {error}", "warning")
+                messagebox.showerror(title, error)
                 refresh_action_button_states()
                 return
             finish(value)
@@ -4637,6 +4668,64 @@ def _build_gui() -> int:
 
         research_job(lambda current, generation: ResearchGeometryReview.prepare(current, staging, generation),
                      review_ready)
+
+    def start_partial_tally_export():
+        if execution_guard.active_stage is not None:
+            return
+        config = config_from_entries()
+        workspace = Path(config.workspace_root).expanduser().resolve()
+        rtplan = _resolved_path(config, "rtplan_path")
+        ct_reference = _resolved_path(config, "ct_reference_dicom")
+        title = "Research partial tally RT Dose"
+
+        def show_result(receipt):
+            saved = receipt["plan"]["snapshot"]
+            path = workspace / receipt["rtdose"]["path"]
+            detail = (f"Research only. {saved['saved_batches']}/{saved['planned_batches']} batches saved. "
+                      f"Final PHITS geometry diagnostics unavailable.\n{path}")
+            partial_export_status.set(detail)
+            append(detail, "warning")
+
+        stage = "research_partial_export"
+        if os.path.lexists(workspace / partial_export.RECEIPT):
+            research_job(lambda current, _: partial_export.verify(
+                current, rtplan=rtplan, ct_reference=ct_reference), show_result, stage=stage)
+            return
+        choice = filedialog.askdirectory(title="Select the exact retained PHITS staging directory",
+                                         initialdir=str(workspace / "analysis"), parent=root)
+        if not choice:
+            return
+        try:
+            staging = Path(os.path.abspath(choice)).relative_to(workspace).as_posix()
+        except ValueError:
+            messagebox.showerror(title, "Select staging within the current workspace.")
+            return
+        from dicomxphits.prepare_3dcrt_workspace import ExternalToolPaths
+
+        inputs = partial_export.ExportInputs(
+            ExternalToolPaths(config.phits_root_folder, config.phits_executable_path,
+                              config.phits2dicom_executable_path),
+            rtplan, ct_reference, _resolved_path(config, "rtdose_template_dicom"),
+        )
+        generation = research_generation
+
+        def review_ready(preview):
+            saved = preview["plan"]["snapshot"]
+            accepted = messagebox.askyesno(
+                title,
+                f"PHITS failed in segment {saved['segment_id']} (exit {saved['exit_code']}).\n"
+                f"Saved tally: {saved['saved_batches']}/{saved['planned_batches']} batches.\n"
+                "Final geometry diagnostics are unavailable.\n"
+                "The DICOM will be labelled for research use only.\n\n"
+                "Export the saved tally as research RT Dose without particle transport?",
+            )
+            if accepted and generation == research_generation and config == config_from_entries():
+                research_job(lambda current, _: partial_export.export(
+                    current, staging, inputs, expected_digest=preview["plan_digest"],
+                    acknowledge_research_only=True), show_result, stage=stage)
+
+        research_job(lambda current, _: partial_export.preview(current, staging, inputs),
+                     review_ready, stage=stage)
 
     def start_incomplete_preview() -> None:
         if execution_guard.active_stage is not None:
@@ -4987,6 +5076,12 @@ def _build_gui() -> int:
     for page, row in ((phits_frame, 10), (sumtally_page, 99), (rtdose_page, 99)):
         ttk.Label(page, textvariable=research_status, wraplength=760,
                   style="Surface.TLabel").grid(row=row, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+    partial_button = ttk.Button(phits_frame, text="Export partial tally as research RT Dose…",
+                                command=start_partial_tally_export)
+    partial_button.grid(row=11, column=2, sticky="e", pady=(8, 0))
+    action_buttons["research_partial_export"] = partial_button
+    ttk.Label(phits_frame, textvariable=partial_export_status, wraplength=760,
+              style="Surface.TLabel").grid(row=12, column=0, columnspan=3, sticky="ew", pady=(8, 0))
 
     sumtally_actions = ttk.Frame(
         sumtally_page, style="Surface.TFrame", padding=(18, 12)

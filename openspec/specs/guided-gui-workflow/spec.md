@@ -651,9 +651,12 @@ process SHALL be presented as interrupted and incomplete rather than currently
 running. A stale-invocation, malformed, path-escaping, or unknown-version record
 MUST NOT replace current progress or unlock a dependent action. Only the
 existing terminal-success evidence contract may display PHITS as completed.
-Ordinary Sumtally availability SHALL require terminal success; only the
-separate fully revalidated research receipt MAY authorize downstream research
-actions while PHITS remains displayed as failed.
+Ordinary Sumtally availability SHALL require terminal success. A fully
+revalidated receipt under `research-geometry-recovery-acceptance` MAY
+authorize the existing downstream actions while PHITS remains failed.
+The independently confirmed action under `research-partial-tally-rtdose`
+MAY export a separate research RT Dose while PHITS remains failed and
+MUST NOT enable the existing downstream actions.
 
 #### Scenario: First segment is running
 
@@ -713,6 +716,13 @@ actions while PHITS remains displayed as failed.
 - **THEN** the GUI presents them only in the distinct Sumtally-page section,
   outside live PHITS progress, and does not use them as convergence, stopping,
   completion, or downstream evidence
+
+#### Scenario: A partial tally export is available
+
+- **WHEN** the selected failed workspace is eligible for a research-only
+  partial-tally export
+- **THEN** the GUI keeps PHITS failed and offers only the distinct
+  research export action for that evidence
 
 ### Requirement: Guided Incomplete Segment Execution
 

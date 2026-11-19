@@ -1488,6 +1488,7 @@ def run_phits2dicom(
     expected_outputs: tuple[Path, ...],
     runner=subprocess.Popen,
     on_start: Callable[[], None] | None = None,
+    validate_staged: Callable[[list[tuple[Path, Path]]], None] | None = None,
 ) -> tuple[int, str, bool, Path]:
     with WorkspaceOutputGuard(workspace_root) as guard:
         for output in expected_outputs:
@@ -1515,7 +1516,8 @@ def run_phits2dicom(
                 execution_dat_dir / source_paths[2].name,
                 execution_dat_dir / source_paths[3].name,
             ]
-            for source, staged in zip(source_paths, staged_paths):
+            staged_files = list(zip(source_paths, staged_paths))
+            for source, staged in staged_files:
                 guard.copy_file(source, staged, overwrite=False)
             staged_lines = list(lines)
             for index, staged in enumerate(staged_paths, start=1):
@@ -1533,6 +1535,8 @@ def run_phits2dicom(
                 raise ValueError(
                     "phits2dicom expected output does not match the prepared dose input"
                 )
+            if validate_staged is not None:
+                validate_staged(staged_files)
             if on_start is not None:
                 on_start()
             proc = runner(

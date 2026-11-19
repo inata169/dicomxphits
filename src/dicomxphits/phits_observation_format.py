@@ -345,6 +345,43 @@ def _parse_numeric_page(text, output, deadline):
     checkpoint(deadline)
 
 
+def parse_restart_metadata(restart, *, live_maxbch=None):
+    require(restart.startswith("# This calculation was newly started\n"), "unsupported-restart")
+    lines = restart.splitlines()
+    require(len(lines) == 6 and restart.endswith("\n"))
+    metadata = {}
+    comments = {"istdev": "1:Batch variance, 2:History variance",
+                "resc2": "Total source weight or Total source weight / maxcas",
+                "resc3": "Total history number or Total batch number",
+                "maxcas": "History / Batch, only used for istdev=1",
+                "bitrseed": "bit data of rseed"}
+    for line, name in zip(lines[1:6], comments):
+        match = re.fullmatch(r"# " + name + r"\s*=\s*(\S+) # " + re.escape(comments[name]), line)
+        require(match is not None)
+        token = match[1]
+        if name == "bitrseed":
+            require(re.fullmatch(SEED, token) is not None)
+            metadata[name] = token
+        else:
+            value = number(token)
+            require(value > 0)
+            if live_maxbch is not None:
+                # Preserve exact source weights and integer metadata for pairing.
+                exact = Decimal(token.replace("D", "E").replace("d", "e"))
+                if name == "resc2":
+                    value = exact
+                else:
+                    require(exact == exact.to_integral_value())
+                    value = int(exact)
+            metadata[name] = value
+    require(metadata["istdev"] == 2 or (live_maxbch is not None and metadata["istdev"] == 1),
+            "unsupported-variance")
+    if metadata["istdev"] == 1:
+        require(metadata["resc3"] <= live_maxbch, "batch-budget")
+    require(all(value == int(value) for value in (metadata["resc3"], metadata["maxcas"])))
+    return metadata
+
+
 def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=None,
                 live_numeric=False):
     require(role in {"dose", "error"})
@@ -379,39 +416,7 @@ def parse_tally(raw, expected, role, deadline, *, sumtally=False, live_maxbch=No
     else:
         require(text.count(restart_marker) == 1)
         body, restart = text[first + len("#newpage:\n"):].split(restart_marker)
-        require(restart.startswith("# This calculation was newly started\n"), "unsupported-restart")
-        lines = restart.splitlines()
-        require(len(lines) == 6 and restart.endswith("\n"))
-        metadata = {}
-        comments = {"istdev": "1:Batch variance, 2:History variance",
-                    "resc2": "Total source weight or Total source weight / maxcas",
-                    "resc3": "Total history number or Total batch number",
-                    "maxcas": "History / Batch, only used for istdev=1",
-                    "bitrseed": "bit data of rseed"}
-        for line, name in zip(lines[1:6], comments):
-            match = re.fullmatch(r"# " + name + r"\s*=\s*(\S+) # " + re.escape(comments[name]), line)
-            require(match is not None)
-            token = match[1]
-            if name == "bitrseed":
-                require(re.fullmatch(SEED, token) is not None)
-                metadata[name] = token
-            else:
-                value = number(token)
-                require(value > 0)
-                if live_maxbch is not None:
-                    # Preserve exact source weights and integer metadata for pairing.
-                    exact = Decimal(token.replace("D", "E").replace("d", "e"))
-                    if name == "resc2":
-                        value = exact
-                    else:
-                        require(exact == exact.to_integral_value())
-                        value = int(exact)
-                metadata[name] = value
-        require(metadata["istdev"] == 2 or (live_maxbch is not None and metadata["istdev"] == 1),
-                "unsupported-variance")
-        if metadata["istdev"] == 1:
-            require(metadata["resc3"] <= live_maxbch, "batch-budget")
-        require(all(value == int(value) for value in (metadata["resc3"], metadata["maxcas"])))
+        metadata = parse_restart_metadata(restart, live_maxbch=live_maxbch)
     pages = body.split(" newpage:\n")
     require(len(pages) == expected.counts[2])
     output = np.empty(expected.cells, dtype=np.float64)
